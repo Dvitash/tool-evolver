@@ -79,6 +79,15 @@ import {
   type RolloutTelemetryEvent,
   type RolloutOverrideRecord,
 } from "./evolution/rollout/index.js";
+import {
+  AnalyticsService,
+  MetricsRepository,
+  createAnalyticsService,
+  createMetricsRepository,
+  type CalculateEfficiencyParams,
+  type CalibrateEvaluationParams,
+  type MaterializeRolloutWindowParams,
+} from "./analytics/index.js";
 
 // Configuration & Validation
 export * from "./config.js";
@@ -127,6 +136,7 @@ export * from "./mcp/index.js";
 export * from "./evolution/evaluation/index.js";
 export * from "./evolution/artifacts/index.js";
 export * from "./evolution/rollout/index.js";
+export * from "./analytics/index.js";
 
 /**
  * Unified Cloud Service container aggregating persistence, storage,
@@ -164,6 +174,8 @@ export class CloudService {
   readonly rolloutAssignmentRouter: RolloutAssignmentRouter;
   readonly rolloutEvaluator: RolloutEvaluator;
   readonly rolloutController: RolloutController;
+  readonly metricsRepo: MetricsRepository;
+  readonly analyticsService: AnalyticsService;
   private isInitialized = false;
 
   constructor(options: { config?: Partial<RawCloudConfig> } = {}) {
@@ -215,10 +227,13 @@ export class CloudService {
       this.objectStore,
       { outboxPublisher: this.outboxPublisher },
     );
+    this.metricsRepo = createMetricsRepository(this.dbPool);
+    this.analyticsService = createAnalyticsService(this.dbPool, {
+      repository: this.metricsRepo,
+    });
     this.catalogService = createCloudCatalogService({
       dbPool: this.dbPool,
       toolRegistryRepo: this.artifactRegistryService.toolRegistryRepo,
-      outboxPublisher: this.outboxPublisher,
     });
     this.mcpServer = createCloudMcpServer({
       catalogService: this.catalogService,
@@ -381,6 +396,30 @@ export class CloudService {
       }
     });
 
+    this.worker.registerHandler("analytics.materialize", async (job) => {
+      const tenant = job.tenantContext;
+      const payload = job.payload as MaterializeRolloutWindowParams | undefined;
+      if (payload) {
+        await this.analyticsService.materializeRolloutWindow(tenant, payload);
+      }
+    });
+
+    this.worker.registerHandler("analytics.efficiency", async (job) => {
+      const tenant = job.tenantContext;
+      const payload = job.payload as CalculateEfficiencyParams | undefined;
+      if (payload) {
+        await this.analyticsService.calculateEfficiency(tenant, payload);
+      }
+    });
+
+    this.worker.registerHandler("analytics.calibrate", async (job) => {
+      const tenant = job.tenantContext;
+      const payload = job.payload as CalibrateEvaluationParams | undefined;
+      if (payload) {
+        await this.analyticsService.calibrateEvaluation(tenant, payload);
+      }
+    });
+
     this.worker.registerHandler("rollout.rollback", async (job) => {
       const tenant = job.tenantContext;
       const payload = job.payload as { rolloutId?: string; reason?: string } | undefined;
@@ -399,10 +438,10 @@ export class CloudService {
       authService: this.authService,
       ingestionService: this.ingestionService,
       objectStore: this.objectStore,
-      queue: this.queue,
       outboxPublisher: this.outboxPublisher,
       catalogService: this.catalogService,
       mcpServer: this.mcpServer,
+      analyticsService: this.analyticsService,
     });
   }
 

@@ -106,8 +106,46 @@ export class ExportService {
       }
       const evidenceRes = await this.pool.query<Record<string, unknown>>(evidenceQuery, evidenceParams);
       const evidenceSets = evidenceRes.rows;
+      const bucketsRes = await this.pool.query<Record<string, unknown>>(
+        `SELECT * FROM telemetry_buckets WHERE account_id = $1 AND workspace_id = $2`,
+        [tenant.accountId, tenant.workspaceId],
+      );
+      const buckets = bucketsRes.rows;
 
-      const recordCount = sessions.length + branches.length + events.length + evidenceSets.length;
+      const windowsRes = await this.pool.query<Record<string, unknown>>(
+        `SELECT * FROM rollout_metric_windows WHERE account_id = $1 AND workspace_id = $2`,
+        [tenant.accountId, tenant.workspaceId],
+      );
+      const rolloutWindows = windowsRes.rows;
+
+      const efficiencyRes = await this.pool.query<Record<string, unknown>>(
+        `SELECT * FROM efficiency_metrics WHERE account_id = $1 AND workspace_id = $2`,
+        [tenant.accountId, tenant.workspaceId],
+      );
+      const efficiency = efficiencyRes.rows;
+
+      const calibrationsRes = await this.pool.query<Record<string, unknown>>(
+        `SELECT * FROM evaluation_calibrations WHERE account_id = $1 AND workspace_id = $2`,
+        [tenant.accountId, tenant.workspaceId],
+      );
+      const calibrations = calibrationsRes.rows;
+
+      const anomaliesRes = await this.pool.query<Record<string, unknown>>(
+        `SELECT * FROM anomaly_alerts WHERE account_id = $1 AND workspace_id = $2`,
+        [tenant.accountId, tenant.workspaceId],
+      );
+      const anomalies = anomaliesRes.rows;
+
+      const recordCount =
+        sessions.length +
+        branches.length +
+        events.length +
+        evidenceSets.length +
+        buckets.length +
+        rolloutWindows.length +
+        efficiency.length +
+        calibrations.length +
+        anomalies.length;
       const manifest = {
         exportedAt: new Date().toISOString(),
         accountId: tenant.accountId,
@@ -119,6 +157,11 @@ export class ExportService {
           branches: branches.length,
           events: events.length,
           evidenceSets: evidenceSets.length,
+          telemetryBuckets: buckets.length,
+          rolloutMetricWindows: rolloutWindows.length,
+          efficiencyMetrics: efficiency.length,
+          calibrations: calibrations.length,
+          anomalyAlerts: anomalies.length,
           totalRecords: recordCount,
         },
       };
@@ -129,6 +172,11 @@ export class ExportService {
         branches,
         events,
         evidenceSets,
+        telemetryBuckets: buckets,
+        rolloutMetricWindows: rolloutWindows,
+        efficiencyMetrics: efficiency,
+        calibrations,
+        anomalyAlerts: anomalies,
       };
 
       let exportPath: string | null = null;
@@ -283,6 +331,43 @@ export class ExportService {
             [tenant.accountId, tenant.workspaceId],
           );
           summary.deletedSessions = delSessions.rowCount;
+
+          // Delete analytics tables
+          const delBuckets = await txClient.query(
+            `DELETE FROM telemetry_buckets WHERE account_id = $1 AND workspace_id = $2`,
+            [tenant.accountId, tenant.workspaceId],
+          );
+          summary.deletedTelemetryBuckets = delBuckets.rowCount;
+
+          const delWindows = await txClient.query(
+            `DELETE FROM rollout_metric_windows WHERE account_id = $1 AND workspace_id = $2`,
+            [tenant.accountId, tenant.workspaceId],
+          );
+          summary.deletedRolloutMetricWindows = delWindows.rowCount;
+
+          const delEfficiency = await txClient.query(
+            `DELETE FROM efficiency_metrics WHERE account_id = $1 AND workspace_id = $2`,
+            [tenant.accountId, tenant.workspaceId],
+          );
+          summary.deletedEfficiencyMetrics = delEfficiency.rowCount;
+
+          const delCalibrations = await txClient.query(
+            `DELETE FROM evaluation_calibrations WHERE account_id = $1 AND workspace_id = $2`,
+            [tenant.accountId, tenant.workspaceId],
+          );
+          summary.deletedEvaluationCalibrations = delCalibrations.rowCount;
+
+          const delAnomalies = await txClient.query(
+            `DELETE FROM anomaly_alerts WHERE account_id = $1 AND workspace_id = $2`,
+            [tenant.accountId, tenant.workspaceId],
+          );
+          summary.deletedAnomalyAlerts = delAnomalies.rowCount;
+
+          const delReceipts = await txClient.query(
+            `DELETE FROM telemetry_receipts WHERE account_id = $1 AND workspace_id = $2`,
+            [tenant.accountId, tenant.workspaceId],
+          );
+          summary.deletedTelemetryReceipts = delReceipts.rowCount;
         }
 
         deletedRecordsCount = Object.values(summary).reduce((acc, n) => acc + n, 0);

@@ -33,6 +33,11 @@ import {
   CloudMcpServer,
   createCloudMcpServer,
 } from "../mcp/index.js";
+import {
+  AnalyticsService,
+  createAnalyticsService,
+  handleTelemetryBatchRoute,
+} from "../analytics/index.js";
 
 /**
  * Health check status response.
@@ -61,6 +66,7 @@ export interface CloudServerOptions {
   ingestionService?: ObservationIngestionService;
   catalogService?: CloudCatalogService;
   mcpServer?: CloudMcpServer;
+  analyticsService?: AnalyticsService;
 }
 /**
  * Cloud API Server shell providing HTTP endpoints, health checks,
@@ -77,6 +83,7 @@ export class CloudServer {
   private ingestionService: ObservationIngestionService;
   private catalogService: CloudCatalogService;
   private mcpServer: CloudMcpServer;
+  private analyticsService: AnalyticsService;
   private startTime: number;
 
   constructor(options: CloudServerOptions = {}) {
@@ -109,6 +116,9 @@ export class CloudServer {
       createCloudMcpServer({
         catalogService: this.catalogService,
       });
+    this.analyticsService =
+      options.analyticsService ??
+      createAnalyticsService(this.dbPool);
   }
 
   getDbPool(): DatabasePool {
@@ -434,6 +444,19 @@ export class CloudServer {
         res,
         authContext,
         this.ingestionService,
+        (r, status, data, h) => this.sendJson(r, status, data, h),
+        headers,
+      );
+      return;
+    }
+
+    // Telemetry Batch Ingestion
+    if (path === "/v1/telemetry/batch" && req.method === "POST") {
+      await handleTelemetryBatchRoute(
+        req,
+        res,
+        authContext,
+        this.analyticsService,
         (r, status, data, h) => this.sendJson(r, status, data, h),
         headers,
       );
