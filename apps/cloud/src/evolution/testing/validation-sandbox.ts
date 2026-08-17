@@ -595,6 +595,55 @@ export class ValidationSandbox {
   }
 
   /**
+   * Executes a candidate tool directly in an isolated VM sandbox with the provided broker client.
+   */
+  async executeCandidate(
+    sourceCode: string,
+    manifest: ToolManifest | Partial<ToolManifest>,
+    input: unknown,
+    broker: ToolBrokerClient,
+    options: {
+      timeoutMs?: number;
+      seed?: number | string;
+      capabilities?: CapabilityManifest;
+    } = {}
+  ): Promise<{
+    output?: unknown;
+    error?: string;
+    logs: Array<{ level: "info" | "warn" | "error" | "debug"; message: string; timestamp: string }>;
+    durationMs: number;
+  }> {
+    const startTime = Date.now();
+    const timeoutMs = options.timeoutMs ?? 5000;
+    const logs: Array<{ level: "info" | "warn" | "error" | "debug"; message: string; timestamp: string }> = [];
+
+    try {
+      const transpileResult = ts.transpileModule(sourceCode, {
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.CommonJS,
+          esModuleInterop: true,
+        },
+      });
+      const jsCode = transpileResult.outputText;
+      const runResult = await this.runSingleTest(jsCode, input, broker, logs, timeoutMs);
+      return {
+        output: runResult.output,
+        error: runResult.error,
+        logs,
+        durationMs: Date.now() - startTime,
+      };
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      return {
+        error: errMsg,
+        logs,
+        durationMs: Date.now() - startTime,
+      };
+    }
+  }
+
+  /**
    * Executes a single test in a fresh isolated VM context.
    */
   private async runSingleTest(
@@ -692,11 +741,20 @@ export class ValidationSandbox {
       const vmContext = vm.createContext(sandboxObj);
       const script = new vm.Script(jsCode, { filename: "candidate.js" });
       script.runInContext(vmContext, { timeout: timeoutMs });
-
-      const handler = moduleObj.exports.default ?? sandboxObj.exports.default;
-      if (typeof handler !== "function") {
-        return { error: "Candidate module does not export a valid default handler function." };
+      let handler: unknown = moduleObj.exports.default ?? sandboxObj.exports.default ?? moduleObj.exports;
+      if (handler && typeof handler === "object" && typeof (handler as { execute?: unknown }).execute === "function") {
+        handler = (handler as { execute: unknown }).execute;
       }
+      if (typeof handler !== "function") {
+        if (typeof (moduleObj.exports as { execute?: unknown }).execute === "function") {
+          handler = (moduleObj.exports as { execute: unknown }).execute;
+        } else if (typeof (moduleObj.exports as { run?: unknown }).run === "function") {
+          handler = (moduleObj.exports as { run: unknown }).run;
+        } else {
+          return { error: "Candidate module does not export a valid default handler function." };
+        }
+      }
+      const fnHandler = handler as (arg1: unknown, arg2?: unknown) => Promise<unknown> | unknown;
 
       // If InputSchema is exported, validate input before running handler
       const inputSchema = moduleObj.exports.InputSchema ?? (sandboxObj.exports as { InputSchema?: z.ZodTypeAny }).InputSchema;
@@ -722,9 +780,8 @@ export class ValidationSandbox {
 
       // Execute handler with timeout race
       const handlerPromise = (async () => {
-        return await handler(context);
+        return await fnHandler(context);
       })();
-
       const { promise: timeoutPromise, reject: timeoutReject } = Promise.withResolvers<never>();
       const timeoutId = setTimeout(() => {
         abortController.abort();

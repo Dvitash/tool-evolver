@@ -43,6 +43,12 @@ import {
   type CandidateValidationTarget,
   createCandidateValidationService,
 } from "./evolution/testing/index.js";
+import {
+  HistoricalReplayService,
+  type CandidateTarget,
+  type EvidenceSource,
+  createHistoricalReplayService,
+} from "./evolution/replay/index.js";
 
 // Configuration & Validation
 export * from "./config.js";
@@ -78,6 +84,9 @@ export * from "./evolution/generator/index.js";
 // Evolution Candidate Test Synthesis & Static Validation
 export * from "./evolution/testing/index.js";
 
+// Evolution Historical Session Replay Engine
+export * from "./evolution/replay/index.js";
+
 /**
  * Unified Cloud Service container aggregating persistence, storage,
  * queue, server, and background workers.
@@ -104,6 +113,7 @@ export class CloudService {
   readonly candidateGenerationService: CandidateGenerationService;
   readonly candidateValidationService: CandidateValidationService;
 
+  readonly historicalReplayService: HistoricalReplayService;
   private isInitialized = false;
 
   constructor(options: { config?: Partial<RawCloudConfig> } = {}) {
@@ -146,6 +156,10 @@ export class CloudService {
     this.opportunityService = createOpportunityDetectionService();
     this.candidateGenerationService = createCandidateGenerationService();
     this.candidateValidationService = createCandidateValidationService();
+    this.historicalReplayService = createHistoricalReplayService({
+      evidenceRepo: this.evidenceRepo,
+      dbPool: this.dbPool,
+    });
 
     this.worker.registerHandler("opportunity.detect", async (job) => {
       const tenant = job.tenantContext;
@@ -203,6 +217,28 @@ export class CloudService {
         const target = (payload.target ?? payload.revision ?? payload.candidate) as CandidateValidationTarget;
         if (target) {
           await this.candidateValidationService.validateCandidate(target);
+        }
+      }
+    });
+
+    this.worker.registerHandler("candidate.replay", async (job) => {
+      const tenant = job.tenantContext;
+      const payload = job.payload as {
+        candidate?: unknown;
+        target?: unknown;
+        evidence?: unknown;
+        evidenceSetId?: string;
+        options?: Record<string, unknown>;
+      } | undefined;
+      if (payload) {
+        const candidate = (payload.target ?? payload.candidate) as CandidateTarget;
+        if (candidate) {
+          await this.historicalReplayService.replayCandidate(tenant, {
+            candidate,
+            evidence: payload.evidence as EvidenceSource | undefined,
+            evidenceSetId: payload.evidenceSetId,
+            options: payload.options,
+          });
         }
       }
     });

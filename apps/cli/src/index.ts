@@ -40,8 +40,22 @@ export * from "./installer/harness-config.js";
 // End-to-end Installer Engine
 export * from "./installer/installer.js";
 
-// Commands
+// Service Manager (systemd, launchd, WSL)
+export * from "./service/manager.js";
+
+// Cloud Device Authentication Bootstrap
+export * from "./service/auth-bootstrap.js";
+
+// End-to-end Post-Install Verification Suite
+export * from "./service/verification.js";
+
+// CLI Commands
 export * from "./commands/init.js";
+export * from "./commands/status.js";
+export * from "./commands/doctor.js";
+export * from "./commands/upgrade.js";
+export * from "./commands/logout.js";
+export * from "./commands/uninstall.js";
 
 // CLI Main
 export { main } from "./bin/cli.js";

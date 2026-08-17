@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 
 import process from "node:process";
+import { doctorCommand, repairCommand } from "../commands/doctor.js";
 import { initCommand } from "../commands/init.js";
+import { logoutCommand } from "../commands/logout.js";
+import { statusCommand } from "../commands/status.js";
+import { uninstallCommand } from "../commands/uninstall.js";
+import { upgradeCommand } from "../commands/upgrade.js";
 
 const VERSION = "0.1.0";
 
@@ -13,13 +18,19 @@ Usage:
   tool-evolver <command> [options]
 
 Commands:
-  init       Install, authorize, and configure AI agent harnesses for Tool Evolver.
-  version    Display Tool Evolver CLI version.
-  help       Show command line help.
+  init         Install, authorize, and configure AI agent harnesses for Tool Evolver.
+  status       Display live status and health of the daemon, tools, and harnesses.
+  doctor       Diagnose platform, filesystem, service, IPC, database, and harness state.
+  repair       Automatically remediate detected issues and restore healthy service state.
+  upgrade      Atomic in-place release upgrade with health gate and auto-rollback.
+  logout       Revoke and purge local device credentials from secure vault.
+  uninstall    Stop and remove service, clean harness configs, and optionally purge data.
+  version      Display Tool Evolver CLI version.
+  help         Show command line help.
 
 Run "tool-evolver <command> --help" for detailed information on a specific command.
 `;
-  process.stdout.write(text);
+  process.stdout.write(text.trimStart());
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
@@ -28,6 +39,24 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   switch (command) {
     case "init":
       return await initCommand(args);
+
+    case "status":
+      return await statusCommand(args);
+
+    case "doctor":
+      return await doctorCommand(args);
+
+    case "repair":
+      return await repairCommand(args);
+
+    case "upgrade":
+      return await upgradeCommand(args);
+
+    case "logout":
+      return await logoutCommand(args);
+
+    case "uninstall":
+      return await uninstallCommand(args);
 
     case "version":
     case "--version":

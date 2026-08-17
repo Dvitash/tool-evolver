@@ -83,6 +83,12 @@ importers:
       '@tool-evolver/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@tool-evolver/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
+      '@tool-evolver/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@tool-evolver/gateway':
         specifier: workspace:*
         version: link:../gateway
@@ -95,6 +101,9 @@ importers:
       '@tool-evolver/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@tool-evolver/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
       zod:
         specifier: ^3.25.76
         version: 3.25.76
