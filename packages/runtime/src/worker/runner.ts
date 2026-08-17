@@ -4,9 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import vm from "node:vm";
 import { type ToolManifest, ToolManifestSchema } from "@tool-evolver/contracts";
-import type { InvocationGrant } from "../policy/grant.js";
 import { CapabilityBrokerManager } from "../brokers/manager.js";
 import type { SecretBroker } from "../brokers/secret-broker.js";
+import type { InvocationGrant } from "../policy/grant.js";
+import { validateAgainstSchema } from "./bootstrap.js";
+import { WorkerProcess } from "./process.js";
 import {
   type ErrorMessage,
   type LogMessage,
@@ -21,8 +23,6 @@ import {
   createToolContext,
   defineTool,
 } from "./sdk.js";
-import { validateAgainstSchema } from "./bootstrap.js";
-import { WorkerProcess } from "./process.js";
 
 /**
  * Tool execution modes.
@@ -100,15 +100,24 @@ export class DeterministicWorkerSandbox {
     manifest: ToolManifest | Record<string, unknown>,
     bundleOrHandler: string | ((ctx: ToolContext) => unknown | Promise<unknown>),
     input: unknown,
-    options: ToolExecutionOptions = {}
+    options: ToolExecutionOptions = {},
   ): Promise<InvocationResult> {
     const startTime = Date.now();
-    const invocationId = options.grant?.invocationId ?? options.sessionId ?? `inv_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const invocationId =
+      options.grant?.invocationId ??
+      options.sessionId ??
+      `inv_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const manifestLimits =
-      manifest && typeof manifest === "object" && "limits" in manifest && manifest.limits && typeof manifest.limits === "object"
+      manifest &&
+      typeof manifest === "object" &&
+      "limits" in manifest &&
+      manifest.limits &&
+      typeof manifest.limits === "object"
         ? (manifest.limits as Record<string, unknown>)
         : {};
-    const timeoutMs = options.timeoutMs ?? (typeof manifestLimits.timeoutMs === "number" ? manifestLimits.timeoutMs : 30000);
+    const timeoutMs =
+      options.timeoutMs ??
+      (typeof manifestLimits.timeoutMs === "number" ? manifestLimits.timeoutMs : 30000);
     const logs: LogMessage[] = [];
     const progressList: ProgressMessage[] = [];
 
@@ -149,8 +158,14 @@ export class DeterministicWorkerSandbox {
       // 2. Set up context & capability brokers
       let effectiveBrokerHandler = options.brokerHandler;
       if (!effectiveBrokerHandler) {
-        const toolName = typeof manifest === "object" && manifest !== null && "name" in manifest ? String(manifest.name) : undefined;
-        const toolVersion = typeof manifest === "object" && manifest !== null && "version" in manifest ? String(manifest.version) : undefined;
+        const toolName =
+          typeof manifest === "object" && manifest !== null && "name" in manifest
+            ? String(manifest.name)
+            : undefined;
+        const toolVersion =
+          typeof manifest === "object" && manifest !== null && "version" in manifest
+            ? String(manifest.version)
+            : undefined;
 
         if (options.brokerManager) {
           effectiveBrokerHandler = options.brokerManager.createRequestHandler({
@@ -178,9 +193,11 @@ export class DeterministicWorkerSandbox {
         }
       }
 
-      const defaultBrokerHandler: BrokerRequestHandlerFn = effectiveBrokerHandler ?? (async () => {
-        throw new Error("No broker handler configured for sandbox");
-      });
+      const defaultBrokerHandler: BrokerRequestHandlerFn =
+        effectiveBrokerHandler ??
+        (async () => {
+          throw new Error("No broker handler configured for sandbox");
+        });
       const toolContext = createToolContext({
         input,
         invocationId,
@@ -212,10 +229,10 @@ export class DeterministicWorkerSandbox {
             const target = fs.existsSync(entryTs)
               ? entryTs
               : fs.existsSync(entryJs)
-              ? entryJs
-              : fs.existsSync(entryDirect)
-              ? entryDirect
-              : null;
+                ? entryJs
+                : fs.existsSync(entryDirect)
+                  ? entryDirect
+                  : null;
             if (!target) {
               throw new Error(`Cannot find entrypoint in bundle directory: ${bundlePath}`);
             }
@@ -232,7 +249,11 @@ export class DeterministicWorkerSandbox {
       }
 
       // 4. Run handler with timeout
-      const { promise: execPromise, resolve: execResolve, reject: execReject } = withResolvers<unknown>();
+      const {
+        promise: execPromise,
+        resolve: execResolve,
+        reject: execReject,
+      } = withResolvers<unknown>();
 
       const timer = setTimeout(() => {
         execReject(new Error(`Execution timed out after ${timeoutMs}ms`));
@@ -248,7 +269,7 @@ export class DeterministicWorkerSandbox {
           (err) => {
             clearTimeout(timer);
             execReject(err);
-          }
+          },
         );
 
       let rawOutput: unknown;
@@ -315,7 +336,7 @@ export class DeterministicWorkerSandbox {
    */
   private static compileSandboxedHandler(
     code: string,
-    options: ToolExecutionOptions
+    options: ToolExecutionOptions,
   ): (ctx: ToolContext) => unknown | Promise<unknown> {
     const sandboxExports: Record<string, unknown> = {};
     const sandboxModule = { exports: sandboxExports };
@@ -350,12 +371,12 @@ export class DeterministicWorkerSandbox {
       },
       require: (moduleName: string) => {
         throw new Error(
-          `Permission Denied: direct require('${moduleName}') is not allowed in sandbox. Use context.broker instead.`
+          `Permission Denied: direct require('${moduleName}') is not allowed in sandbox. Use context.broker instead.`,
         );
       },
       fetch: () => {
         throw new Error(
-          "Permission Denied: direct fetch() is not allowed in permissionless sandbox. Use context.broker.net.fetch instead."
+          "Permission Denied: direct fetch() is not allowed in permissionless sandbox. Use context.broker.net.fetch instead.",
         );
       },
     };
@@ -381,7 +402,9 @@ export class DeterministicWorkerSandbox {
         timeout: options.timeoutMs ?? 30000,
       });
     } catch (compileErr) {
-      throw new Error(`Failed to execute sandboxed tool script: ${compileErr instanceof Error ? compileErr.message : String(compileErr)}`);
+      throw new Error(
+        `Failed to execute sandboxed tool script: ${compileErr instanceof Error ? compileErr.message : String(compileErr)}`,
+      );
     }
 
     const exported = sandboxModule.exports;
@@ -389,14 +412,14 @@ export class DeterministicWorkerSandbox {
       typeof exported === "function"
         ? exported
         : typeof (exported as Record<string, unknown>).default === "function"
-        ? (exported as Record<string, unknown>).default
-        : typeof (exported as Record<string, unknown>).execute === "function"
-        ? (exported as Record<string, unknown>).execute
-        : typeof (exported as Record<string, unknown>).run === "function"
-        ? (exported as Record<string, unknown>).run
-        : typeof (exported as Record<string, unknown>).handler === "function"
-        ? (exported as Record<string, unknown>).handler
-        : null;
+          ? (exported as Record<string, unknown>).default
+          : typeof (exported as Record<string, unknown>).execute === "function"
+            ? (exported as Record<string, unknown>).execute
+            : typeof (exported as Record<string, unknown>).run === "function"
+              ? (exported as Record<string, unknown>).run
+              : typeof (exported as Record<string, unknown>).handler === "function"
+                ? (exported as Record<string, unknown>).handler
+                : null;
 
     if (!handler || typeof handler !== "function") {
       throw new Error("Sandboxed code does not export a callable tool handler");
@@ -413,7 +436,7 @@ export class ToolRuntime {
   private readonly brokerManager?: CapabilityBrokerManager;
   constructor(
     private readonly defaultOptions: ToolExecutionOptions = {},
-    brokerManager?: CapabilityBrokerManager
+    brokerManager?: CapabilityBrokerManager,
   ) {
     if (brokerManager) {
       this.brokerManager = brokerManager;
@@ -433,9 +456,10 @@ export class ToolRuntime {
     manifest: ToolManifest | Record<string, unknown>,
     bundlePathOrHandler: string | ((ctx: ToolContext) => unknown | Promise<unknown>),
     input: unknown,
-    options: ToolExecutionOptions = {}
+    options: ToolExecutionOptions = {},
   ): Promise<InvocationResult> {
-    let brokerManager = options.brokerManager ?? this.brokerManager ?? this.defaultOptions.brokerManager;
+    let brokerManager =
+      options.brokerManager ?? this.brokerManager ?? this.defaultOptions.brokerManager;
     if (!brokerManager && (options.secretBroker || options.secrets)) {
       brokerManager = new CapabilityBrokerManager({
         secretBroker: options.secretBroker,
@@ -452,12 +476,16 @@ export class ToolRuntime {
     const mode = mergedOptions.mode ?? "auto";
 
     // If in-process or sandbox-vm explicitly selected, or handler is a direct function:
-    if (mode === "in-process" || mode === "sandbox-vm" || typeof bundlePathOrHandler === "function") {
+    if (
+      mode === "in-process" ||
+      mode === "sandbox-vm" ||
+      typeof bundlePathOrHandler === "function"
+    ) {
       return await DeterministicWorkerSandbox.execute(
         manifest,
         bundlePathOrHandler,
         input,
-        mergedOptions
+        mergedOptions,
       );
     }
 
@@ -467,7 +495,7 @@ export class ToolRuntime {
     if (mode === "deno" || (mode === "auto" && denoAvailable)) {
       if (!denoAvailable && mode === "deno") {
         throw new Error(
-          `Deno executable '${mergedOptions.denoExecutable ?? "deno"}' is not available in PATH`
+          `Deno executable '${mergedOptions.denoExecutable ?? "deno"}' is not available in PATH`,
         );
       }
 
@@ -508,7 +536,7 @@ export class ToolRuntime {
       manifest,
       bundlePathOrHandler,
       input,
-      mergedOptions
+      mergedOptions,
     );
   }
 }

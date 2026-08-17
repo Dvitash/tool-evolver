@@ -1,18 +1,18 @@
 import { randomUUID } from "node:crypto";
 import type { DatabasePool, Queryable } from "../../../db/client.js";
-import { TenantGuard, type TenantContext } from "../../../tenant.js";
+import { type TenantContext, TenantGuard } from "../../../tenant.js";
 import type { AssignmentStore } from "../assignment.js";
 import { aggregateTelemetryEvents } from "../evaluator.js";
-import {
-  type CanaryMetricsWindow,
-  type RolloutDecision,
-  type RolloutEntity,
-  type RolloutFilter,
-  type RolloutIncidentRecord,
-  type RolloutOverrideRecord,
-  type RolloutSessionAssignment,
-  type RolloutState,
-  type RolloutTelemetryEvent,
+import type {
+  CanaryMetricsWindow,
+  RolloutDecision,
+  RolloutEntity,
+  RolloutFilter,
+  RolloutIncidentRecord,
+  RolloutOverrideRecord,
+  RolloutSessionAssignment,
+  RolloutState,
+  RolloutTelemetryEvent,
 } from "../types.js";
 
 /**
@@ -33,10 +33,7 @@ export class RolloutRepository implements AssignmentStore {
     tenant: { accountId?: string; workspaceId: string },
     rollout: RolloutEntity,
   ): Promise<RolloutEntity> {
-    const accountId =
-      tenant.accountId ??
-      rollout.accountId ??
-      "acc_default";
+    const accountId = tenant.accountId ?? rollout.accountId ?? "acc_default";
     const workspaceId = tenant.workspaceId;
     const now = new Date().toISOString();
 
@@ -116,10 +113,7 @@ export class RolloutRepository implements AssignmentStore {
    * Retrieve a Rollout by ID.
    */
   async getRollout(rolloutId: string): Promise<RolloutEntity | null> {
-    const res = await this.pool.query(
-      `SELECT * FROM rollouts WHERE id = $1`,
-      [rolloutId],
-    );
+    const res = await this.pool.query(`SELECT * FROM rollouts WHERE id = $1`, [rolloutId]);
     if (res.rows.length === 0) return null;
     return this.mapRolloutRow(res.rows[0]);
   }
@@ -161,10 +155,7 @@ export class RolloutRepository implements AssignmentStore {
   /**
    * Update an existing Rollout.
    */
-  async updateRollout(
-    rolloutId: string,
-    updates: Partial<RolloutEntity>,
-  ): Promise<RolloutEntity> {
+  async updateRollout(rolloutId: string, updates: Partial<RolloutEntity>): Promise<RolloutEntity> {
     const existing = await this.getRollout(rolloutId);
     if (!existing) {
       throw new Error(`Rollout not found: ${rolloutId}`);
@@ -226,10 +217,7 @@ export class RolloutRepository implements AssignmentStore {
   /**
    * List rollouts matching filters.
    */
-  async listRollouts(
-    workspaceId: string,
-    filter?: RolloutFilter,
-  ): Promise<RolloutEntity[]> {
+  async listRollouts(workspaceId: string, filter?: RolloutFilter): Promise<RolloutEntity[]> {
     let sql = `SELECT * FROM rollouts WHERE workspace_id = $1`;
     const params: unknown[] = [workspaceId];
 
@@ -364,19 +352,13 @@ export class RolloutRepository implements AssignmentStore {
       action: row.action as RolloutDecision["action"],
       reason: String(row.reason),
       confidence: Number(row.confidence),
-      triggers:
-        typeof row.triggers === "string"
-          ? JSON.parse(row.triggers)
-          : (row.triggers ?? []),
+      triggers: typeof row.triggers === "string" ? JSON.parse(row.triggers) : (row.triggers ?? []),
       metrics: row.metrics
         ? typeof row.metrics === "string"
           ? JSON.parse(row.metrics)
           : (row.metrics as CanaryMetricsWindow)
         : undefined,
-      metadata:
-        typeof row.metadata === "string"
-          ? JSON.parse(row.metadata)
-          : (row.metadata ?? {}),
+      metadata: typeof row.metadata === "string" ? JSON.parse(row.metadata) : (row.metadata ?? {}),
       evaluatedAt: String(row.evaluated_at),
     }));
   }
@@ -492,9 +474,7 @@ export class RolloutRepository implements AssignmentStore {
   /**
    * Save a rollout incident record.
    */
-  async saveIncident(
-    incident: RolloutIncidentRecord,
-  ): Promise<RolloutIncidentRecord> {
+  async saveIncident(incident: RolloutIncidentRecord): Promise<RolloutIncidentRecord> {
     await this.pool.query(
       `INSERT INTO rollout_incidents (
         id,
@@ -559,10 +539,7 @@ export class RolloutRepository implements AssignmentStore {
       severity: row.severity as RolloutIncidentRecord["severity"],
       incidentType: row.incident_type as RolloutIncidentRecord["incidentType"],
       description: String(row.description),
-      evidence:
-        typeof row.evidence === "string"
-          ? JSON.parse(row.evidence)
-          : (row.evidence ?? {}),
+      evidence: typeof row.evidence === "string" ? JSON.parse(row.evidence) : (row.evidence ?? {}),
       triggeredRollback: Boolean(row.triggered_rollback),
       createdAt: String(row.created_at),
     }));
@@ -575,9 +552,7 @@ export class RolloutRepository implements AssignmentStore {
   /**
    * Save a user configuration override.
    */
-  async saveOverride(
-    override: RolloutOverrideRecord,
-  ): Promise<RolloutOverrideRecord> {
+  async saveOverride(override: RolloutOverrideRecord): Promise<RolloutOverrideRecord> {
     await this.pool.query(
       `INSERT INTO rollout_overrides (
         workspace_id,
@@ -614,10 +589,7 @@ export class RolloutRepository implements AssignmentStore {
   /**
    * Get an override by workspace and tool.
    */
-  async getOverride(
-    workspaceId: string,
-    toolId: string,
-  ): Promise<RolloutOverrideRecord | null> {
+  async getOverride(workspaceId: string, toolId: string): Promise<RolloutOverrideRecord | null> {
     const res = await this.pool.query(
       `SELECT * FROM rollout_overrides WHERE workspace_id = $1 AND tool_id = $2`,
       [workspaceId, toolId],
@@ -740,9 +712,7 @@ export class RolloutRepository implements AssignmentStore {
         ? String(row.security_violation_reason)
         : undefined,
       quarantineSignal: Boolean(row.quarantine_signal),
-      quarantineReason: row.quarantine_reason
-        ? String(row.quarantine_reason)
-        : undefined,
+      quarantineReason: row.quarantine_reason ? String(row.quarantine_reason) : undefined,
       capabilityBreach: Boolean(row.capability_breach),
       schemaMismatch: Boolean(row.schema_mismatch),
       signatureValid: Boolean(row.signature_valid ?? true),
@@ -766,12 +736,7 @@ export class RolloutRepository implements AssignmentStore {
     const windowStart = options?.windowStart ?? new Date(Date.now() - 3600000).toISOString();
     const windowEnd = new Date().toISOString();
 
-    const events = await this.getTelemetryEvents(
-      workspaceId,
-      toolId,
-      version,
-      windowStart,
-    );
+    const events = await this.getTelemetryEvents(workspaceId, toolId, version, windowStart);
 
     return aggregateTelemetryEvents(
       events,
@@ -803,11 +768,11 @@ export class RolloutRepository implements AssignmentStore {
       targetDeviceIds:
         typeof row.target_device_ids === "string"
           ? JSON.parse(row.target_device_ids)
-          : (row.target_device_ids as string[] ?? []),
+          : ((row.target_device_ids as string[]) ?? []),
       activeDeviceIds:
         typeof row.active_device_ids === "string"
           ? JSON.parse(row.active_device_ids)
-          : (row.active_device_ids as string[] ?? []),
+          : ((row.active_device_ids as string[]) ?? []),
       invocationsCount: Number(row.invocations_count ?? 0),
       failureCount: Number(row.failure_count ?? 0),
       consecutiveCleanWindows: Number(row.consecutive_clean_windows ?? 0),

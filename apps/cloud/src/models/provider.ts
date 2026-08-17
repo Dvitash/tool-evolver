@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
-import {
+import type {
   ModelCapability,
   ModelProvider,
   ModelTaskClass,
@@ -66,9 +66,7 @@ export class ProviderTimeoutError extends ProviderError {
 /**
  * Synthetic mock response generator function.
  */
-export type MockResponseGenerator = (
-  req: ProviderExecutionRequest,
-) => Promise<unknown> | unknown;
+export type MockResponseGenerator = (req: ProviderExecutionRequest) => Promise<unknown> | unknown;
 
 /**
  * In-memory deterministic fake model provider for testing and offline simulation.
@@ -77,7 +75,7 @@ export class FakeModelProvider implements ModelProvider {
   public readonly id: string;
   public readonly name: string;
   public readonly capabilities: ModelCapability[];
-  public simulatedLatencyMs: number = 0;
+  public simulatedLatencyMs = 0;
   public recordedCalls: ProviderExecutionRequest[] = [];
 
   private mockResponses: Array<{
@@ -90,12 +88,14 @@ export class FakeModelProvider implements ModelProvider {
     action: (req: ProviderExecutionRequest) => never | string | unknown;
   }> = [];
 
-  constructor(options: {
-    id?: string;
-    name?: string;
-    capabilities?: ModelCapability[];
-    simulatedLatencyMs?: number;
-  } = {}) {
+  constructor(
+    options: {
+      id?: string;
+      name?: string;
+      capabilities?: ModelCapability[];
+      simulatedLatencyMs?: number;
+    } = {},
+  ) {
     this.id = options.id ?? "fake-provider";
     this.name = options.name ?? "Fake In-Memory Model Provider";
     this.simulatedLatencyMs = options.simulatedLatencyMs ?? 0;
@@ -137,7 +137,8 @@ export class FakeModelProvider implements ModelProvider {
     matcher: (req: ProviderExecutionRequest) => boolean,
     generator: MockResponseGenerator | unknown,
   ): void {
-    const genFn = typeof generator === "function" ? (generator as MockResponseGenerator) : () => generator;
+    const genFn =
+      typeof generator === "function" ? (generator as MockResponseGenerator) : () => generator;
     this.mockResponses.unshift({ matcher, generator: genFn });
   }
 
@@ -163,14 +164,20 @@ export class FakeModelProvider implements ModelProvider {
   /**
    * Injects invalid unparseable JSON text.
    */
-  injectInvalidJson(matcher: (req: ProviderExecutionRequest) => boolean, invalidText = "{ malformed json ..."): void {
+  injectInvalidJson(
+    matcher: (req: ProviderExecutionRequest) => boolean,
+    invalidText = "{ malformed json ...",
+  ): void {
     this.injectFault(matcher, () => invalidText);
   }
 
   /**
    * Injects a response that violates the expected schema.
    */
-  injectSchemaViolation(matcher: (req: ProviderExecutionRequest) => boolean, violationData: unknown = { unexpectedField: 123 }): void {
+  injectSchemaViolation(
+    matcher: (req: ProviderExecutionRequest) => boolean,
+    violationData: unknown = { unexpectedField: 123 },
+  ): void {
     this.injectFault(matcher, () => JSON.stringify(violationData));
   }
 
@@ -211,7 +218,8 @@ export class FakeModelProvider implements ModelProvider {
     for (const mock of this.mockResponses) {
       if (mock.matcher(request)) {
         const responseData = await mock.generator(request);
-        const rawText = typeof responseData === "string" ? responseData : JSON.stringify(responseData);
+        const rawText =
+          typeof responseData === "string" ? responseData : JSON.stringify(responseData);
         let parsedJson: unknown;
         try {
           parsedJson = JSON.parse(rawText);
@@ -362,7 +370,8 @@ export class FakeModelProvider implements ModelProvider {
           security: 98,
           utility: 87,
         },
-        rationale: "Exceeds all quality gates, zero capability envelope violations, 4x throughput improvement.",
+        rationale:
+          "Exceeds all quality gates, zero capability envelope violations, 4x throughput improvement.",
         recommendations: ["Promote to canary deployment tier."],
       };
     }
@@ -471,7 +480,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
     };
 
     if (this.apiKey) {
-      headers["Authorization"] = `Bearer ${this.apiKey}`;
+      headers.Authorization = `Bearer ${this.apiKey}`;
     }
     if (this.organizationId) {
       headers["OpenAI-Organization"] = this.organizationId;
@@ -525,7 +534,10 @@ export class OpenAiCompatibleProvider implements ModelProvider {
         throw new ProviderTimeoutError(`Request timed out after ${timeout}ms`, this.id);
       }
       const message = err instanceof Error ? err.message : String(err);
-      throw new ProviderNetworkError(`Network error communicating with provider: ${message}`, this.id);
+      throw new ProviderNetworkError(
+        `Network error communicating with provider: ${message}`,
+        this.id,
+      );
     } finally {
       clearTimeout(timeoutId);
     }
@@ -548,10 +560,18 @@ export class OpenAiCompatibleProvider implements ModelProvider {
         throw new ProviderRateLimitError(`Rate limit exceeded: ${errorBody}`, this.id, retryAfter);
       }
       if (response.status >= 500) {
-        throw new ProviderServerError(`Server returned error ${response.status}: ${errorBody}`, this.id, response.status);
+        throw new ProviderServerError(
+          `Server returned error ${response.status}: ${errorBody}`,
+          this.id,
+          response.status,
+        );
       }
 
-      throw new ProviderError(`Provider request failed with status ${response.status}: ${errorBody}`, this.id, response.status);
+      throw new ProviderError(
+        `Provider request failed with status ${response.status}: ${errorBody}`,
+        this.id,
+        response.status,
+      );
     }
 
     let responseJson: OpenAiChatCompletionResponse;

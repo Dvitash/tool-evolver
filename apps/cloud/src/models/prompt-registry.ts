@@ -1,6 +1,6 @@
 import { hashCanonical } from "@tool-evolver/contracts";
 import { z } from "zod";
-import { ModelTaskClass, ModelTaskClassSchema } from "./types.js";
+import { type ModelTaskClass, ModelTaskClassSchema } from "./types.js";
 
 /**
  * Prompt template definition with typed inputs and schemas.
@@ -262,7 +262,8 @@ export class PromptRegistry {
       id: "opportunity_detection",
       version: "1.0.0",
       taskClass: "opportunity_detection",
-      description: "Detects tool evolution opportunities from session telemetry and trace patterns.",
+      description:
+        "Detects tool evolution opportunities from session telemetry and trace patterns.",
       systemInstruction:
         "You are the Tool Evolver Opportunity Detection Engine. Analyze the provided tool execution traces and session telemetry. Detect patterns indicating repeated failures, high latency, missing tool capabilities, or evolution opportunities. Output structured JSON matching the specified schema.",
       userTemplate:
@@ -285,7 +286,16 @@ export class PromptRegistry {
                 evidence: { type: "array", items: { type: "string" } },
                 priority: { type: "string", enum: ["low", "medium", "high", "critical"] },
               },
-              required: ["id", "title", "description", "taskClass", "pattern", "confidenceScore", "evidence", "priority"],
+              required: [
+                "id",
+                "title",
+                "description",
+                "taskClass",
+                "pattern",
+                "confidenceScore",
+                "evidence",
+                "priority",
+              ],
             },
           },
         },
@@ -315,7 +325,15 @@ export class PromptRegistry {
           securityRisks: { type: "array", items: { type: "string" } },
           estimatedImpact: { type: "string" },
         },
-        required: ["planId", "targetToolName", "action", "summary", "interfaceChanges", "securityRisks", "estimatedImpact"],
+        required: [
+          "planId",
+          "targetToolName",
+          "action",
+          "summary",
+          "interfaceChanges",
+          "securityRisks",
+          "estimatedImpact",
+        ],
       },
     });
 
@@ -341,7 +359,15 @@ export class PromptRegistry {
           code: { type: "string" },
           runtimeRequirements: { type: "array", items: { type: "string" } },
         },
-        required: ["toolId", "name", "version", "description", "schema", "code", "runtimeRequirements"],
+        required: [
+          "toolId",
+          "name",
+          "version",
+          "description",
+          "schema",
+          "code",
+          "runtimeRequirements",
+        ],
       },
     });
 
@@ -421,7 +447,14 @@ export class PromptRegistry {
           rationale: { type: "string" },
           recommendations: { type: "array", items: { type: "string" } },
         },
-        required: ["candidateId", "overallScore", "approved", "categories", "rationale", "recommendations"],
+        required: [
+          "candidateId",
+          "overallScore",
+          "approved",
+          "categories",
+          "rationale",
+          "recommendations",
+        ],
       },
     });
   }

@@ -30,11 +30,43 @@ function makeManifest(id: string, name: string, scope = "workspace" as const): T
       maxOutputSizeBytes: 1048576,
     },
     capabilities: {
-      fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-      net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https" as const], allowLocalhost: false, denyPrivateRanges: true },
-      command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-      secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-      limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+      fs: {
+        readPaths: [],
+        writePaths: [],
+        allowWorkspaceRoot: false,
+        allowTemp: false,
+        denyPaths: [],
+        maxFileSizeBytes: 10485760,
+      },
+      net: {
+        allowOutbound: false,
+        allowedDomains: [],
+        allowedHosts: [],
+        allowedPorts: [],
+        allowedProtocols: ["https" as const],
+        allowLocalhost: false,
+        denyPrivateRanges: true,
+      },
+      command: {
+        allowShellExecution: false,
+        allowedCommands: [],
+        allowedBinaries: [],
+        forbiddenPatterns: [],
+        allowEnvPassthrough: [],
+      },
+      secrets: {
+        allowedSecretNames: [],
+        allowedPrefixes: [],
+        denyDirectRead: true,
+        injectAsEnv: true,
+      },
+      limits: {
+        maxConcurrentExecutions: 4,
+        maxCpuUsagePercent: 100,
+        maxMemoryMb: 128,
+        maxExecutionTimeMs: 30000,
+        maxOutputSizeBytes: 1048576,
+      },
     },
     limits: {
       timeoutMs: 30000,
@@ -259,7 +291,9 @@ describe("Offline Degradation & Fault Tolerance", () => {
     const gatewayRouter = createRegistryGatewayRouter(registry);
 
     // Initial success
-    const res1 = await gatewayRouter.callTool(mockWorkspaceContext, "translate_text", { input: "hello" });
+    const res1 = await gatewayRouter.callTool(mockWorkspaceContext, "translate_text", {
+      input: "hello",
+    });
     expect(res1.content[0]).toEqual({ type: "text", text: "Translated: hello" });
 
     // Disconnect
@@ -268,7 +302,9 @@ describe("Offline Degradation & Fault Tolerance", () => {
     expect(circuitBreaker.getState()).toBe("OPEN");
 
     // Call fails
-    await expect(gatewayRouter.callTool(mockWorkspaceContext, "translate_text", { input: "hello" })).rejects.toThrow();
+    await expect(
+      gatewayRouter.callTool(mockWorkspaceContext, "translate_text", { input: "hello" }),
+    ).rejects.toThrow();
 
     // Reconnect & advance cooldown timer
     mockService.simulateOnline();
@@ -276,7 +312,9 @@ describe("Offline Degradation & Fault Tolerance", () => {
     expect(circuitBreaker.getState()).toBe("HALF_OPEN");
 
     // Call succeeds and resets circuit to CLOSED
-    const res2 = await gatewayRouter.callTool(mockWorkspaceContext, "translate_text", { input: "world" });
+    const res2 = await gatewayRouter.callTool(mockWorkspaceContext, "translate_text", {
+      input: "world",
+    });
     expect(res2.content[0]).toEqual({ type: "text", text: "Translated: world" });
     expect(circuitBreaker.getState()).toBe("CLOSED");
     expect(circuitBreaker.getHealth().status).toBe("online");

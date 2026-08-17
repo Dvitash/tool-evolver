@@ -1,7 +1,7 @@
-import { DatabasePool, Queryable } from "../../db/client.js";
-import { TenantContext } from "../../tenant.js";
-import { NormalizedEventEntity } from "../models/events.js";
-import {
+import type { DatabasePool, Queryable } from "../../db/client.js";
+import type { TenantContext } from "../../tenant.js";
+import type { NormalizedEventEntity } from "../models/events.js";
+import type {
   SessionBranchEntity,
   SessionEntity,
   SessionFidelity,
@@ -129,15 +129,9 @@ export class SessionRepository {
   /**
    * List sessions matching query filters.
    */
-  async listSessions(
-    filter: SessionQueryFilter,
-    db?: Queryable,
-  ): Promise<SessionEntity[]> {
+  async listSessions(filter: SessionQueryFilter, db?: Queryable): Promise<SessionEntity[]> {
     const client = db ?? this.pool;
-    const conditions: string[] = [
-      "account_id = $1",
-      "workspace_id = $2",
-    ];
+    const conditions: string[] = ["account_id = $1", "workspace_id = $2"];
     const params: unknown[] = [filter.accountId, filter.workspaceId];
     let paramIdx = 3;
 
@@ -185,7 +179,8 @@ export class SessionRepository {
   ): Promise<void> {
     const client = db ?? this.pool;
     const now = new Date().toISOString();
-    const finalEndedAt = endedAt !== undefined ? endedAt : (status === "completed" || status === "failed" ? now : null);
+    const finalEndedAt =
+      endedAt !== undefined ? endedAt : status === "completed" || status === "failed" ? now : null;
 
     await client.query(
       `UPDATE sessions SET status = $1, ended_at = $2, updated_at = $3 WHERE account_id = $4 AND workspace_id = $5 AND id = $6`,
@@ -413,10 +408,10 @@ export class SessionRepository {
       eventCount: Number(row.event_count ?? 0),
       summaryByKind: (typeof row.summary_by_kind === "string"
         ? JSON.parse(row.summary_by_kind)
-        : row.summary_by_kind ?? {}) as Record<string, number>,
+        : (row.summary_by_kind ?? {})) as Record<string, number>,
       metadata: (typeof row.metadata === "string"
         ? JSON.parse(row.metadata)
-        : row.metadata ?? {}) as Record<string, unknown>,
+        : (row.metadata ?? {})) as Record<string, unknown>,
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     };
@@ -438,7 +433,7 @@ export class SessionRepository {
       eventCount: Number(row.event_count ?? 0),
       metadata: (typeof row.metadata === "string"
         ? JSON.parse(row.metadata)
-        : row.metadata ?? {}) as Record<string, unknown>,
+        : (row.metadata ?? {})) as Record<string, unknown>,
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     };

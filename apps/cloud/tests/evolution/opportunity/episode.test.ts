@@ -12,7 +12,12 @@ describe("EpisodeSegmenter", () => {
   it("should segment events by session boundaries", () => {
     const segmenter = new EpisodeSegmenter();
     const events = [
-      createMessageEvent({ eventId: "e1", sessionId: "sess-1", role: "user", content: "Run tests" }),
+      createMessageEvent({
+        eventId: "e1",
+        sessionId: "sess-1",
+        role: "user",
+        content: "Run tests",
+      }),
       createCommandExecEvent({ eventId: "e2", sessionId: "sess-1", command: "pnpm test" }),
       createMessageEvent({ eventId: "e3", sessionId: "sess-2", role: "user", content: "Fix file" }),
       createFileEditEvent({ eventId: "e4", sessionId: "sess-2", filePath: "src/index.ts" }),
@@ -34,10 +39,32 @@ describe("EpisodeSegmenter", () => {
     const t3 = new Date(1700000003000).toISOString();
 
     const events = [
-      createMessageEvent({ eventId: "e1", sessionId: "sess-1", role: "user", content: "Check status", timestamp: t0 }),
-      createCommandExecEvent({ eventId: "e2", sessionId: "sess-1", command: "git status", timestamp: t1 }),
-      createMessageEvent({ eventId: "e3", sessionId: "sess-1", role: "user", content: "Now build", timestamp: t2 }),
-      createCommandExecEvent({ eventId: "e4", sessionId: "sess-1", command: "pnpm build", timestamp: t3 }),
+      createMessageEvent({
+        eventId: "e1",
+        sessionId: "sess-1",
+        role: "user",
+        content: "Check status",
+        timestamp: t0,
+      }),
+      createCommandExecEvent({
+        eventId: "e2",
+        sessionId: "sess-1",
+        command: "git status",
+        timestamp: t1,
+      }),
+      createMessageEvent({
+        eventId: "e3",
+        sessionId: "sess-1",
+        role: "user",
+        content: "Now build",
+        timestamp: t2,
+      }),
+      createCommandExecEvent({
+        eventId: "e4",
+        sessionId: "sess-1",
+        command: "pnpm build",
+        timestamp: t3,
+      }),
     ];
 
     const episodes = segmenter.segmentEvents(events);
@@ -56,10 +83,32 @@ describe("EpisodeSegmenter", () => {
     const t3 = new Date(1700000205000).toISOString();
 
     const events = [
-      createToolCallEvent({ eventId: "e1", sessionId: "sess-1", toolName: "read_file", timestamp: t0 }),
-      createToolResultEvent({ eventId: "e2", sessionId: "sess-1", toolCallId: "e1", result: "file content", timestamp: t1 }),
-      createToolCallEvent({ eventId: "e3", sessionId: "sess-1", toolName: "edit_file", timestamp: t2 }),
-      createToolResultEvent({ eventId: "e4", sessionId: "sess-1", toolCallId: "e3", result: "ok", timestamp: t3 }),
+      createToolCallEvent({
+        eventId: "e1",
+        sessionId: "sess-1",
+        toolName: "read_file",
+        timestamp: t0,
+      }),
+      createToolResultEvent({
+        eventId: "e2",
+        sessionId: "sess-1",
+        toolCallId: "e1",
+        result: "file content",
+        timestamp: t1,
+      }),
+      createToolCallEvent({
+        eventId: "e3",
+        sessionId: "sess-1",
+        toolName: "edit_file",
+        timestamp: t2,
+      }),
+      createToolResultEvent({
+        eventId: "e4",
+        sessionId: "sess-1",
+        toolCallId: "e3",
+        result: "ok",
+        timestamp: t3,
+      }),
     ];
 
     const episodes = segmenter.segmentEvents(events);
@@ -73,9 +122,29 @@ describe("EpisodeSegmenter", () => {
     const t2 = new Date(1700000004000).toISOString();
 
     const events = [
-      createToolCallEvent({ eventId: "e1", sessionId: "sess-1", toolName: "bash", parameters: { command: "pnpm test" }, timestamp: t0 }),
-      createToolResultEvent({ eventId: "e2", sessionId: "sess-1", toolCallId: "e1", result: "test failed", isError: true, timestamp: t1, durationMs: 2000 }),
-      createToolCallEvent({ eventId: "e3", sessionId: "sess-1", toolName: "bash", parameters: { command: "pnpm test" }, timestamp: t2 }),
+      createToolCallEvent({
+        eventId: "e1",
+        sessionId: "sess-1",
+        toolName: "bash",
+        parameters: { command: "pnpm test" },
+        timestamp: t0,
+      }),
+      createToolResultEvent({
+        eventId: "e2",
+        sessionId: "sess-1",
+        toolCallId: "e1",
+        result: "test failed",
+        isError: true,
+        timestamp: t1,
+        durationMs: 2000,
+      }),
+      createToolCallEvent({
+        eventId: "e3",
+        sessionId: "sess-1",
+        toolName: "bash",
+        parameters: { command: "pnpm test" },
+        timestamp: t2,
+      }),
     ];
 
     const episodes = segmenter.segmentEvents(events);

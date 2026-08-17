@@ -1,8 +1,5 @@
+import { ISOTimestampSchema, IdentifierSchema } from "@tool-evolver/contracts";
 import { z } from "zod";
-import {
-  ISOTimestampSchema,
-  IdentifierSchema,
-} from "@tool-evolver/contracts";
 
 /**
  * Target types that can be held under retention policies.
@@ -63,23 +60,14 @@ export interface RetentionPolicy {
 /**
  * Export job status.
  */
-export const ExportJobStatusSchema = z.enum([
-  "pending",
-  "processing",
-  "completed",
-  "failed",
-]);
+export const ExportJobStatusSchema = z.enum(["pending", "processing", "completed", "failed"]);
 
 export type ExportJobStatus = z.infer<typeof ExportJobStatusSchema>;
 
 /**
  * Export scope.
  */
-export const ExportScopeSchema = z.enum([
-  "account",
-  "workspace",
-  "session",
-]);
+export const ExportScopeSchema = z.enum(["account", "workspace", "session"]);
 
 export type ExportScope = z.infer<typeof ExportScopeSchema>;
 
@@ -108,23 +96,14 @@ export type ExportJobEntity = z.infer<typeof ExportJobEntitySchema>;
 /**
  * Deletion job status.
  */
-export const DeletionJobStatusSchema = z.enum([
-  "pending",
-  "processing",
-  "completed",
-  "failed",
-]);
+export const DeletionJobStatusSchema = z.enum(["pending", "processing", "completed", "failed"]);
 
 export type DeletionJobStatus = z.infer<typeof DeletionJobStatusSchema>;
 
 /**
  * Deletion scope.
  */
-export const DeletionScopeSchema = z.enum([
-  "account",
-  "workspace",
-  "session",
-]);
+export const DeletionScopeSchema = z.enum(["account", "workspace", "session"]);
 
 export type DeletionScope = z.infer<typeof DeletionScopeSchema>;
 

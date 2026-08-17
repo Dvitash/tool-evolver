@@ -1,4 +1,4 @@
-import { NormalizedSessionEvent } from "@tool-evolver/contracts";
+import type { NormalizedSessionEvent } from "@tool-evolver/contracts";
 import { describe, expect, it } from "vitest";
 import { IngestionDeduplicator } from "../../src/ingestion/deduplicator.js";
 import { MemoryIngestionReceiptRepository } from "../../src/ingestion/receipt-repository.js";
@@ -110,7 +110,9 @@ describe("IngestionDeduplicator", () => {
 
     expect(result.isDuplicate).toBe(false);
     expect(result.isConflict).toBe(true);
-    expect(result.reason).toContain("Batch 'batch-001' already exists with a different content hash");
+    expect(result.reason).toContain(
+      "Batch 'batch-001' already exists with a different content hash",
+    );
   });
 
   it("should detect conflict when same cursor is submitted under different batch ID with altered content", async () => {

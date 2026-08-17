@@ -13,7 +13,9 @@ describe("Explicit Consent Management", () => {
     expect(consent.telemetry).toBe(true);
 
     expect(await consentManager.hasRawUploadConsent("acc_test_01", "ws_test_01")).toBe(false);
-    expect(await consentManager.hasNormalizedObservationsConsent("acc_test_01", "ws_test_01")).toBe(true);
+    expect(await consentManager.hasNormalizedObservationsConsent("acc_test_01", "ws_test_01")).toBe(
+      true,
+    );
   });
 
   it("should support explicit grant and revocation of raw transcript upload consent", async () => {

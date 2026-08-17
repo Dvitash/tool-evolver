@@ -42,9 +42,7 @@ describe("Multi-Client Concurrency & Workspace Isolation", () => {
       },
     });
 
-    expect(connA.workspaceContext.workspaceId).not.toBe(
-      connB.workspaceContext.workspaceId
-    );
+    expect(connA.workspaceContext.workspaceId).not.toBe(connB.workspaceContext.workspaceId);
 
     // Call workspace_info tool on both
     const respA = (await gateway.handleMessage(connA.connectionId, {
@@ -107,7 +105,7 @@ describe("Multi-Client Concurrency & Workspace Isolation", () => {
         inputSchema: { type: "object" },
       },
       async () => ({ content: [{ type: "text", text: "alpha only" }] }),
-      connA.workspaceContext.workspaceId
+      connA.workspaceContext.workspaceId,
     );
 
     // Check tools/list on A vs B

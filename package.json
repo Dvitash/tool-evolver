@@ -17,11 +17,16 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "typecheck": "turbo run typecheck",
-    "check": "pnpm run check:adrs && pnpm run check:boundaries && turbo run check",
+    "check": "pnpm run check:all",
+    "check:all": "pnpm run check:adrs && pnpm run check:boundaries && pnpm run check:secrets && pnpm run lint && pnpm run typecheck && pnpm run build && pnpm run test && pnpm run release:test && pnpm run test:e2e && pnpm run check:smoke && pnpm run release:package && pnpm run release:verify",
     "check:adrs": "node scripts/verify-adrs.mjs",
     "check:boundaries": "node scripts/check-boundaries.mjs",
+    "check:secrets": "node scripts/check-secrets.mjs",
+    "check:smoke": "node scripts/verify-binaries.mjs",
+    "smoke": "node scripts/verify-binaries.mjs",
     "release:package": "node scripts/package-release.mjs",
     "release:verify": "node scripts/verify-release.mjs",
+    "release:test": "vitest run scripts/verify-release.test.mjs",
     "clean": "turbo run clean"
   },
   "devDependencies": {

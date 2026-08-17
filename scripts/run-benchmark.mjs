@@ -15,19 +15,19 @@
  *   node scripts/run-benchmark.mjs --sessions=3 --turns=40
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
-import { HermeticE2EEnvironment, runHappyPathScenario } from "../fixtures/e2e/dist/index.js";
 import { OpenAiCompatibleProvider } from "../apps/cloud/dist/index.js";
+import { HermeticE2EEnvironment, runHappyPathScenario } from "../fixtures/e2e/dist/index.js";
 
 // Parse CLI flags
 const isLongSession = process.argv.includes("--long") || process.argv.includes("--heavy");
 const sessionArg = process.argv.find((a) => a.startsWith("--sessions="));
 const turnsArg = process.argv.find((a) => a.startsWith("--turns="));
 
-const baselineSessions = sessionArg ? parseInt(sessionArg.split("=")[1], 10) : 3;
+const baselineSessions = sessionArg ? Number.parseInt(sessionArg.split("=")[1], 10) : 3;
 const stepsPerSession = turnsArg
-  ? parseInt(turnsArg.split("=")[1], 10)
+  ? Number.parseInt(turnsArg.split("=")[1], 10)
   : isLongSession
     ? 25 // 25 turns per session in deep long-session mode (75 turns total)
     : 3; // 3 turns per session in standard mode (9 turns total)
@@ -50,7 +50,9 @@ const FREE_MODELS = [
 ];
 
 console.log("================================================================================");
-console.log(` TOOL EVOLVER V1.0.0 — ${isLongSession ? "DEEP LONG-SESSION" : "STANDARD"} EVOLUTION BENCHMARK `);
+console.log(
+  ` TOOL EVOLVER V1.0.0 — ${isLongSession ? "DEEP LONG-SESSION" : "STANDARD"} EVOLUTION BENCHMARK `,
+);
 console.log("================================================================================");
 
 async function runBenchmark() {
@@ -77,7 +79,8 @@ async function runBenchmark() {
         const t0 = performance.now();
         const resp = await probeProvider.execute({
           systemInstruction: "You are an automated tool for analyzing application server logs.",
-          userMessage: "Filter all 500 error entries from /var/log/app.log and count occurrences per endpoint.",
+          userMessage:
+            "Filter all 500 error entries from /var/log/app.log and count occurrences per endpoint.",
           taskClass: "tool_synthesis",
         });
         probeLatencyMs = Math.round(performance.now() - t0);
@@ -93,8 +96,12 @@ async function runBenchmark() {
     }
   }
 
-  console.log(`📡 OpenRouter Status : ${activeModel !== "none" ? `Connected (${activeModel}, ${probeLatencyMs}ms live probe)` : "Fallback in-memory baseline"}`);
-  console.log(`⚙️  Workload Profile  : ${baselineSessions} sessions × ${stepsPerSession} turns/session (${baselineSessions * stepsPerSession} total conversational turns)`);
+  console.log(
+    `📡 OpenRouter Status : ${activeModel !== "none" ? `Connected (${activeModel}, ${probeLatencyMs}ms live probe)` : "Fallback in-memory baseline"}`,
+  );
+  console.log(
+    `⚙️  Workload Profile  : ${baselineSessions} sessions × ${stepsPerSession} turns/session (${baselineSessions * stepsPerSession} total conversational turns)`,
+  );
   console.log(`⏱️  Benchmark Start   : ${new Date().toISOString()}`);
   console.log("--------------------------------------------------------------------------------\n");
 
@@ -124,13 +131,22 @@ async function runBenchmark() {
   const totalBaselineLatencyMs = totalBaselineTurns * probeLatencyMs;
 
   // Standard market pricing equivalent: $0.003 / 1k input tokens, $0.015 / 1k output tokens
-  const baselineCostUsd = (totalBaselinePromptTokens / 1000) * 0.003 + (totalBaselineCompletionTokens / 1000) * 0.015;
+  const baselineCostUsd =
+    (totalBaselinePromptTokens / 1000) * 0.003 + (totalBaselineCompletionTokens / 1000) * 0.015;
 
   console.log(`▶ STEP 1: Baseline Multi-Turn Agent Workflow Reference`);
-  console.log(`  • Repetitive Workflow : ${baselineSessions} sessions × ${stepsPerSession} turns (${totalBaselineTurns} conversational turns total)`);
-  console.log(`  • Context Accumulation: ${baseContextTokens.toLocaleString()} base tokens + ${contextGrowthPerTurn} tokens/turn growth`);
-  console.log(`  • Baseline Tokens     : ${totalBaselineTokens.toLocaleString()} total tokens (prompt: ${totalBaselinePromptTokens.toLocaleString()}, completion: ${totalBaselineCompletionTokens.toLocaleString()})`);
-  console.log(`  • Baseline Latency    : ${(totalBaselineLatencyMs / 1000).toFixed(2)}s cumulative model wait time (${(totalBaselineLatencyMs / 60000).toFixed(1)} minutes)`);
+  console.log(
+    `  • Repetitive Workflow : ${baselineSessions} sessions × ${stepsPerSession} turns (${totalBaselineTurns} conversational turns total)`,
+  );
+  console.log(
+    `  • Context Accumulation: ${baseContextTokens.toLocaleString()} base tokens + ${contextGrowthPerTurn} tokens/turn growth`,
+  );
+  console.log(
+    `  • Baseline Tokens     : ${totalBaselineTokens.toLocaleString()} total tokens (prompt: ${totalBaselinePromptTokens.toLocaleString()}, completion: ${totalBaselineCompletionTokens.toLocaleString()})`,
+  );
+  console.log(
+    `  • Baseline Latency    : ${(totalBaselineLatencyMs / 1000).toFixed(2)}s cumulative model wait time (${(totalBaselineLatencyMs / 60000).toFixed(1)} minutes)`,
+  );
   console.log(`  • Baseline Cost       : $${baselineCostUsd.toFixed(4)} (market LLM equivalent)\n`);
 
   console.log(`▶ STEP 2: Running Autonomous Evolution & Tool Invocation (3 Trials)...`);
@@ -161,7 +177,9 @@ async function runBenchmark() {
     const invLatency = performance.now() - invT0;
     invocationLatencies.push(invLatency);
 
-    console.log(`  ✓ Trial ${i}/${trials}: Evolution completed in ${(evoDuration / 1000).toFixed(2)}s, Tool invoked in ${invLatency.toFixed(2)}ms (Success: ${invRes.success})`);
+    console.log(
+      `  ✓ Trial ${i}/${trials}: Evolution completed in ${(evoDuration / 1000).toFixed(2)}s, Tool invoked in ${invLatency.toFixed(2)}ms (Success: ${invRes.success})`,
+    );
     await env.shutdown();
   }
 
@@ -173,7 +191,8 @@ async function runBenchmark() {
   const evolvedPromptTokens = 120;
   const evolvedCompletionTokens = 45;
   const totalEvolvedTokens = evolvedPromptTokens + evolvedCompletionTokens;
-  const evolvedCostUsd = (evolvedPromptTokens / 1000) * 0.003 + (evolvedCompletionTokens / 1000) * 0.015;
+  const evolvedCostUsd =
+    (evolvedPromptTokens / 1000) * 0.003 + (evolvedCompletionTokens / 1000) * 0.015;
 
   const tokenSavings = totalBaselineTokens - totalEvolvedTokens;
   const tokenSavingsPct = ((tokenSavings / totalBaselineTokens) * 100).toFixed(2);
@@ -190,18 +209,38 @@ async function runBenchmark() {
   console.log("\n================================================================================");
   console.log("                    MEASURED BENCHMARK SUMMARY & DELTAS                         ");
   console.log("================================================================================");
-  console.log("| Metric                 | Baseline (Multi-Turn)      | Evolved Tool Invocation | Measured Savings  |");
-  console.log("|------------------------|----------------------------|-------------------------|-------------------|");
-  console.log(`| Conversational Turns   | ${totalBaselineTurns.toString().padEnd(20)} turns | 1 turn                  | -${turnSavings} turns (${turnSavingsPct}%) |`);
-  console.log(`| Total Model Tokens     | ${totalBaselineTokens.toLocaleString().padEnd(26)} | ${totalEvolvedTokens.toString().padEnd(23)} | -${tokenSavings.toLocaleString()} (${tokenSavingsPct}%) |`);
-  console.log(`| Wall-Clock Latency     | ${(totalBaselineLatencyMs / 1000).toFixed(2).padEnd(25)}s | ${(avgInvocationMs / 1000).toFixed(4).padEnd(22)}s | -${(latencySavingsMs / 1000).toFixed(2)}s (${latencySavingsPct}%) |`);
-  console.log(`| Equivalent Cost (USD)  | $${baselineCostUsd.toFixed(4).padEnd(25)} | $${evolvedCostUsd.toFixed(4).padEnd(22)} | -$${costSavingsUsd.toFixed(4)} (${costSavingsPct}%) |`);
+  console.log(
+    "| Metric                 | Baseline (Multi-Turn)      | Evolved Tool Invocation | Measured Savings  |",
+  );
+  console.log(
+    "|------------------------|----------------------------|-------------------------|-------------------|",
+  );
+  console.log(
+    `| Conversational Turns   | ${totalBaselineTurns.toString().padEnd(20)} turns | 1 turn                  | -${turnSavings} turns (${turnSavingsPct}%) |`,
+  );
+  console.log(
+    `| Total Model Tokens     | ${totalBaselineTokens.toLocaleString().padEnd(26)} | ${totalEvolvedTokens.toString().padEnd(23)} | -${tokenSavings.toLocaleString()} (${tokenSavingsPct}%) |`,
+  );
+  console.log(
+    `| Wall-Clock Latency     | ${(totalBaselineLatencyMs / 1000).toFixed(2).padEnd(25)}s | ${(avgInvocationMs / 1000).toFixed(4).padEnd(22)}s | -${(latencySavingsMs / 1000).toFixed(2)}s (${latencySavingsPct}%) |`,
+  );
+  console.log(
+    `| Equivalent Cost (USD)  | $${baselineCostUsd.toFixed(4).padEnd(25)} | $${evolvedCostUsd.toFixed(4).padEnd(22)} | -$${costSavingsUsd.toFixed(4)} (${costSavingsPct}%) |`,
+  );
   console.log("================================================================================");
-  console.log(`\n• Autonomous Synthesis Pipeline Time : ${(avgEvolutionMs / 1000).toFixed(2)}s average across ${trials} runs`);
-  console.log(`• Evolved Tool Local Execution Latency: ${avgInvocationMs.toFixed(2)}ms average (in-memory sandboxed worker)`);
+  console.log(
+    `\n• Autonomous Synthesis Pipeline Time : ${(avgEvolutionMs / 1000).toFixed(2)}s average across ${trials} runs`,
+  );
+  console.log(
+    `• Evolved Tool Local Execution Latency: ${avgInvocationMs.toFixed(2)}ms average (in-memory sandboxed worker)`,
+  );
   console.log(`• Generated Tool Name                : "${evolvedToolName}"`);
-  console.log(`• Live Inference Endpoint            : ${activeModel !== "none" ? `OpenRouter (${activeModel})` : "Local in-memory deterministic simulation"}`);
-  console.log(`• Data Provenance                    : Baseline latency & completion token count measured via live probe; evolved token footprint is schema call payload.\n`);
+  console.log(
+    `• Live Inference Endpoint            : ${activeModel !== "none" ? `OpenRouter (${activeModel})` : "Local in-memory deterministic simulation"}`,
+  );
+  console.log(
+    `• Data Provenance                    : Baseline latency & completion token count measured via live probe; evolved token footprint is schema call payload.\n`,
+  );
 
   process.exit(0);
 }

@@ -7,7 +7,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "tool-evolver-daemon": "./dist/bin/daemon.js"
+    "tool-evolver-daemon": "./bin/daemon.mjs"
   },
   "exports": {
     ".": {

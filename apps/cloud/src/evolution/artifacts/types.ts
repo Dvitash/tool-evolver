@@ -1,7 +1,7 @@
-import { z } from "zod";
 import {
   type CapabilityEnvelope,
   type CapabilityManifest,
+  type EvaluationResult,
   type EvolutionCandidate,
   ISOTimestampSchema,
   IdentifierSchema,
@@ -15,10 +15,10 @@ import {
   ToolVersionSchema,
   type ToolVersionStatus,
   ToolVersionStatusSchema,
-  type EvaluationResult,
 } from "@tool-evolver/contracts";
-import type { CandidateRevision } from "../generator/types.js";
 import type { BundleFileEntry, ToolBundleSpec } from "@tool-evolver/runtime";
+import { z } from "zod";
+import type { CandidateRevision } from "../generator/types.js";
 
 /**
  * Lifecycle states during candidate artifact packaging, verification, and publication.
@@ -101,11 +101,7 @@ export type ToolPublicationRecord = z.infer<typeof ToolPublicationRecordSchema>;
 /**
  * Supported cryptographic signing algorithms.
  */
-export const SigningKeyAlgorithmSchema = z.enum([
-  "ed25519",
-  "ecdsa_p256_sha256",
-  "rsa_pss_sha256",
-]);
+export const SigningKeyAlgorithmSchema = z.enum(["ed25519", "ecdsa_p256_sha256", "rsa_pss_sha256"]);
 
 export type SigningKeyAlgorithm = z.infer<typeof SigningKeyAlgorithmSchema>;
 

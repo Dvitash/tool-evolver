@@ -79,7 +79,8 @@ export const validModelReasoningEvent: NormalizedModelReasoningEvent = {
   causalRef: { causalSequence: 2, turnIndex: 0, stepIndex: 1 },
   redaction: defaultRedaction,
   type: "model_reasoning",
-  reasoningContent: "The user wants to replace session-based auth with JWT tokens. I will examine src/auth.ts.",
+  reasoningContent:
+    "The user wants to replace session-based auth with JWT tokens. I will examine src/auth.ts.",
   tokenCount: 24,
   durationMs: 450,
 };

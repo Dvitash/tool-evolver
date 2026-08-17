@@ -3,6 +3,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { MemoryDatabasePool } from "../../src/db/index.js";
 import {
   createGetEvolutionStatusTool,
   createGetToolLineageTool,
@@ -10,7 +11,6 @@ import {
   statusFixtureTool,
   testFailureFixtureTool,
 } from "../../src/mcp/tools/index.js";
-import { MemoryDatabasePool } from "../../src/db/index.js";
 import type { CloudMcpInvocationContext } from "../../src/mcp/types.js";
 
 describe("Cloud MCP - Platform Tools & Dev Fixtures", () => {
@@ -50,10 +50,7 @@ describe("Cloud MCP - Platform Tools & Dev Fixtures", () => {
 
     it("accepts custom timeframe and toolId filter", async () => {
       const tool = createGetEvolutionStatusTool();
-      const result = await tool.handler(
-        { timeframe: "7d", toolId: "code_analyzer" },
-        context,
-      );
+      const result = await tool.handler({ timeframe: "7d", toolId: "code_analyzer" }, context);
 
       expect(result.isError).toBe(false);
       const report = result.structuredData as {
@@ -108,11 +105,27 @@ describe("Cloud MCP - Platform Tools & Dev Fixtures", () => {
 
       await dbPool.query(
         "INSERT INTO tool_versions (tool_id, workspace_id, version, manifest_digest, artifact_digest, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-        ["linter", context.tenant.workspaceId, "2.0.0", "sha256:digest2", "sha256:art2", "promoted", new Date().toISOString()],
+        [
+          "linter",
+          context.tenant.workspaceId,
+          "2.0.0",
+          "sha256:digest2",
+          "sha256:art2",
+          "promoted",
+          new Date().toISOString(),
+        ],
       );
       await dbPool.query(
         "INSERT INTO tool_versions (tool_id, workspace_id, version, manifest_digest, artifact_digest, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-        ["linter", context.tenant.workspaceId, "1.0.0", "sha256:digest1", "sha256:art1", "promoted", new Date(Date.now() - 86400000).toISOString()],
+        [
+          "linter",
+          context.tenant.workspaceId,
+          "1.0.0",
+          "sha256:digest1",
+          "sha256:art1",
+          "promoted",
+          new Date(Date.now() - 86400000).toISOString(),
+        ],
       );
 
       const tool = createGetToolLineageTool({ dbPool });
@@ -147,7 +160,11 @@ describe("Cloud MCP - Platform Tools & Dev Fixtures", () => {
       );
 
       expect(result.isError).toBe(false);
-      const data = result.structuredData as { echoed: string; workspaceId: string; sessionId: string };
+      const data = result.structuredData as {
+        echoed: string;
+        workspaceId: string;
+        sessionId: string;
+      };
       expect(data.echoed).toBe("ping test");
       expect(data.workspaceId).toBe(context.tenant.workspaceId);
       expect(data.sessionId).toBe("sess-123");

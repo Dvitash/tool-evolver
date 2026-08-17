@@ -1,8 +1,8 @@
 import type { DatabasePool } from "../../db/client.js";
-import type { TenantContext } from "../../tenant.js";
 import { EvidenceRepository } from "../../storage/repositories/evidence-repository.js";
-import { ReplayScenarioBuilder } from "./scenario-builder.js";
+import type { TenantContext } from "../../tenant.js";
 import { HistoricalReplayRunner } from "./runner.js";
+import { ReplayScenarioBuilder } from "./scenario-builder.js";
 import type {
   CandidateTarget,
   EvidenceSource,
@@ -48,8 +48,7 @@ export class HistoricalReplayService {
     this.builder = options.builder ?? new ReplayScenarioBuilder();
     this.runner = options.runner ?? new HistoricalReplayRunner();
     this.evidenceRepo =
-      options.evidenceRepo ??
-      (options.dbPool ? new EvidenceRepository(options.dbPool) : undefined);
+      options.evidenceRepo ?? (options.dbPool ? new EvidenceRepository(options.dbPool) : undefined);
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 5000;
     this.defaultSeed = options.defaultSeed ?? 42;
   }
@@ -59,7 +58,7 @@ export class HistoricalReplayService {
    */
   async replayCandidate(
     tenant: TenantContext,
-    options: ReplayCandidateOptions
+    options: ReplayCandidateOptions,
   ): Promise<HistoricalReplayResult> {
     let evidenceSource = options.evidence;
 
@@ -73,7 +72,7 @@ export class HistoricalReplayService {
 
     if (!evidenceSource) {
       throw new Error(
-        "No evidence source provided for historical replay. Supply either 'evidence' or valid 'evidenceSetId'."
+        "No evidence source provided for historical replay. Supply either 'evidence' or valid 'evidenceSetId'.",
       );
     }
 
@@ -84,18 +83,10 @@ export class HistoricalReplayService {
     };
 
     // 1. Build deterministic scenarios
-    const scenarios = this.builder.buildScenarios(
-      evidenceSource,
-      options.candidate,
-      replayOpts
-    );
+    const scenarios = this.builder.buildScenarios(evidenceSource, options.candidate, replayOpts);
 
     // 2. Execute scenarios against candidate in isolated sandbox
-    const result = await this.runner.runScenarios(
-      options.candidate,
-      scenarios,
-      replayOpts
-    );
+    const result = await this.runner.runScenarios(options.candidate, scenarios, replayOpts);
 
     return result;
   }
@@ -106,7 +97,7 @@ export class HistoricalReplayService {
   buildScenarios(
     evidence: EvidenceSource,
     candidate: CandidateTarget,
-    options?: HistoricalReplayOptions
+    options?: HistoricalReplayOptions,
   ): ReplayScenario[] {
     return this.builder.buildScenarios(evidence, candidate, options);
   }
@@ -117,7 +108,7 @@ export class HistoricalReplayService {
   async executeSingleScenario(
     candidate: CandidateTarget,
     scenario: ReplayScenario,
-    options?: { seed?: number | string; timeoutMs?: number }
+    options?: { seed?: number | string; timeoutMs?: number },
   ): Promise<ReplayScenarioExecutionResult> {
     return this.runner.runScenario(candidate, scenario, options);
   }
@@ -127,7 +118,7 @@ export class HistoricalReplayService {
  * Factory function for creating a HistoricalReplayService instance.
  */
 export function createHistoricalReplayService(
-  options: HistoricalReplayServiceOptions = {}
+  options: HistoricalReplayServiceOptions = {},
 ): HistoricalReplayService {
   return new HistoricalReplayService(options);
 }

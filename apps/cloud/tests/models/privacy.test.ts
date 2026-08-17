@@ -72,9 +72,14 @@ MIIEowIBAAKCAQEA0Z3v...
   it("should support custom registered secret terms and regex patterns", () => {
     const gate = new OutboundPrivacyGate();
     gate.registerSecretTerm("CONFIDENTIAL_PROJECT_CODENAME_ZEUS");
-    gate.registerCustomPattern("internal_db_dsn", /postgres:\/\/[a-z]+:[a-z0-9]+@db\.internal:[0-9]+\/[a-z]+/gi, "[REDACTED_DSN]");
+    gate.registerCustomPattern(
+      "internal_db_dsn",
+      /postgres:\/\/[a-z]+:[a-z0-9]+@db\.internal:[0-9]+\/[a-z]+/gi,
+      "[REDACTED_DSN]",
+    );
 
-    const rawText = "Connecting to postgres://admin:pass123@db.internal:5432/secrets for project CONFIDENTIAL_PROJECT_CODENAME_ZEUS";
+    const rawText =
+      "Connecting to postgres://admin:pass123@db.internal:5432/secrets for project CONFIDENTIAL_PROJECT_CODENAME_ZEUS";
     const sanitized = gate.redact(rawText);
 
     expect(sanitized).not.toContain("CONFIDENTIAL_PROJECT_CODENAME_ZEUS");
@@ -96,7 +101,8 @@ MIIEowIBAAKCAQEA0Z3v...
         promptTemplateId: "opportunity_detection",
         inputs: {
           sessionId: "sess-raw",
-          traceData: "Normal trace data\n[RAW_TRANSCRIPT]\nUser: Here is my proprietary secret source code",
+          traceData:
+            "Normal trace data\n[RAW_TRANSCRIPT]\nUser: Here is my proprietary secret source code",
           telemetrySummary: "summary",
         },
       }),

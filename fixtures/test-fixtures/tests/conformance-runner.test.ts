@@ -12,9 +12,9 @@ import {
   allValidDomainEvents,
   invalidDomainFixtures,
   validAuditRecord,
-  validCatalogSnapshot,
   validCapabilityEnvelope,
   validCapabilityGrant,
+  validCatalogSnapshot,
   validDeadLetterRecord,
   validDeploymentRecord,
   validDeviceRecord,
@@ -29,6 +29,19 @@ import {
   validToolVersion,
   validWorkspaceRecord,
 } from "../src/golden/domain.js";
+import {
+  invalidHarnessFixtures,
+  validAdapterCapabilities,
+  validCatalogChangeSummary,
+  validConfigBackup,
+  validConfigMutationPlan,
+  validHarnessInstallation,
+  validHarnessSession,
+  validHarnessWorkspace,
+  validRawHarnessRecord,
+  validRefreshResult,
+  validSourceCursor,
+} from "../src/golden/harness.js";
 import {
   allValidStreamMessages,
   invalidProtocolFixtures,
@@ -63,19 +76,6 @@ import {
   validWorkspaceRegisterRequest,
   validWorkspaceRegisterResponse,
 } from "../src/golden/protocol.js";
-import {
-  invalidHarnessFixtures,
-  validAdapterCapabilities,
-  validCatalogChangeSummary,
-  validConfigBackup,
-  validConfigMutationPlan,
-  validHarnessInstallation,
-  validHarnessSession,
-  validHarnessWorkspace,
-  validRawHarnessRecord,
-  validRefreshResult,
-  validSourceCursor,
-} from "../src/golden/harness.js";
 
 describe("Conformance Runner & Contract Validation Engine", () => {
   describe("Master Schema Registry", () => {
@@ -143,72 +143,178 @@ describe("Conformance Runner & Contract Validation Engine", () => {
 
   describe("Protocol Payloads Validation (TE-004)", () => {
     it("validates protocol message envelope and error responses", () => {
-      expect(validateProtocolPayload("ProtocolMessageEnvelope", validProtocolEnvelope).valid).toBe(true);
-      expect(validateProtocolPayload("ProtocolErrorResponse", validProtocolErrorResponse).valid).toBe(true);
+      expect(validateProtocolPayload("ProtocolMessageEnvelope", validProtocolEnvelope).valid).toBe(
+        true,
+      );
+      expect(
+        validateProtocolPayload("ProtocolErrorResponse", validProtocolErrorResponse).valid,
+      ).toBe(true);
     });
 
     it("validates auth endpoints and token lifecycle payloads", () => {
-      expect(validateProtocolPayload("DeviceAuthBootstrapRequest", validDeviceAuthBootstrapRequest).valid).toBe(true);
-      expect(validateProtocolPayload("DeviceAuthBootstrapResponse", validDeviceAuthBootstrapResponse).valid).toBe(true);
-      expect(validateProtocolPayload("DeviceTokenExchangeRequest", validDeviceTokenExchangeRequest).valid).toBe(true);
-      expect(validateProtocolPayload("DeviceTokenExchangeResponse", validDeviceTokenExchangeResponse).valid).toBe(true);
-      expect(validateProtocolPayload("TokenRotationRequest", validTokenRotationRequest).valid).toBe(true);
-      expect(validateProtocolPayload("TokenRotationResponse", validTokenRotationResponse).valid).toBe(true);
-      expect(validateProtocolPayload("DeviceRevocationRequest", validDeviceRevocationRequest).valid).toBe(true);
-      expect(validateProtocolPayload("DeviceRevocationResponse", validDeviceRevocationResponse).valid).toBe(true);
+      expect(
+        validateProtocolPayload("DeviceAuthBootstrapRequest", validDeviceAuthBootstrapRequest)
+          .valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("DeviceAuthBootstrapResponse", validDeviceAuthBootstrapResponse)
+          .valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("DeviceTokenExchangeRequest", validDeviceTokenExchangeRequest)
+          .valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("DeviceTokenExchangeResponse", validDeviceTokenExchangeResponse)
+          .valid,
+      ).toBe(true);
+      expect(validateProtocolPayload("TokenRotationRequest", validTokenRotationRequest).valid).toBe(
+        true,
+      );
+      expect(
+        validateProtocolPayload("TokenRotationResponse", validTokenRotationResponse).valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("DeviceRevocationRequest", validDeviceRevocationRequest).valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("DeviceRevocationResponse", validDeviceRevocationResponse).valid,
+      ).toBe(true);
     });
 
     it("validates HTTP API requests and responses", () => {
-      expect(validateProtocolPayload("InstallationRegisterRequest", validInstallationRegisterRequest).valid).toBe(true);
-      expect(validateProtocolPayload("InstallationRegisterResponse", validInstallationRegisterResponse).valid).toBe(true);
-      expect(validateProtocolPayload("WorkspaceRegisterRequest", validWorkspaceRegisterRequest).valid).toBe(true);
-      expect(validateProtocolPayload("WorkspaceRegisterResponse", validWorkspaceRegisterResponse).valid).toBe(true);
-      expect(validateProtocolPayload("ObservationBatchRequest", validObservationBatchRequest).valid).toBe(true);
-      expect(validateProtocolPayload("ObservationBatchResponse", validObservationBatchResponse).valid).toBe(true);
-      expect(validateProtocolPayload("CatalogSnapshotRequest", validCatalogSnapshotRequest).valid).toBe(true);
-      expect(validateProtocolPayload("CatalogSnapshotResponse", validCatalogSnapshotResponse).valid).toBe(true);
-      expect(validateProtocolPayload("ArtifactDownloadRequest", validArtifactDownloadRequest).valid).toBe(true);
-      expect(validateProtocolPayload("ArtifactDownloadMetadata", validArtifactDownloadMetadata).valid).toBe(true);
-      expect(validateProtocolPayload("DeploymentStatusReportRequest", validDeploymentStatusReportRequest).valid).toBe(true);
-      expect(validateProtocolPayload("DeploymentStatusReportResponse", validDeploymentStatusReportResponse).valid).toBe(true);
-      expect(validateProtocolPayload("TelemetryBatchRequest", validTelemetryBatchRequest).valid).toBe(true);
-      expect(validateProtocolPayload("TelemetryBatchResponse", validTelemetryBatchResponse).valid).toBe(true);
-      expect(validateProtocolPayload("HealthNegotiateRequest", validHealthNegotiateRequest).valid).toBe(true);
-      expect(validateProtocolPayload("HealthNegotiateResponse", validHealthNegotiateResponse).valid).toBe(true);
+      expect(
+        validateProtocolPayload("InstallationRegisterRequest", validInstallationRegisterRequest)
+          .valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("InstallationRegisterResponse", validInstallationRegisterResponse)
+          .valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("WorkspaceRegisterRequest", validWorkspaceRegisterRequest).valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("WorkspaceRegisterResponse", validWorkspaceRegisterResponse).valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("ObservationBatchRequest", validObservationBatchRequest).valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("ObservationBatchResponse", validObservationBatchResponse).valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("CatalogSnapshotRequest", validCatalogSnapshotRequest).valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("CatalogSnapshotResponse", validCatalogSnapshotResponse).valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("ArtifactDownloadRequest", validArtifactDownloadRequest).valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("ArtifactDownloadMetadata", validArtifactDownloadMetadata).valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("DeploymentStatusReportRequest", validDeploymentStatusReportRequest)
+          .valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload(
+          "DeploymentStatusReportResponse",
+          validDeploymentStatusReportResponse,
+        ).valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("TelemetryBatchRequest", validTelemetryBatchRequest).valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("TelemetryBatchResponse", validTelemetryBatchResponse).valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("HealthNegotiateRequest", validHealthNegotiateRequest).valid,
+      ).toBe(true);
+      expect(
+        validateProtocolPayload("HealthNegotiateResponse", validHealthNegotiateResponse).valid,
+      ).toBe(true);
     });
 
     it("validates control stream messages", () => {
       for (const msg of allValidStreamMessages) {
-        expect(validateProtocolPayload("StreamMessage", msg).valid, `Message ${msg.messageId} should be valid`).toBe(true);
+        expect(
+          validateProtocolPayload("StreamMessage", msg).valid,
+          `Message ${msg.messageId} should be valid`,
+        ).toBe(true);
       }
     });
 
     it("detects and rejects invalid protocol payloads", () => {
-      expect(validateProtocolPayload("ProtocolMessageEnvelope", invalidProtocolFixtures.missingPayloadTypeEnvelope).valid).toBe(false);
-      expect(validateProtocolPayload("StreamMessage", invalidProtocolFixtures.negativeSequenceStreamMessage).valid).toBe(false);
-      expect(validateProtocolPayload("StreamMessage", invalidProtocolFixtures.unknownStreamMessageType).valid).toBe(false);
+      expect(
+        validateProtocolPayload(
+          "ProtocolMessageEnvelope",
+          invalidProtocolFixtures.missingPayloadTypeEnvelope,
+        ).valid,
+      ).toBe(false);
+      expect(
+        validateProtocolPayload(
+          "StreamMessage",
+          invalidProtocolFixtures.negativeSequenceStreamMessage,
+        ).valid,
+      ).toBe(false);
+      expect(
+        validateProtocolPayload("StreamMessage", invalidProtocolFixtures.unknownStreamMessageType)
+          .valid,
+      ).toBe(false);
     });
   });
 
   describe("Harness Adapter Contracts Validation (TE-005)", () => {
     it("validates all harness adapter contract payloads", () => {
-      expect(validateHarnessPayload("HarnessInstallation", validHarnessInstallation).valid).toBe(true);
+      expect(validateHarnessPayload("HarnessInstallation", validHarnessInstallation).valid).toBe(
+        true,
+      );
       expect(validateHarnessPayload("HarnessSession", validHarnessSession).valid).toBe(true);
       expect(validateHarnessPayload("HarnessWorkspace", validHarnessWorkspace).valid).toBe(true);
       expect(validateHarnessPayload("RawHarnessRecord", validRawHarnessRecord).valid).toBe(true);
       expect(validateHarnessPayload("SourceCursor", validSourceCursor).valid).toBe(true);
       expect(validateHarnessPayload("ConfigBackup", validConfigBackup).valid).toBe(true);
-      expect(validateHarnessPayload("ConfigMutationPlan", validConfigMutationPlan).valid).toBe(true);
-      expect(validateHarnessPayload("CatalogChangeSummary", validCatalogChangeSummary).valid).toBe(true);
-      expect(validateHarnessPayload("AdapterCapabilities", validAdapterCapabilities).valid).toBe(true);
+      expect(validateHarnessPayload("ConfigMutationPlan", validConfigMutationPlan).valid).toBe(
+        true,
+      );
+      expect(validateHarnessPayload("CatalogChangeSummary", validCatalogChangeSummary).valid).toBe(
+        true,
+      );
+      expect(validateHarnessPayload("AdapterCapabilities", validAdapterCapabilities).valid).toBe(
+        true,
+      );
       expect(validateHarnessPayload("RefreshResult", validRefreshResult).valid).toBe(true);
     });
 
     it("detects and rejects invalid harness payloads", () => {
-      expect(validateHarnessPayload("HarnessInstallation", invalidHarnessFixtures.invalidInstallationBadStatus).valid).toBe(false);
-      expect(validateHarnessPayload("HarnessSession", invalidHarnessFixtures.invalidSessionMissingHarness).valid).toBe(false);
-      expect(validateHarnessPayload("RawHarnessRecord", invalidHarnessFixtures.invalidRawRecordNegativeSequence).valid).toBe(false);
-      expect(validateHarnessPayload("AdapterCapabilities", invalidHarnessFixtures.invalidAdapterBadFidelity).valid).toBe(false);
+      expect(
+        validateHarnessPayload(
+          "HarnessInstallation",
+          invalidHarnessFixtures.invalidInstallationBadStatus,
+        ).valid,
+      ).toBe(false);
+      expect(
+        validateHarnessPayload(
+          "HarnessSession",
+          invalidHarnessFixtures.invalidSessionMissingHarness,
+        ).valid,
+      ).toBe(false);
+      expect(
+        validateHarnessPayload(
+          "RawHarnessRecord",
+          invalidHarnessFixtures.invalidRawRecordNegativeSequence,
+        ).valid,
+      ).toBe(false);
+      expect(
+        validateHarnessPayload(
+          "AdapterCapabilities",
+          invalidHarnessFixtures.invalidAdapterBadFidelity,
+        ).valid,
+      ).toBe(false);
     });
   });
 

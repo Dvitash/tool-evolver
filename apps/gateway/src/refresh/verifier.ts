@@ -1,9 +1,5 @@
 import crypto from "node:crypto";
-import type {
-  RefreshAttempt,
-  RefreshVerification,
-  RefreshVerificationStatus,
-} from "./types.js";
+import type { RefreshAttempt, RefreshVerification, RefreshVerificationStatus } from "./types.js";
 
 interface PendingVerificationEntry {
   verification: RefreshVerification;
@@ -109,10 +105,7 @@ export class RefreshVerifier {
   /**
    * Records that `tools/list` was observed on a connection, transitioning pending verifications to `observed`.
    */
-  recordToolsListObserved(
-    connectionId: string,
-    workspaceId?: string,
-  ): RefreshVerification[] {
+  recordToolsListObserved(connectionId: string, workspaceId?: string): RefreshVerification[] {
     const connSet = this.pendingByConnection.get(connectionId);
     if (!connSet || connSet.size === 0) {
       return [];

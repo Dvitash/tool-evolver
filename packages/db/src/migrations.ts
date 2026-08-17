@@ -394,7 +394,10 @@ export class MigrationRunner {
   private readonly conn: LocalDatabaseConnection;
   private readonly migrations: readonly Migration[];
 
-  constructor(conn: LocalDatabaseConnection, migrations: readonly Migration[] = BUILT_IN_MIGRATIONS) {
+  constructor(
+    conn: LocalDatabaseConnection,
+    migrations: readonly Migration[] = BUILT_IN_MIGRATIONS,
+  ) {
     this.conn = conn;
     this.migrations = [...migrations].sort((a, b) => a.version - b.version);
   }

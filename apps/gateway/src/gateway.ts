@@ -26,13 +26,14 @@ import {
   type McpTool,
   type ProgressNotificationParams,
 } from "./protocol/types.js";
+import { CatalogRefreshCoordinator, type RefreshCoordinatorOptions } from "./refresh/index.js";
 import { ToolRegistry } from "./registry/registry.js";
-import { type GatewayRouter, RegistryGatewayRouter, createRegistryGatewayRouter } from "./router.js";
-import { type WorkspaceContext, resolveWorkspaceContext } from "./workspace-resolver.js";
 import {
-  CatalogRefreshCoordinator,
-  type RefreshCoordinatorOptions,
-} from "./refresh/index.js";
+  type GatewayRouter,
+  RegistryGatewayRouter,
+  createRegistryGatewayRouter,
+} from "./router.js";
+import { type WorkspaceContext, resolveWorkspaceContext } from "./workspace-resolver.js";
 export interface GatewayServerOptions {
   router?: GatewayRouter;
   registry?: ToolRegistry;

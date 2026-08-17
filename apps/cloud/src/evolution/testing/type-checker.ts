@@ -45,16 +45,17 @@ export class TypeChecker {
       sourceCode,
       ts.ScriptTarget.ES2022,
       true,
-      ts.ScriptKind.TS
+      ts.ScriptKind.TS,
     );
 
-    const parseDiagnostics = (sourceFile as unknown as { parseDiagnostics?: ts.Diagnostic[] }).parseDiagnostics;
+    const parseDiagnostics = (sourceFile as unknown as { parseDiagnostics?: ts.Diagnostic[] })
+      .parseDiagnostics;
     if (parseDiagnostics && parseDiagnostics.length > 0) {
       for (const diag of parseDiagnostics) {
         diagnostics.push(diag);
         const { line, character } = sourceFile.getLineAndCharacterOfPosition(diag.start ?? 0);
         errors.push(
-          `Line ${line + 1}:${character + 1}: ${ts.flattenDiagnosticMessageText(diag.messageText, "\n")}`
+          `Line ${line + 1}:${character + 1}: ${ts.flattenDiagnosticMessageText(diag.messageText, "\n")}`,
         );
       }
     }
@@ -101,7 +102,7 @@ export class TypeChecker {
   private validateSchemaConsistency(
     sourceFile: ts.SourceFile,
     manifest: Partial<ToolManifest>,
-    errors: string[]
+    errors: string[],
   ): void {
     if (manifest.parameters?.properties) {
       const manifestProps = Object.keys(manifest.parameters.properties);
@@ -112,7 +113,7 @@ export class TypeChecker {
       for (const reqProp of requiredProps) {
         if (!codeText.includes(reqProp)) {
           errors.push(
-            `Schema inconsistency: Manifest requires property '${reqProp}' but it is not referenced in source code or InputSchema.`
+            `Schema inconsistency: Manifest requires property '${reqProp}' but it is not referenced in source code or InputSchema.`,
           );
         }
       }

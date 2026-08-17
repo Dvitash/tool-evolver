@@ -22,7 +22,7 @@ import {
   NormalizationDeduplicator,
   type NormalizationDeduplicatorOptions,
 } from "./deduplicator.js";
-import { RedactionEngine, type RedactionConfig } from "./redaction.js";
+import { type RedactionConfig, RedactionEngine } from "./redaction.js";
 
 /**
  * Options for configuring NormalizationPipeline.
@@ -214,7 +214,7 @@ export class NormalizationPipeline {
         ? intermediate.causalRef.parentId
         : causalSequence <= 1
           ? null
-          : sessionMap.get(causalSequence - 1) ?? null;
+          : (sessionMap.get(causalSequence - 1) ?? null);
     // 2. Perform privacy redaction on the payload fields
     const {
       type,
@@ -239,7 +239,9 @@ export class NormalizationPipeline {
 
     // 3. Construct deterministic event ID
     const eventBodyForHashing = {
-      schemaVersion: (typeof schemaVersion === "string" ? schemaVersion : undefined) ?? this.defaultSchemaVersion,
+      schemaVersion:
+        (typeof schemaVersion === "string" ? schemaVersion : undefined) ??
+        this.defaultSchemaVersion,
       sessionId,
       type: String(type),
       timestamp: (typeof timestamp === "string" ? timestamp : undefined) || nowIso(),
@@ -255,7 +257,10 @@ export class NormalizationPipeline {
         redactionStrategy: redactionMeta.redactionStrategy,
         scrubbedPatterns: redactionMeta.scrubbedPatterns,
       },
-      metadata: typeof metadata === "object" && metadata !== null ? (metadata as Record<string, unknown>) : {},
+      metadata:
+        typeof metadata === "object" && metadata !== null
+          ? (metadata as Record<string, unknown>)
+          : {},
       ...(redactionResult.data as Record<string, unknown>),
     };
 
@@ -377,7 +382,10 @@ export class NormalizationPipeline {
     payload: Record<string, unknown>,
     errorReason: string,
   ): Promise<DeadLetterRecord> {
-    const deadLetterId = `dl_${createHash("sha256").update(`${originalEventType}:${nowIso()}:${canonicalJson(payload)}`).digest("hex").slice(0, 24)}`;
+    const deadLetterId = `dl_${createHash("sha256")
+      .update(`${originalEventType}:${nowIso()}:${canonicalJson(payload)}`)
+      .digest("hex")
+      .slice(0, 24)}`;
 
     const deadLetter: DeadLetterRecord = {
       deadLetterId,

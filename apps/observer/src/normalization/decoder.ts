@@ -196,7 +196,10 @@ export class DecodeError extends Error {
   readonly recordId?: string;
   readonly recordType?: string;
 
-  constructor(message: string, options?: { recordId?: string; recordType?: string; cause?: unknown }) {
+  constructor(
+    message: string,
+    options?: { recordId?: string; recordType?: string; cause?: unknown },
+  ) {
     super(message, { cause: options?.cause });
     this.name = "DecodeError";
     this.recordId = options?.recordId;
@@ -265,7 +268,12 @@ export class UniversalHarnessRecordDecoder implements HarnessRecordDecoder {
         if (typeof rawPayload === "string") {
           try {
             const parsed = JSON.parse(rawPayload);
-            if (typeof parsed === "object" && parsed !== null && typeof parsed.type === "string" && KNOWN_EVENT_TYPES.has(parsed.type)) {
+            if (
+              typeof parsed === "object" &&
+              parsed !== null &&
+              typeof parsed.type === "string" &&
+              KNOWN_EVENT_TYPES.has(parsed.type)
+            ) {
               return this.normalizeTypedObject(parsed, sessionId, timestamp, sequence);
             }
           } catch {
@@ -337,7 +345,14 @@ export class UniversalHarnessRecordDecoder implements HarnessRecordDecoder {
       case "completion": {
         if (typeof rawPayload === "object" && rawPayload !== null) {
           const p = rawPayload as Record<string, unknown>;
-          const reasoning = typeof p.reasoningContent === "string" ? p.reasoningContent : typeof p.reasoning === "string" ? p.reasoning : typeof p.thought === "string" ? p.thought : undefined;
+          const reasoning =
+            typeof p.reasoningContent === "string"
+              ? p.reasoningContent
+              : typeof p.reasoning === "string"
+                ? p.reasoning
+                : typeof p.thought === "string"
+                  ? p.thought
+                  : undefined;
           if (reasoning) {
             return {
               type: "model_reasoning",
@@ -382,7 +397,10 @@ export class UniversalHarnessRecordDecoder implements HarnessRecordDecoder {
         }
         const p = rawPayload as Record<string, unknown>;
         const rawArgs = p.parameters ?? p.arguments ?? p.params;
-        const parameters = typeof rawArgs === "object" && rawArgs !== null ? (rawArgs as Record<string, unknown>) : {};
+        const parameters =
+          typeof rawArgs === "object" && rawArgs !== null
+            ? (rawArgs as Record<string, unknown>)
+            : {};
         return {
           type: "tool_call",
           toolName: String(p.toolName ?? p.tool_name ?? p.name ?? "unknown_tool"),
@@ -409,7 +427,12 @@ export class UniversalHarnessRecordDecoder implements HarnessRecordDecoder {
           callId: String(p.callId ?? p.call_id ?? p.id ?? `call_${record.recordId}`),
           result: p.result !== undefined ? p.result : p.output,
           isError: Boolean(p.isError ?? p.is_error ?? p.error),
-          executionDurationMs: typeof p.executionDurationMs === "number" ? p.executionDurationMs : typeof p.durationMs === "number" ? p.durationMs : 0,
+          executionDurationMs:
+            typeof p.executionDurationMs === "number"
+              ? p.executionDurationMs
+              : typeof p.durationMs === "number"
+                ? p.durationMs
+                : 0,
           outputSizeBytes: typeof p.outputSizeBytes === "number" ? p.outputSizeBytes : undefined,
           isShadow: Boolean(p.isShadow ?? false),
           sessionId,
@@ -426,7 +449,12 @@ export class UniversalHarnessRecordDecoder implements HarnessRecordDecoder {
             return {
               type: "session_lifecycle",
               lifecycleType: action as "start" | "pause" | "resume" | "end" | "crash",
-              exitReason: typeof p.exitReason === "string" ? p.exitReason : typeof p.endReason === "string" ? p.endReason : undefined,
+              exitReason:
+                typeof p.exitReason === "string"
+                  ? p.exitReason
+                  : typeof p.endReason === "string"
+                    ? p.endReason
+                    : undefined,
               harnessName: typeof p.harnessName === "string" ? p.harnessName : undefined,
               workspaceId: typeof p.workspaceId === "string" ? p.workspaceId : undefined,
               sessionId,
@@ -444,8 +472,6 @@ export class UniversalHarnessRecordDecoder implements HarnessRecordDecoder {
           causalRef: { causalSequence: sequence },
         };
       }
-
-      case "custom":
       default: {
         const payloadObj =
           typeof rawPayload === "object" && rawPayload !== null
@@ -474,7 +500,10 @@ export class UniversalHarnessRecordDecoder implements HarnessRecordDecoder {
       sessionId: String(p.sessionId ?? sessionId),
       timestamp: String(p.timestamp ?? timestamp),
       causalRef: (p.causalRef as CausalRef) ?? { causalSequence: sequence },
-      metadata: typeof p.metadata === "object" && p.metadata !== null ? (p.metadata as Record<string, unknown>) : undefined,
+      metadata:
+        typeof p.metadata === "object" && p.metadata !== null
+          ? (p.metadata as Record<string, unknown>)
+          : undefined,
     };
 
     switch (p.type) {
@@ -484,7 +513,9 @@ export class UniversalHarnessRecordDecoder implements HarnessRecordDecoder {
           type: "message",
           role: (p.role as "user" | "assistant" | "system" | "tool") || "user",
           content: String(p.content ?? ""),
-          contentParts: Array.isArray(p.contentParts) ? (p.contentParts as MessageContentPart[]) : undefined,
+          contentParts: Array.isArray(p.contentParts)
+            ? (p.contentParts as MessageContentPart[])
+            : undefined,
           model: typeof p.model === "string" ? p.model : undefined,
         };
 
@@ -500,11 +531,19 @@ export class UniversalHarnessRecordDecoder implements HarnessRecordDecoder {
         };
 
       case "tool_discovery": {
-        const rawTools = Array.isArray(p.tools) ? p.tools : Array.isArray(p.discoveredTools) ? p.discoveredTools : [];
+        const rawTools = Array.isArray(p.tools)
+          ? p.tools
+          : Array.isArray(p.discoveredTools)
+            ? p.discoveredTools
+            : [];
         const tools: DiscoveredToolEntry[] = rawTools.map((t: Record<string, unknown>) => ({
           name: String(t.name ?? t.toolId ?? "unknown_tool"),
           description: typeof t.description === "string" ? t.description : undefined,
-          inputSchema: (typeof t.inputSchema === "object" && t.inputSchema !== null ? t.inputSchema : typeof t.schema === "object" && t.schema !== null ? t.schema : {}) as Record<string, unknown>,
+          inputSchema: (typeof t.inputSchema === "object" && t.inputSchema !== null
+            ? t.inputSchema
+            : typeof t.schema === "object" && t.schema !== null
+              ? t.schema
+              : {}) as Record<string, unknown>,
           provider: typeof t.provider === "string" ? t.provider : undefined,
         }));
         return {
@@ -512,13 +551,18 @@ export class UniversalHarnessRecordDecoder implements HarnessRecordDecoder {
           type: "tool_discovery",
           tools,
           provider: typeof p.provider === "string" ? p.provider : undefined,
-          source: (["mcp", "builtin", "dynamic", "harness"].includes(String(p.source)) ? p.source : "mcp") as "mcp" | "builtin" | "dynamic" | "harness",
+          source: (["mcp", "builtin", "dynamic", "harness"].includes(String(p.source))
+            ? p.source
+            : "mcp") as "mcp" | "builtin" | "dynamic" | "harness",
         };
       }
 
       case "tool_call": {
         const rawArgs = p.parameters ?? p.arguments ?? p.params;
-        const parameters = typeof rawArgs === "object" && rawArgs !== null ? (rawArgs as Record<string, unknown>) : {};
+        const parameters =
+          typeof rawArgs === "object" && rawArgs !== null
+            ? (rawArgs as Record<string, unknown>)
+            : {};
         return {
           ...baseFields,
           type: "tool_call",
@@ -537,7 +581,12 @@ export class UniversalHarnessRecordDecoder implements HarnessRecordDecoder {
           callId: String(p.callId ?? p.call_id ?? p.id ?? `call_${sequence}`),
           result: p.result !== undefined ? p.result : p.output,
           isError: Boolean(p.isError ?? p.is_error ?? p.error),
-          executionDurationMs: typeof p.executionDurationMs === "number" ? p.executionDurationMs : typeof p.durationMs === "number" ? p.durationMs : 0,
+          executionDurationMs:
+            typeof p.executionDurationMs === "number"
+              ? p.executionDurationMs
+              : typeof p.durationMs === "number"
+                ? p.durationMs
+                : 0,
           outputSizeBytes: typeof p.outputSizeBytes === "number" ? p.outputSizeBytes : undefined,
           isShadow: Boolean(p.isShadow ?? false),
         };
@@ -548,7 +597,12 @@ export class UniversalHarnessRecordDecoder implements HarnessRecordDecoder {
           type: "command_exec",
           command: String(p.command ?? ""),
           args: Array.isArray(p.args) ? p.args.map(String) : [],
-          cwd: typeof p.cwd === "string" ? p.cwd : typeof p.workingDirectory === "string" ? p.workingDirectory : undefined,
+          cwd:
+            typeof p.cwd === "string"
+              ? p.cwd
+              : typeof p.workingDirectory === "string"
+                ? p.workingDirectory
+                : undefined,
           exitCode: typeof p.exitCode === "number" ? p.exitCode : 0,
           stdout: typeof p.stdout === "string" ? p.stdout : undefined,
           stderr: typeof p.stderr === "string" ? p.stderr : undefined,
@@ -560,11 +614,17 @@ export class UniversalHarnessRecordDecoder implements HarnessRecordDecoder {
           ...baseFields,
           type: "file_edit",
           filePath: String(p.filePath ?? p.path ?? ""),
-          operation: (["create", "update", "delete", "patch"].includes(String(p.operation)) ? p.operation : "update") as "create" | "update" | "delete" | "patch",
-          patch: typeof p.patch === "string" ? p.patch : typeof p.diff === "string" ? p.diff : undefined,
+          operation: (["create", "update", "delete", "patch"].includes(String(p.operation))
+            ? p.operation
+            : "update") as "create" | "update" | "delete" | "patch",
+          patch:
+            typeof p.patch === "string" ? p.patch : typeof p.diff === "string" ? p.diff : undefined,
           beforeHash: typeof p.beforeHash === "string" ? p.beforeHash : undefined,
           afterHash: typeof p.afterHash === "string" ? p.afterHash : undefined,
-          diffStats: typeof p.diffStats === "object" && p.diffStats !== null ? (p.diffStats as FileDiffStats) : undefined,
+          diffStats:
+            typeof p.diffStats === "object" && p.diffStats !== null
+              ? (p.diffStats as FileDiffStats)
+              : undefined,
         };
 
       case "error":
@@ -574,20 +634,46 @@ export class UniversalHarnessRecordDecoder implements HarnessRecordDecoder {
           errorType: String(p.errorType ?? "Error"),
           message: String(p.message ?? "Unknown error"),
           stackTrace: typeof p.stackTrace === "string" ? p.stackTrace : undefined,
-          recoverable: p.recoverable !== undefined ? Boolean(p.recoverable) : p.isFatal !== undefined ? !p.isFatal : true,
+          recoverable:
+            p.recoverable !== undefined
+              ? Boolean(p.recoverable)
+              : p.isFatal !== undefined
+                ? !p.isFatal
+                : true,
         };
 
       case "compaction": {
-        const triggerReason = ["context_limit", "manual", "scheduled", "turn_threshold"].includes(String(p.triggerReason ?? p.reason))
+        const triggerReason = ["context_limit", "manual", "scheduled", "turn_threshold"].includes(
+          String(p.triggerReason ?? p.reason),
+        )
           ? (p.triggerReason ?? p.reason)
           : "context_limit";
         return {
           ...baseFields,
           type: "compaction",
-          triggerReason: triggerReason as "context_limit" | "manual" | "scheduled" | "turn_threshold",
-          tokensBefore: typeof p.tokensBefore === "number" ? p.tokensBefore : typeof p.originalEventCount === "number" ? p.originalEventCount : 1000,
-          tokensAfter: typeof p.tokensAfter === "number" ? p.tokensAfter : typeof p.compactedEventCount === "number" ? p.compactedEventCount : 100,
-          preservedContextSummary: typeof p.preservedContextSummary === "string" ? p.preservedContextSummary : typeof p.summary === "string" ? p.summary : undefined,
+          triggerReason: triggerReason as
+            | "context_limit"
+            | "manual"
+            | "scheduled"
+            | "turn_threshold",
+          tokensBefore:
+            typeof p.tokensBefore === "number"
+              ? p.tokensBefore
+              : typeof p.originalEventCount === "number"
+                ? p.originalEventCount
+                : 1000,
+          tokensAfter:
+            typeof p.tokensAfter === "number"
+              ? p.tokensAfter
+              : typeof p.compactedEventCount === "number"
+                ? p.compactedEventCount
+                : 100,
+          preservedContextSummary:
+            typeof p.preservedContextSummary === "string"
+              ? p.preservedContextSummary
+              : typeof p.summary === "string"
+                ? p.summary
+                : undefined,
         };
       }
 
@@ -596,47 +682,85 @@ export class UniversalHarnessRecordDecoder implements HarnessRecordDecoder {
           ...baseFields,
           type: "branch_fork",
           sourceSessionId: String(p.sourceSessionId ?? p.parentSessionId ?? sessionId),
-          branchPointEventId: String(p.branchPointEventId ?? p.branchSessionId ?? `evt_branch_${sequence}`),
-          forkReason: typeof p.forkReason === "string" ? p.forkReason : typeof p.reason === "string" ? p.reason : undefined,
+          branchPointEventId: String(
+            p.branchPointEventId ?? p.branchSessionId ?? `evt_branch_${sequence}`,
+          ),
+          forkReason:
+            typeof p.forkReason === "string"
+              ? p.forkReason
+              : typeof p.reason === "string"
+                ? p.reason
+                : undefined,
           branchName: typeof p.branchName === "string" ? p.branchName : undefined,
         };
 
       case "subagent_lifecycle": {
-        const lifecycleType = ["spawn", "start", "pause", "resume", "terminate", "settle"].includes(String(p.lifecycleType ?? p.action))
+        const lifecycleType = ["spawn", "start", "pause", "resume", "terminate", "settle"].includes(
+          String(p.lifecycleType ?? p.action),
+        )
           ? (p.lifecycleType ?? p.action)
           : "spawn";
         return {
           ...baseFields,
           type: "subagent_lifecycle",
           subagentId: String(p.subagentId ?? `sub_${sequence}`),
-          lifecycleType: lifecycleType as "spawn" | "start" | "pause" | "resume" | "terminate" | "settle",
-          parentId: typeof p.parentId === "string" ? p.parentId : typeof p.parentAgentId === "string" ? p.parentAgentId : undefined,
-          role: typeof p.role === "string" ? p.role : typeof p.agentType === "string" ? p.agentType : undefined,
-          reason: typeof p.reason === "string" ? p.reason : typeof p.resultSummary === "string" ? p.resultSummary : undefined,
+          lifecycleType: lifecycleType as
+            | "spawn"
+            | "start"
+            | "pause"
+            | "resume"
+            | "terminate"
+            | "settle",
+          parentId:
+            typeof p.parentId === "string"
+              ? p.parentId
+              : typeof p.parentAgentId === "string"
+                ? p.parentAgentId
+                : undefined,
+          role:
+            typeof p.role === "string"
+              ? p.role
+              : typeof p.agentType === "string"
+                ? p.agentType
+                : undefined,
+          reason:
+            typeof p.reason === "string"
+              ? p.reason
+              : typeof p.resultSummary === "string"
+                ? p.resultSummary
+                : undefined,
         };
       }
 
       case "session_lifecycle": {
-        const lifecycleType = ["start", "pause", "resume", "end", "crash"].includes(String(p.lifecycleType ?? p.action))
+        const lifecycleType = ["start", "pause", "resume", "end", "crash"].includes(
+          String(p.lifecycleType ?? p.action),
+        )
           ? (p.lifecycleType ?? p.action)
           : "start";
         return {
           ...baseFields,
           type: "session_lifecycle",
           lifecycleType: lifecycleType as "start" | "pause" | "resume" | "end" | "crash",
-          exitReason: typeof p.exitReason === "string" ? p.exitReason : typeof p.endReason === "string" ? p.endReason : undefined,
+          exitReason:
+            typeof p.exitReason === "string"
+              ? p.exitReason
+              : typeof p.endReason === "string"
+                ? p.endReason
+                : undefined,
           harnessName: typeof p.harnessName === "string" ? p.harnessName : undefined,
           workspaceId: typeof p.workspaceId === "string" ? p.workspaceId : undefined,
         };
       }
-
-      case "unknown_passthrough":
       default:
         return {
           ...baseFields,
           type: "unknown_passthrough",
           rawEventType: String(p.rawEventType ?? p.originalRecordType ?? p.type ?? "unknown"),
-          rawPayload: typeof p.rawPayload === "object" && p.rawPayload !== null ? (p.rawPayload as Record<string, unknown>) : { value: p.rawPayload },
+          rawPayload:
+            typeof p.rawPayload === "object" && p.rawPayload !== null
+              ? (p.rawPayload as Record<string, unknown>)
+              : { value: p.rawPayload },
         };
     }
   }

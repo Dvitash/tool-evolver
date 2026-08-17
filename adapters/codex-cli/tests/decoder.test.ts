@@ -1,6 +1,4 @@
-import {
-  NormalizedSessionEventSchema,
-} from "@tool-evolver/contracts";
+import { NormalizedSessionEventSchema } from "@tool-evolver/contracts";
 import { describe, expect, it } from "vitest";
 import {
   MULTI_TURN_TOOLS_ROLLOUT_PATH,
@@ -8,11 +6,7 @@ import {
   SUBAGENTS_AND_FORKS_ROLLOUT_PATH,
   readFixture,
 } from "../fixtures/index.js";
-import {
-  CodexSessionDecoder,
-  decodeCodexRecord,
-  decodeCodexTranscript,
-} from "../src/decoder.js";
+import { CodexSessionDecoder, decodeCodexRecord, decodeCodexTranscript } from "../src/decoder.js";
 
 describe("Codex CLI Session Decoder", () => {
   describe("Golden Fixture: standard-session.jsonl", () => {
@@ -51,7 +45,8 @@ describe("Codex CLI Session Decoder", () => {
       expect(events[2]?.type).toBe("model_reasoning");
       expect(events[2]).toMatchObject({
         type: "model_reasoning",
-        reasoningContent: "I need to execute git status and read the source file index.ts to fulfill the user request.",
+        reasoningContent:
+          "I need to execute git status and read the source file index.ts to fulfill the user request.",
       });
 
       expect(events[3]?.type).toBe("command_exec");

@@ -115,8 +115,7 @@ export function createInvocationGrant(params: CreateInvocationGrantParams): Invo
   const expiresAt = params.expiresAt ?? new Date(now + ttlMs).toISOString();
 
   const grantId =
-    params.grantId ??
-    `grant_${params.invocationId}_${Math.random().toString(36).slice(2, 10)}`;
+    params.grantId ?? `grant_${params.invocationId}_${Math.random().toString(36).slice(2, 10)}`;
 
   const payload: InvocationGrantPayload = {
     grantId,
@@ -206,10 +205,7 @@ export function verifyInvocationGrant(
   }
 
   // 3. Check bound identifiers
-  if (
-    options.expectedInvocationId &&
-    parsedGrant.invocationId !== options.expectedInvocationId
-  ) {
+  if (options.expectedInvocationId && parsedGrant.invocationId !== options.expectedInvocationId) {
     return {
       valid: false,
       errorCode: "INVOCATION_MISMATCH",
@@ -225,10 +221,7 @@ export function verifyInvocationGrant(
     };
   }
 
-  if (
-    options.expectedToolVersion &&
-    parsedGrant.toolVersion !== options.expectedToolVersion
-  ) {
+  if (options.expectedToolVersion && parsedGrant.toolVersion !== options.expectedToolVersion) {
     return {
       valid: false,
       errorCode: "TOOL_MISMATCH",
@@ -236,10 +229,7 @@ export function verifyInvocationGrant(
     };
   }
 
-  if (
-    options.expectedWorkspaceId &&
-    parsedGrant.workspaceId !== options.expectedWorkspaceId
-  ) {
+  if (options.expectedWorkspaceId && parsedGrant.workspaceId !== options.expectedWorkspaceId) {
     return {
       valid: false,
       errorCode: "WORKSPACE_MISMATCH",
@@ -247,10 +237,7 @@ export function verifyInvocationGrant(
     };
   }
 
-  if (
-    options.expectedEnvelopeId &&
-    parsedGrant.envelopeId !== options.expectedEnvelopeId
-  ) {
+  if (options.expectedEnvelopeId && parsedGrant.envelopeId !== options.expectedEnvelopeId) {
     return {
       valid: false,
       errorCode: "ENVELOPE_MISMATCH",

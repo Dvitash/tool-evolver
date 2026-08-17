@@ -1,16 +1,16 @@
 import { randomBytes } from "node:crypto";
 import {
-  AuthScope,
-  DeviceAuthBootstrapRequest,
+  type AuthScope,
+  type DeviceAuthBootstrapRequest,
   DeviceAuthBootstrapRequestSchema,
-  DeviceAuthBootstrapResponse,
-  DeviceTokenExchangeRequest,
+  type DeviceAuthBootstrapResponse,
+  type DeviceTokenExchangeRequest,
   DeviceTokenExchangeRequestSchema,
-  DeviceTokenExchangeResponse,
+  type DeviceTokenExchangeResponse,
 } from "@tool-evolver/protocol";
 import { ConsentManager } from "./consent.js";
-import { AccountRepository } from "./repositories/account-repository.js";
-import { TokenError, TokenService } from "./tokens.js";
+import type { AccountRepository } from "./repositories/account-repository.js";
+import { TokenError, type TokenService } from "./tokens.js";
 
 /**
  * Internal device flow session state.
@@ -67,7 +67,8 @@ export class DeviceFlowEngine {
     this.tokenService = options.tokenService;
     this.accountRepository = options.accountRepository;
     this.consentManager = options.consentManager ?? new ConsentManager();
-    this.defaultVerificationUri = options.defaultVerificationUri ?? "https://cloud.toolevolver.dev/device";
+    this.defaultVerificationUri =
+      options.defaultVerificationUri ?? "https://cloud.toolevolver.dev/device";
     this.defaultExpiresInSeconds = options.defaultExpiresInSeconds ?? 900; // 15 minutes
     this.defaultIntervalSeconds = options.defaultIntervalSeconds ?? 5; // 5 seconds
   }
@@ -170,7 +171,11 @@ export class DeviceFlowEngine {
       throw new TokenError("invalid_grant", "Device ID does not match authorization request", 400);
     }
     if (session.installationId !== validated.installationId) {
-      throw new TokenError("invalid_grant", "Installation ID does not match authorization request", 400);
+      throw new TokenError(
+        "invalid_grant",
+        "Installation ID does not match authorization request",
+        400,
+      );
     }
 
     const now = Date.now();

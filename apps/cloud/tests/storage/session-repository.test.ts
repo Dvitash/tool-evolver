@@ -3,7 +3,7 @@ import { MemoryDatabasePool } from "../../src/db/client.js";
 import { runMigrations } from "../../src/db/migrations.js";
 import { ObservationRepository } from "../../src/storage/repositories/observation-repository.js";
 import { SessionRepository } from "../../src/storage/repositories/session-repository.js";
-import { TenantContext } from "../../src/tenant.js";
+import type { TenantContext } from "../../src/tenant.js";
 
 describe("SessionRepository", () => {
   const setup = async () => {
@@ -22,10 +22,12 @@ describe("SessionRepository", () => {
       workspaceId: "ws-2",
     };
 
-    await pool.query(
-      `INSERT INTO accounts (id, name) VALUES ($1, $2), ($3, $4)`,
-      ["acc-1", "Account 1", "acc-2", "Account 2"],
-    );
+    await pool.query(`INSERT INTO accounts (id, name) VALUES ($1, $2), ($3, $4)`, [
+      "acc-1",
+      "Account 1",
+      "acc-2",
+      "Account 2",
+    ]);
     await pool.query(
       `INSERT INTO workspaces (id, account_id, name, slug) VALUES ($1, $2, $3, $4), ($5, $6, $7, $8)`,
       ["ws-1", "acc-1", "Workspace 1", "ws1", "ws-2", "acc-2", "Workspace 2", "ws2"],
@@ -106,7 +108,11 @@ describe("SessionRepository", () => {
       },
     ]);
 
-    const updated1 = await sessionRepo.recordSessionEventsMaterialized(tenantA, "sess-summary", batch1);
+    const updated1 = await sessionRepo.recordSessionEventsMaterialized(
+      tenantA,
+      "sess-summary",
+      batch1,
+    );
     expect(updated1.eventCount).toBe(3);
     expect(updated1.summaryByKind).toEqual({
       message: 2,
@@ -141,7 +147,11 @@ describe("SessionRepository", () => {
       },
     ]);
 
-    const updated2 = await sessionRepo.recordSessionEventsMaterialized(tenantA, "sess-summary", batch2);
+    const updated2 = await sessionRepo.recordSessionEventsMaterialized(
+      tenantA,
+      "sess-summary",
+      batch2,
+    );
     expect(updated2.eventCount).toBe(5);
     expect(updated2.summaryByKind).toEqual({
       message: 2,
@@ -192,7 +202,11 @@ describe("SessionRepository", () => {
         causalRef: { causalSequence: 1 },
       },
     ]);
-    const updated = await sessionRepo.recordSessionEventsMaterialized(tenantA, "sess-late", earlyBatch);
+    const updated = await sessionRepo.recordSessionEventsMaterialized(
+      tenantA,
+      "sess-late",
+      earlyBatch,
+    );
 
     expect(updated.eventCount).toBe(2);
     // Earliest startedAt updated to 12:00:01

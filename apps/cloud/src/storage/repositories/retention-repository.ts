@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { DatabasePool, Queryable } from "../../db/client.js";
-import { TenantContext } from "../../tenant.js";
-import {
+import type { DatabasePool, Queryable } from "../../db/client.js";
+import type { TenantContext } from "../../tenant.js";
+import type {
   DeletionJobEntity,
   DeletionJobStatus,
   DeletionScope,
@@ -104,10 +104,7 @@ export class RetentionRepository {
   ): Promise<RetentionHoldEntity[]> {
     const client = db ?? this.pool;
     const currentTime = filter.now ?? new Date().toISOString();
-    const conditions: string[] = [
-      "account_id = $1",
-      "workspace_id = $2",
-    ];
+    const conditions: string[] = ["account_id = $1", "workspace_id = $2"];
     const params: unknown[] = [tenant.accountId, tenant.workspaceId];
     let paramIdx = 3;
 
@@ -129,7 +126,9 @@ export class RetentionRepository {
 
     const holds = result.rows.map((r) => this.mapRowToHold(r));
     // Filter out expired holds
-    return holds.filter((h) => !h.expiresAt || new Date(h.expiresAt).getTime() > new Date(currentTime).getTime());
+    return holds.filter(
+      (h) => !h.expiresAt || new Date(h.expiresAt).getTime() > new Date(currentTime).getTime(),
+    );
   }
 
   /**
@@ -149,11 +148,7 @@ export class RetentionRepository {
   /**
    * Release a hold by ID.
    */
-  async releaseHold(
-    tenant: TenantContext,
-    holdId: string,
-    db?: Queryable,
-  ): Promise<boolean> {
+  async releaseHold(tenant: TenantContext, holdId: string, db?: Queryable): Promise<boolean> {
     const client = db ?? this.pool;
     const res = await client.query(
       `DELETE FROM retention_holds WHERE account_id = $1 AND workspace_id = $2 AND id = $3`,
@@ -283,7 +278,8 @@ export class RetentionRepository {
     const manifest = update.manifest ?? {};
     const error = update.error !== undefined ? update.error : null;
     const recordCount = update.recordCount ?? 0;
-    const completedAt = update.completedAt !== undefined ? update.completedAt : new Date().toISOString();
+    const completedAt =
+      update.completedAt !== undefined ? update.completedAt : new Date().toISOString();
 
     await client.query(
       `UPDATE export_jobs SET
@@ -416,7 +412,8 @@ export class RetentionRepository {
     const deletedCount = update.deletedRecordsCount ?? 0;
     const summary = update.summary ?? {};
     const error = update.error !== undefined ? update.error : null;
-    const completedAt = update.completedAt !== undefined ? update.completedAt : new Date().toISOString();
+    const completedAt =
+      update.completedAt !== undefined ? update.completedAt : new Date().toISOString();
 
     await client.query(
       `UPDATE deletion_jobs SET
@@ -466,7 +463,7 @@ export class RetentionRepository {
       expiresAt: row.expires_at ? String(row.expires_at) : null,
       metadata: (typeof row.metadata === "string"
         ? JSON.parse(row.metadata)
-        : row.metadata ?? {}) as Record<string, unknown>,
+        : (row.metadata ?? {})) as Record<string, unknown>,
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     };
@@ -488,7 +485,7 @@ export class RetentionRepository {
       exportPath: row.export_path ? String(row.export_path) : null,
       manifest: (typeof row.manifest === "string"
         ? JSON.parse(row.manifest)
-        : row.manifest ?? {}) as Record<string, unknown>,
+        : (row.manifest ?? {})) as Record<string, unknown>,
       error: row.error ? String(row.error) : null,
       recordCount: Number(row.record_count ?? 0),
       createdAt: String(row.created_at),
@@ -511,7 +508,7 @@ export class RetentionRepository {
       deletedRecordsCount: Number(row.deleted_records_count ?? 0),
       summary: (typeof row.summary === "string"
         ? JSON.parse(row.summary)
-        : row.summary ?? {}) as Record<string, unknown>,
+        : (row.summary ?? {})) as Record<string, unknown>,
       error: row.error ? String(row.error) : null,
       createdAt: String(row.created_at),
       completedAt: row.completed_at ? String(row.completed_at) : null,

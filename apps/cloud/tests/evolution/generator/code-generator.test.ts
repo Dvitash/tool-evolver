@@ -17,17 +17,17 @@ describe("CodeGenerator", () => {
         confidenceScore: 0.9,
         priority: "medium",
         suggestedToolName: "compute_statistics",
-        inferredInputs: [
-          { name: "values", type: "array", description: "Array of numbers" },
-        ],
+        inferredInputs: [{ name: "values", type: "array", description: "Array of numbers" }],
       },
     });
 
     const plan = planner.plan(opp, { targetType: "single_tool" });
     const source = codeGen.generateSource(plan);
 
-    expect(source).toContain("import { defineTool, type ToolContext } from \"@tool-evolver/runtime\";");
-    expect(source).toContain("import { z } from \"zod\";");
+    expect(source).toContain(
+      'import { defineTool, type ToolContext } from "@tool-evolver/runtime";',
+    );
+    expect(source).toContain('import { z } from "zod";');
     expect(source).toContain("export const InputSchema =");
     expect(source).toContain("export const OutputSchema =");
     expect(source).toContain("export default defineTool<ToolInput, ToolOutput>(");
@@ -46,16 +46,14 @@ describe("CodeGenerator", () => {
         confidenceScore: 0.9,
         priority: "medium",
         suggestedToolName: "read_workspace_file",
-        inferredInputs: [
-          { name: "path", type: "string", description: "Target file path" },
-        ],
+        inferredInputs: [{ name: "path", type: "string", description: "Target file path" }],
       },
     });
 
     const plan = planner.plan(opp, { targetType: "single_tool" });
     const source = codeGen.generateSource(plan);
 
-    expect(source).toContain("await broker.fs.readFile(filePath, \"utf-8\");");
+    expect(source).toContain('await broker.fs.readFile(filePath, "utf-8");');
   });
 
   it("should generate TypeScript source for a filesystem write tool", () => {
@@ -91,9 +89,7 @@ describe("CodeGenerator", () => {
         confidenceScore: 0.9,
         priority: "medium",
         suggestedToolName: "run_git_command",
-        inferredInputs: [
-          { name: "command", type: "string", description: "Command to execute" },
-        ],
+        inferredInputs: [{ name: "command", type: "string", description: "Command to execute" }],
       },
     });
 
@@ -113,9 +109,7 @@ describe("CodeGenerator", () => {
         confidenceScore: 0.9,
         priority: "medium",
         suggestedToolName: "fetch_remote_schema",
-        inferredInputs: [
-          { name: "url", type: "string", description: "Remote URL" },
-        ],
+        inferredInputs: [{ name: "url", type: "string", description: "Remote URL" }],
       },
     });
 

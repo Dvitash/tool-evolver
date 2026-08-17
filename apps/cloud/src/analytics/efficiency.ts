@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { DatabasePool, Queryable } from "../db/client.js";
 import type { IMetricsRepository } from "./repositories/metrics-repository.js";
-import {
-  type CalculateEfficiencyParams,
-  type CounterfactualSavings,
-  type EfficiencyMetricRecord,
-  type MeasuredSavings,
+import type {
+  CalculateEfficiencyParams,
+  CounterfactualSavings,
+  EfficiencyMetricRecord,
+  MeasuredSavings,
 } from "./types.js";
 
 /**
@@ -30,9 +30,7 @@ export class EfficiencyCalculator {
   /**
    * Calculate efficiency metrics comparing observed tool usage against a baseline.
    */
-  async calculateEfficiency(
-    params: CalculateEfficiencyParams,
-  ): Promise<EfficiencyMetricRecord> {
+  async calculateEfficiency(params: CalculateEfficiencyParams): Promise<EfficiencyMetricRecord> {
     const windowStart = params.windowStart;
     const windowEnd = params.windowEnd ?? new Date().toISOString();
 
@@ -68,7 +66,8 @@ export class EfficiencyCalculator {
       durationDeltas.push(delta);
     }
 
-    const avgObservedLatencyMs = invocationCount > 0 ? totalDurationMs / invocationCount : baselineLatency;
+    const avgObservedLatencyMs =
+      invocationCount > 0 ? totalDurationMs / invocationCount : baselineLatency;
     const successRate = invocationCount > 0 ? successfulCount / invocationCount : 1.0;
 
     // 2. Measured Savings
@@ -101,19 +100,24 @@ export class EfficiencyCalculator {
     let variance = 0;
     if (invocationCount > 1) {
       const meanDelta = perInvocationTimeSavedMs;
-      const sumSq = durationDeltas.reduce((acc, d) => acc + Math.pow(d - meanDelta, 2), 0);
+      const sumSq = durationDeltas.reduce((acc, d) => acc + (d - meanDelta) ** 2, 0);
       variance = sumSq / (invocationCount - 1);
     }
     const stdDevMs = Math.sqrt(variance);
     const standardErrorMs = invocationCount > 0 ? stdDevMs / Math.sqrt(invocationCount) : 0;
 
     // Standard error in USD
-    const standardErrorUsd = Number(((standardErrorMs * invocationCount / 3600000) * devHourlyRate + 0.01).toFixed(4));
+    const standardErrorUsd = Number(
+      (((standardErrorMs * invocationCount) / 3600000) * devHourlyRate + 0.01).toFixed(4),
+    );
 
     // 95% Confidence Interval (z = 1.96)
     const zScore = 1.96;
     const marginOfErrorUsd = zScore * standardErrorUsd;
-    const lowerBoundUsd = Math.max(0, Number((estimatedCostSavedUsd - marginOfErrorUsd).toFixed(4)));
+    const lowerBoundUsd = Math.max(
+      0,
+      Number((estimatedCostSavedUsd - marginOfErrorUsd).toFixed(4)),
+    );
     const upperBoundUsd = Number((estimatedCostSavedUsd + marginOfErrorUsd).toFixed(4));
 
     const counterfactualSavings: CounterfactualSavings = {
@@ -128,9 +132,13 @@ export class EfficiencyCalculator {
 
     // 4. Net Savings Score [0, 100]
     // Combines latency improvement ratio, token reduction ratio, and reliability
-    const latencyImprovementRatio = baselineLatency > 0 ? Math.max(0, (baselineLatency - avgObservedLatencyMs) / baselineLatency) : 0;
-    const tokenImprovementRatio = baselineTokens > 0 ? Math.max(0, tokensSavedPerInvocation / baselineTokens) : 0;
-    const rawScore = (latencyImprovementRatio * 40 + tokenImprovementRatio * 30 + successRate * 30);
+    const latencyImprovementRatio =
+      baselineLatency > 0
+        ? Math.max(0, (baselineLatency - avgObservedLatencyMs) / baselineLatency)
+        : 0;
+    const tokenImprovementRatio =
+      baselineTokens > 0 ? Math.max(0, tokensSavedPerInvocation / baselineTokens) : 0;
+    const rawScore = latencyImprovementRatio * 40 + tokenImprovementRatio * 30 + successRate * 30;
     const netSavingsScore = Math.min(100, Math.max(0, Number(rawScore.toFixed(2))));
 
     const efficiencyRecord: EfficiencyMetricRecord = {

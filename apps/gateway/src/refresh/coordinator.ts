@@ -1,9 +1,6 @@
 import crypto from "node:crypto";
 import path from "node:path";
-import type {
-  CatalogSnapshot,
-  CatalogToolSummary,
-} from "@tool-evolver/contracts";
+import type { CatalogSnapshot, CatalogToolSummary } from "@tool-evolver/contracts";
 import type {
   CatalogChangeSummary,
   HarnessWorkspace,
@@ -12,11 +9,7 @@ import type {
 import type { McpConnection } from "../connection.js";
 import type { JsonRpcNotification } from "../protocol/types.js";
 import type { CatalogChangeEvent, ToolRegistry } from "../registry/index.js";
-import {
-  DEFAULT_META_TOOLS_REMINDER,
-  NudgeDeduplicator,
-  buildSafeNudgePayload,
-} from "./nudge.js";
+import { DEFAULT_META_TOOLS_REMINDER, NudgeDeduplicator, buildSafeNudgePayload } from "./nudge.js";
 import type {
   NudgePayload,
   NudgeScope,
@@ -278,7 +271,11 @@ export class CatalogRefreshCoordinator {
       if (event.workspaceId !== "*" && connWorkspaceId !== event.workspaceId) {
         return false;
       }
-      if (event.sessionId && conn.workspaceContext.sessionId && conn.workspaceContext.sessionId !== event.sessionId) {
+      if (
+        event.sessionId &&
+        conn.workspaceContext.sessionId &&
+        conn.workspaceContext.sessionId !== event.sessionId
+      ) {
         return false;
       }
       return true;
@@ -338,7 +335,10 @@ export class CatalogRefreshCoordinator {
         outcomes.push("native_sent");
         this.totalNativeSent++;
       } catch (err) {
-        this.logger?.("error", `Failed to send native list_changed to ${conn.connectionId}: ${(err as Error).message}`);
+        this.logger?.(
+          "error",
+          `Failed to send native list_changed to ${conn.connectionId}: ${(err as Error).message}`,
+        );
         error = (err as Error).message;
         outcomes.push("failed");
       }
@@ -385,7 +385,9 @@ export class CatalogRefreshCoordinator {
             configPath: path.join(conn.workspaceContext.canonicalRoot, ".config"),
             harnessId,
             metadata: {},
-            ...(conn.workspaceContext.sessionId ? { activeSessionId: conn.workspaceContext.sessionId } : {}),
+            ...(conn.workspaceContext.sessionId
+              ? { activeSessionId: conn.workspaceContext.sessionId }
+              : {}),
           };
 
           const changeSummary: CatalogChangeSummary = {
@@ -420,7 +422,10 @@ export class CatalogRefreshCoordinator {
               this.totalFailed++;
             }
           } catch (err) {
-            this.logger?.("error", `Adapter refresh failed for ${harnessId}: ${(err as Error).message}`);
+            this.logger?.(
+              "error",
+              `Adapter refresh failed for ${harnessId}: ${(err as Error).message}`,
+            );
             error = (err as Error).message;
             outcomes.push("failed");
             this.totalFailed++;

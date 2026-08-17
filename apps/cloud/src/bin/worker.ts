@@ -2,6 +2,7 @@
 import process from "node:process";
 import { loadConfig } from "../config.js";
 import { createDatabasePool } from "../db/client.js";
+import { createOpportunityDetectionService } from "../evolution/opportunity/index.js";
 import type { JobEnvelope } from "../queue/envelope.js";
 import { createDurableQueue } from "../queue/queue.js";
 import { WorkerRuntime } from "../queue/worker.js";
@@ -9,7 +10,6 @@ import {
   StoreObservationBatchConsumer,
   type StoreObservationBatchPayload,
 } from "../storage/index.js";
-import { createOpportunityDetectionService } from "../evolution/opportunity/index.js";
 
 async function main() {
   const config = loadConfig();
@@ -32,7 +32,9 @@ async function main() {
   });
 
   worker.registerHandler("observation.process", async (job) => {
-    console.log(`[Worker] Processing observation for tenant ${job.tenantContext.accountId}:${job.tenantContext.workspaceId}`);
+    console.log(
+      `[Worker] Processing observation for tenant ${job.tenantContext.accountId}:${job.tenantContext.workspaceId}`,
+    );
   });
 
   worker.registerHandler("evaluation.run", async (job) => {
@@ -44,10 +46,14 @@ async function main() {
   });
 
   worker.registerHandler("opportunity.detect", async (job) => {
-    console.log(`[Worker] Running opportunity detection for tenant ${job.tenantContext.accountId}:${job.tenantContext.workspaceId}`);
+    console.log(
+      `[Worker] Running opportunity detection for tenant ${job.tenantContext.accountId}:${job.tenantContext.workspaceId}`,
+    );
   });
 
-  console.log(`[Worker] Starting durable queue worker with concurrency ${config.queue.concurrency}...`);
+  console.log(
+    `[Worker] Starting durable queue worker with concurrency ${config.queue.concurrency}...`,
+  );
   worker.start();
 
   const shutdown = async () => {

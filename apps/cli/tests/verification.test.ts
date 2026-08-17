@@ -2,10 +2,7 @@ import path from "node:path";
 import type { IpcClient } from "@tool-evolver/observer";
 import { describe, expect, it, vi } from "vitest";
 import { createUserServiceManager } from "../src/service/manager.js";
-import {
-  VerificationSuite,
-  runVerificationSuite,
-} from "../src/service/verification.js";
+import { VerificationSuite, runVerificationSuite } from "../src/service/verification.js";
 
 function createMockFsBridge(initialFiles: Record<string, string> = {}) {
   const files = new Map<string, string>(Object.entries(initialFiles));

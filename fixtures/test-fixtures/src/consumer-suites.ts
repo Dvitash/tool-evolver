@@ -74,7 +74,9 @@ const defaultAssert: TestContext = {
     const actStr = JSON.stringify(actual);
     const expStr = JSON.stringify(expected);
     if (actStr !== expStr) {
-      throw new Error(`Assertion failed: ${message || "values differ"}\nExpected: ${expStr}\nReceived: ${actStr}`);
+      throw new Error(
+        `Assertion failed: ${message || "values differ"}\nExpected: ${expStr}\nReceived: ${actStr}`,
+      );
     }
   },
 };
@@ -109,7 +111,10 @@ export function defineStorageRoundTripSuite(options: StorageSuiteOptions) {
       await adapter.saveSessionEvents(sessionId, allValidDomainEvents);
       const loadedEvents = await adapter.getSessionEvents(sessionId);
 
-      ctx.assert(loadedEvents.length === allValidDomainEvents.length, "All session events retrieved");
+      ctx.assert(
+        loadedEvents.length === allValidDomainEvents.length,
+        "All session events retrieved",
+      );
       for (let i = 0; i < allValidDomainEvents.length; i++) {
         const expected = allValidDomainEvents[i];
         const actual = loadedEvents[i];
@@ -128,7 +133,11 @@ export function defineStorageRoundTripSuite(options: StorageSuiteOptions) {
       const loadedCandidate = await adapter.getEvolutionCandidate(validEvolutionCandidate.id);
       ctx.assert(loadedCandidate !== null, "Candidate retrieved");
       ctx.assertEqual(loadedCandidate?.id, validEvolutionCandidate.id, "Candidate ID matches");
-      ctx.assertEqual(loadedCandidate?.state, validEvolutionCandidate.state, "Candidate state matches");
+      ctx.assertEqual(
+        loadedCandidate?.state,
+        validEvolutionCandidate.state,
+        "Candidate state matches",
+      );
 
       // 3. Tool Manifest Round Trip
       await adapter.saveToolManifest(validToolManifest);
@@ -141,7 +150,11 @@ export function defineStorageRoundTripSuite(options: StorageSuiteOptions) {
       await adapter.saveDeployment(validDeploymentRecord);
       const loadedDep = await adapter.getDeployment(validDeploymentRecord.deploymentId);
       ctx.assert(loadedDep !== null, "Deployment record retrieved");
-      ctx.assertEqual(loadedDep?.deploymentId, validDeploymentRecord.deploymentId, "Deployment ID matches");
+      ctx.assertEqual(
+        loadedDep?.deploymentId,
+        validDeploymentRecord.deploymentId,
+        "Deployment ID matches",
+      );
       ctx.assertEqual(loadedDep?.state, validDeploymentRecord.state, "Deployment state matches");
     } finally {
       if (options.cleanupAdapter) {
@@ -161,9 +174,15 @@ export interface ApiHandlerClient {
   pushObservations(req: ObservationBatchRequest): Promise<ObservationBatchResponse>;
   fetchCatalogSnapshot(req: CatalogSnapshotRequest): Promise<CatalogSnapshotResponse>;
   downloadArtifact(req: ArtifactDownloadRequest): Promise<ArtifactDownloadMetadata>;
-  reportDeploymentStatus(req: DeploymentStatusReportRequest): Promise<DeploymentStatusReportResponse>;
+  reportDeploymentStatus(
+    req: DeploymentStatusReportRequest,
+  ): Promise<DeploymentStatusReportResponse>;
   negotiateHealth(req: HealthNegotiateRequest): Promise<HealthNegotiateResponse>;
-  sendRawRequest(method: string, path: string, body?: unknown): Promise<{ status: number; data: unknown }>;
+  sendRawRequest(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<{ status: number; data: unknown }>;
 }
 
 export interface ApiHandlerSuiteOptions {
@@ -178,7 +197,11 @@ export function defineApiHandlerSuite(options: ApiHandlerSuiteOptions) {
     try {
       // 1. Installation Register
       const installRes = await client.registerInstallation(validInstallationRegisterRequest);
-      ctx.assertEqual(installRes.installationId, validInstallationRegisterRequest.installationId, "Installation ID matches");
+      ctx.assertEqual(
+        installRes.installationId,
+        validInstallationRegisterRequest.installationId,
+        "Installation ID matches",
+      );
 
       // 2. Device Bootstrap
       const bootstrapRes = await client.bootstrapDevice(validDeviceAuthBootstrapRequest);
@@ -197,7 +220,11 @@ export function defineApiHandlerSuite(options: ApiHandlerSuiteOptions) {
 
       // 5. Artifact Download
       const artifactRes = await client.downloadArtifact(validArtifactDownloadRequest);
-      ctx.assertEqual(artifactRes.digest, validArtifactDownloadRequest.digest, "Artifact digest matches");
+      ctx.assertEqual(
+        artifactRes.digest,
+        validArtifactDownloadRequest.digest,
+        "Artifact digest matches",
+      );
       ctx.assert(Boolean(artifactRes.downloadUrl), "Download URL returned");
 
       // 6. Deployment Status Report
@@ -209,8 +236,13 @@ export function defineApiHandlerSuite(options: ApiHandlerSuiteOptions) {
       ctx.assert(Boolean(healthRes.serverVersion), "Health returned server version");
 
       // 8. Invalid Request Rejection
-      const badRes = await client.sendRawRequest("POST", "/v1/observations/batch", { bad: "payload" });
-      ctx.assert(badRes.status >= 400 && badRes.status < 500, "Malformed request returns 4xx status");
+      const badRes = await client.sendRawRequest("POST", "/v1/observations/batch", {
+        bad: "payload",
+      });
+      ctx.assert(
+        badRes.status >= 400 && badRes.status < 500,
+        "Malformed request returns 4xx status",
+      );
     } finally {
       if (options.cleanupClient) {
         await options.cleanupClient(client);

@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  CandidateEvaluationService,
-  createCandidateEvaluationService,
-} from "../../../src/evolution/evaluation/service.js";
-import {
   PERMISSIVE_EVALUATION_POLICY_V1,
   SHADOW_CALIBRATION_POLICY_V1,
   STANDARD_EVALUATION_POLICY_V1,
   STRICT_EVALUATION_POLICY_V1,
 } from "../../../src/evolution/evaluation/policy.js";
+import {
+  CandidateEvaluationService,
+  createCandidateEvaluationService,
+} from "../../../src/evolution/evaluation/service.js";
 import {
   createMockActiveBaseline,
   createMockCandidateRevision,
@@ -44,8 +44,8 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
     expect(result.overallDecision.verdict).toBe("pass");
     expect(result.decisionRecord.decision).toBe("eligible_for_artifact");
     expect(result.decisionRecord.hardGateResult.passed).toBe(true);
-    expect(result.decisionRecord.compositeScore).toBeGreaterThanOrEqual(0.70);
-    expect(result.decisionRecord.confidenceScore).toBeGreaterThanOrEqual(0.60);
+    expect(result.decisionRecord.compositeScore).toBeGreaterThanOrEqual(0.7);
+    expect(result.decisionRecord.confidenceScore).toBeGreaterThanOrEqual(0.6);
     expect(result.dimensions.length).toBeGreaterThan(0);
     expect(result.securityChecklist.typecheckPassed).toBe(true);
     expect(result.securityChecklist.noForbiddenImports).toBe(true);
@@ -124,7 +124,7 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
     expect(result.decisionRecord.repairGuidance?.canRepair).toBe(true);
     expect(result.decisionRecord.repairGuidance?.repairTargets.length).toBeGreaterThan(0);
     expect(result.decisionRecord.repairGuidance?.suggestedFixes).toContain(
-      "Add optional 'foo' property to input parameter schema"
+      "Add optional 'foo' property to input parameter schema",
     );
 
     expect(repairCallback).toHaveBeenCalledTimes(1);
@@ -137,11 +137,42 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
     const candidate = createMockCandidateRevision({
       manifest: {
         capabilities: {
-          fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 1048576 },
-          net: { allowOutbound: true, allowedDomains: ["api.example.com"], allowedPorts: [443], allowInsecureHttp: false, denyDomains: [], denyPrivateRanges: true },
-          command: { allowedCommands: [], allowEnvInheritance: false, denyCommands: [], allowPipes: false, maxExecutionTimeMs: 1000 },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 1000, maxOutputSizeBytes: 1048576 },
+          fs: {
+            readPaths: [],
+            writePaths: [],
+            allowWorkspaceRoot: false,
+            allowTemp: false,
+            denyPaths: [],
+            maxFileSizeBytes: 1048576,
+          },
+          net: {
+            allowOutbound: true,
+            allowedDomains: ["api.example.com"],
+            allowedPorts: [443],
+            allowInsecureHttp: false,
+            denyDomains: [],
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowedCommands: [],
+            allowEnvInheritance: false,
+            denyCommands: [],
+            allowPipes: false,
+            maxExecutionTimeMs: 1000,
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 1,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 1000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       },
     }); // network_client requires minConfidence = 0.80
@@ -216,7 +247,11 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
     expect(result.decisionRecord.regressionResult).toBeDefined();
     expect(result.decisionRecord.regressionResult?.passed).toBe(false);
     expect(result.decisionRecord.regressionResult?.isBreakingChange).toBe(true);
-    expect(result.decisionRecord.repairGuidance?.repairTargets.some((t) => t.includes("baseline regression"))).toBe(true);
+    expect(
+      result.decisionRecord.repairGuidance?.repairTargets.some((t) =>
+        t.includes("baseline regression"),
+      ),
+    ).toBe(true);
   });
 
   it("renders 'infrastructure_retry' when validation or replay experienced infrastructure failure", async () => {
@@ -303,11 +338,42 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
     const secretCandidate = createMockCandidateRevision({
       manifest: {
         capabilities: {
-          fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 1048576 },
-          net: { allowOutbound: false, allowedDomains: [], allowedPorts: [], allowInsecureHttp: false, denyDomains: [], denyPrivateRanges: true },
-          command: { allowedCommands: [], allowEnvInheritance: false, denyCommands: [], allowPipes: false, maxExecutionTimeMs: 1000 },
-          secrets: { allowedSecretNames: ["SECRET_KEY"], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 1000, maxOutputSizeBytes: 1048576 },
+          fs: {
+            readPaths: [],
+            writePaths: [],
+            allowWorkspaceRoot: false,
+            allowTemp: false,
+            denyPaths: [],
+            maxFileSizeBytes: 1048576,
+          },
+          net: {
+            allowOutbound: false,
+            allowedDomains: [],
+            allowedPorts: [],
+            allowInsecureHttp: false,
+            denyDomains: [],
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowedCommands: [],
+            allowEnvInheritance: false,
+            denyCommands: [],
+            allowPipes: false,
+            maxExecutionTimeMs: 1000,
+          },
+          secrets: {
+            allowedSecretNames: ["SECRET_KEY"],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 1,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 1000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       },
     }); // secret_mediated
@@ -327,7 +393,11 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
         functionCoveragePercent: 90,
       },
       staticFindings: [
-        { severity: "warning", category: "static_flaw", message: "Potential unchecked array access" },
+        {
+          severity: "warning",
+          category: "static_flaw",
+          message: "Potential unchecked array access",
+        },
       ],
     });
 

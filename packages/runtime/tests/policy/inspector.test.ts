@@ -58,11 +58,43 @@ describe("Policy Inspector", () => {
   describe("Risk Level Assessment", () => {
     it("assigns CRITICAL risk when shell execution is requested", () => {
       const manifest: CapabilityManifest = {
-        fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: true, allowedCommands: ["bash"], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        fs: {
+          readPaths: [],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: false,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: true,
+          allowedCommands: ["bash"],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const { riskLevel, riskFactors } = assessRiskLevel(manifest);
@@ -72,11 +104,43 @@ describe("Policy Inspector", () => {
 
     it("assigns CRITICAL risk when direct secret read is requested", () => {
       const manifest: CapabilityManifest = {
-        fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: ["KEY"], allowedPrefixes: [], denyDirectRead: false, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        fs: {
+          readPaths: [],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: false,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: ["KEY"],
+          allowedPrefixes: [],
+          denyDirectRead: false,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const { riskLevel, riskFactors } = assessRiskLevel(manifest);
@@ -86,11 +150,43 @@ describe("Policy Inspector", () => {
 
     it("assigns HIGH risk when file write access is requested", () => {
       const manifest: CapabilityManifest = {
-        fs: { readPaths: [], writePaths: ["dist/out.js"], allowWorkspaceRoot: true, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        fs: {
+          readPaths: [],
+          writePaths: ["dist/out.js"],
+          allowWorkspaceRoot: true,
+          allowTemp: false,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const { riskLevel, riskFactors } = assessRiskLevel(manifest);
@@ -100,11 +196,43 @@ describe("Policy Inspector", () => {
 
     it("assigns LOW risk for read-only workspace operations", () => {
       const manifest: CapabilityManifest = {
-        fs: { readPaths: ["src/index.ts"], writePaths: [], allowWorkspaceRoot: true, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        fs: {
+          readPaths: ["src/index.ts"],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: false,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const { riskLevel } = assessRiskLevel(manifest);
@@ -153,11 +281,43 @@ describe("Policy Inspector", () => {
   describe("Policy Inspection", () => {
     it("inspects policy and returns comprehensive summary", () => {
       const manifest: CapabilityManifest = {
-        fs: { readPaths: ["src/**", "config/**"], writePaths: [], allowWorkspaceRoot: true, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: true, allowedDomains: ["api.github.com", "api.stripe.com"], allowedHosts: [], allowedPorts: [443], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: ["git"], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: ["GITHUB_TOKEN"], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 2, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        fs: {
+          readPaths: ["src/**", "config/**"],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: false,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: true,
+          allowedDomains: ["api.github.com", "api.stripe.com"],
+          allowedHosts: [],
+          allowedPorts: [443],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: ["git"],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: ["GITHUB_TOKEN"],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 2,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const inspection = inspectPolicy(manifest, testEnvelope, {
@@ -167,26 +327,92 @@ describe("Policy Inspector", () => {
       expect(inspection.status).toBe("EXPANSION_REQUIRED");
       expect(inspection.violations.length).toBeGreaterThan(0);
       expect(inspection.remediationCommands.length).toBeGreaterThan(0);
-      expect(inspection.remediationCommands).toContain("tool-evolver envelope expand --add-domain api.stripe.com");
+      expect(inspection.remediationCommands).toContain(
+        "tool-evolver envelope expand --add-domain api.stripe.com",
+      );
     });
   });
 
   describe("Capability Diff API", () => {
     it("computes structured diff showing added and broadened capabilities", () => {
       const source: CapabilityManifest = {
-        fs: { readPaths: ["src/**"], writePaths: [], allowWorkspaceRoot: true, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: ["git"], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        fs: {
+          readPaths: ["src/**"],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: false,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: ["git"],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const target: CapabilityManifest = {
-        fs: { readPaths: ["src/**", "tests/**"], writePaths: ["dist/**"], allowWorkspaceRoot: true, allowTemp: false, denyPaths: [], maxFileSizeBytes: 20971520 },
-        net: { allowOutbound: true, allowedDomains: ["api.github.com"], allowedHosts: [], allowedPorts: [443], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: ["git", "node"], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: ["GITHUB_TOKEN"], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 2, maxCpuUsagePercent: 100, maxMemoryMb: 256, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        fs: {
+          readPaths: ["src/**", "tests/**"],
+          writePaths: ["dist/**"],
+          allowWorkspaceRoot: true,
+          allowTemp: false,
+          denyPaths: [],
+          maxFileSizeBytes: 20971520,
+        },
+        net: {
+          allowOutbound: true,
+          allowedDomains: ["api.github.com"],
+          allowedHosts: [],
+          allowedPorts: [443],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: ["git", "node"],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: ["GITHUB_TOKEN"],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 2,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 256,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const diff = diffCapabilities(source, target);
@@ -216,7 +442,9 @@ describe("Policy Inspector", () => {
 
       expect(explanation.primaryReason).toContain("api.slack.com");
       expect(explanation.summary).toContain("Found 1 policy violation(s)");
-      expect(explanation.remediationCommands).toContain("tool-evolver envelope expand --add-domain api.slack.com");
+      expect(explanation.remediationCommands).toContain(
+        "tool-evolver envelope expand --add-domain api.slack.com",
+      );
     });
   });
 });

@@ -1,4 +1,4 @@
-import { DatabasePool, Queryable } from "../../db/client.js";
+import { type DatabasePool, Queryable } from "../../db/client.js";
 
 /**
  * Refresh Token Family for rotating token tracking and reuse detection.
@@ -72,7 +72,10 @@ export interface TokenRepository {
   }): Promise<RefreshTokenFamily>;
 
   getTokenFamily(familyId: string): Promise<RefreshTokenFamily | null>;
-  revokeTokenFamily(familyId: string, reason?: "reuse_detected" | "user_logout" | "device_revoked" | "manual"): Promise<void>;
+  revokeTokenFamily(
+    familyId: string,
+    reason?: "reuse_detected" | "user_logout" | "device_revoked" | "manual",
+  ): Promise<void>;
 
   saveRefreshToken(record: RefreshTokenRecord): Promise<void>;
   getRefreshToken(tokenHash: string): Promise<RefreshTokenRecord | null>;
@@ -317,10 +320,9 @@ export class DatabaseTokenRepository implements TokenRepository {
       `UPDATE refresh_token_families SET status = 'revoked', revoked_reason = $1, updated_at = $2 WHERE family_id = $3`,
       [reason, now, familyId],
     );
-    await this.pool.query(
-      `UPDATE refresh_tokens SET status = 'revoked' WHERE family_id = $1`,
-      [familyId],
-    );
+    await this.pool.query(`UPDATE refresh_tokens SET status = 'revoked' WHERE family_id = $1`, [
+      familyId,
+    ]);
   }
 
   async saveRefreshToken(record: RefreshTokenRecord): Promise<void> {
@@ -328,7 +330,14 @@ export class DatabaseTokenRepository implements TokenRepository {
       `INSERT INTO refresh_tokens (token_hash, family_id, sequence, status, expires_at, created_at)
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (token_hash) DO UPDATE SET status = $4`,
-      [record.tokenHash, record.familyId, record.sequence, record.status, record.expiresAt, record.createdAt],
+      [
+        record.tokenHash,
+        record.familyId,
+        record.sequence,
+        record.status,
+        record.expiresAt,
+        record.createdAt,
+      ],
     );
   }
 
@@ -359,10 +368,9 @@ export class DatabaseTokenRepository implements TokenRepository {
     newRecord: RefreshTokenRecord,
   ): Promise<boolean> {
     const now = new Date().toISOString();
-    await this.pool.query(
-      `UPDATE refresh_tokens SET status = 'consumed' WHERE token_hash = $1`,
-      [oldTokenHash],
-    );
+    await this.pool.query(`UPDATE refresh_tokens SET status = 'consumed' WHERE token_hash = $1`, [
+      oldTokenHash,
+    ]);
     await this.saveRefreshToken(newRecord);
     await this.pool.query(
       `UPDATE refresh_token_families SET active_token_hash = $1, updated_at = $2 WHERE family_id = $3`,
@@ -387,7 +395,10 @@ export class DatabaseTokenRepository implements TokenRepository {
   }
 
   async isDeviceRevoked(deviceId: string): Promise<boolean> {
-    const res = await this.pool.query(`SELECT 1 FROM revoked_devices WHERE device_id = $1 LIMIT 1`, [deviceId]);
+    const res = await this.pool.query(
+      `SELECT 1 FROM revoked_devices WHERE device_id = $1 LIMIT 1`,
+      [deviceId],
+    );
     return res.rowCount > 0;
   }
 
@@ -406,7 +417,10 @@ export class DatabaseTokenRepository implements TokenRepository {
   }
 
   async isInstallationRevoked(installationId: string): Promise<boolean> {
-    const res = await this.pool.query(`SELECT 1 FROM revoked_installations WHERE installation_id = $1 LIMIT 1`, [installationId]);
+    const res = await this.pool.query(
+      `SELECT 1 FROM revoked_installations WHERE installation_id = $1 LIMIT 1`,
+      [installationId],
+    );
     return res.rowCount > 0;
   }
 
@@ -415,7 +429,14 @@ export class DatabaseTokenRepository implements TokenRepository {
       `INSERT INTO pop_keys (key_id, device_id, public_key, algorithm, expires_at, created_at)
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (key_id) DO UPDATE SET public_key = $3, expires_at = $5`,
-      [record.keyId, record.deviceId, record.publicKey, record.algorithm, record.expiresAt ?? null, record.createdAt],
+      [
+        record.keyId,
+        record.deviceId,
+        record.publicKey,
+        record.algorithm,
+        record.expiresAt ?? null,
+        record.createdAt,
+      ],
     );
   }
 

@@ -2,11 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  canonicalJson,
-  type ToolManifest,
-  ToolManifestSchema,
-} from "@tool-evolver/contracts";
+import { type ToolManifest, ToolManifestSchema, canonicalJson } from "@tool-evolver/contracts";
 import { resolvePaths } from "@tool-evolver/observer";
 import { BUNDLE_FILE_MANIFEST } from "../bundle/spec.js";
 
@@ -126,7 +122,11 @@ export class ArtifactCache {
   /**
    * Atomically commits a staging directory to the content-addressed artifact directory.
    */
-  async commitStagingDirectory(stagingPath: string, digest: string, metadata: ExtractionMetadata): Promise<string> {
+  async commitStagingDirectory(
+    stagingPath: string,
+    digest: string,
+    metadata: ExtractionMetadata,
+  ): Promise<string> {
     const targetPath = this.getArtifactPath(digest);
 
     // Write .extracted metadata in staging

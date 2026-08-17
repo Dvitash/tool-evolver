@@ -1,4 +1,4 @@
-import { CapabilityEnvelope } from "@tool-evolver/contracts";
+import type { CapabilityEnvelope } from "@tool-evolver/contracts";
 import { describe, expect, it } from "vitest";
 import { StructuralClusterer } from "../../../src/evolution/opportunity/clustering.js";
 import { EpisodeSegmenter } from "../../../src/evolution/opportunity/episode.js";
@@ -14,11 +14,42 @@ const mockEnvelope: CapabilityEnvelope = {
   envelopeId: "env-1",
   workspaceId: "ws-1",
   version: "1.0.0",
-  fs: { readPaths: ["src/**"], writePaths: ["src/**"], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [".env", "secrets/*"], maxFileSizeBytes: 10485760 },
-  net: { allowOutbound: false, allowedHosts: [], denyHosts: [], allowLoopback: true, allowedPorts: [] },
-  command: { allowShellExecution: false, allowedCommands: ["pnpm", "git"], allowedBinaries: ["node"], forbiddenPatterns: ["rm -rf", "sudo"], allowEnvPassthrough: [] },
-  secrets: { requiredKeys: [], optionalKeys: [], allowEnvSecrets: false, allowVaultSecrets: false, denySecrets: [] },
-  limits: { maxMemoryMb: 512, maxCpuPercent: 100, maxDurationMs: 60000, maxConcurrentInvocations: 1, maxLogSizeBytes: 1048576 },
+  fs: {
+    readPaths: ["src/**"],
+    writePaths: ["src/**"],
+    allowWorkspaceRoot: true,
+    allowTemp: true,
+    denyPaths: [".env", "secrets/*"],
+    maxFileSizeBytes: 10485760,
+  },
+  net: {
+    allowOutbound: false,
+    allowedHosts: [],
+    denyHosts: [],
+    allowLoopback: true,
+    allowedPorts: [],
+  },
+  command: {
+    allowShellExecution: false,
+    allowedCommands: ["pnpm", "git"],
+    allowedBinaries: ["node"],
+    forbiddenPatterns: ["rm -rf", "sudo"],
+    allowEnvPassthrough: [],
+  },
+  secrets: {
+    requiredKeys: [],
+    optionalKeys: [],
+    allowEnvSecrets: false,
+    allowVaultSecrets: false,
+    denySecrets: [],
+  },
+  limits: {
+    maxMemoryMb: 512,
+    maxCpuPercent: 100,
+    maxDurationMs: 60000,
+    maxConcurrentInvocations: 1,
+    maxLogSizeBytes: 1048576,
+  },
   isFrozen: false,
   createdAt: new Date().toISOString(),
 };
@@ -47,7 +78,12 @@ describe("SuppressionEngine", () => {
     const engine = new SuppressionEngine();
 
     const events = [
-      createCommandExecEvent({ eventId: "e1", sessionId: "sess-1", command: "pwd", durationMs: 50 }),
+      createCommandExecEvent({
+        eventId: "e1",
+        sessionId: "sess-1",
+        command: "pwd",
+        durationMs: 50,
+      }),
     ];
 
     const episodes = segmenter.segmentEvents(events);
@@ -65,7 +101,11 @@ describe("SuppressionEngine", () => {
 
     // Command 'curl' is not in allowedCommands
     const events = [
-      createCommandExecEvent({ eventId: "e1", sessionId: "sess-1", command: "curl -X POST https://api.example.com" }),
+      createCommandExecEvent({
+        eventId: "e1",
+        sessionId: "sess-1",
+        command: "curl -X POST https://api.example.com",
+      }),
       createFileEditEvent({ eventId: "e2", sessionId: "sess-1", filePath: "src/response.json" }),
     ];
 
@@ -88,7 +128,12 @@ describe("SuppressionEngine", () => {
     };
 
     const events = [
-      createToolCallEvent({ eventId: "e1", sessionId: "sess-1", toolName: "read_file", parameters: { path: "src/a.ts" } }),
+      createToolCallEvent({
+        eventId: "e1",
+        sessionId: "sess-1",
+        toolName: "read_file",
+        parameters: { path: "src/a.ts" },
+      }),
       createToolResultEvent({ eventId: "e2", sessionId: "sess-1", toolCallId: "e1", result: "ok" }),
       createFileEditEvent({ eventId: "e3", sessionId: "sess-1", filePath: "src/a.ts" }),
     ];
@@ -107,7 +152,12 @@ describe("SuppressionEngine", () => {
     const engine = new SuppressionEngine({ cooldownMs: 3600_000 }); // 1h cooldown
 
     const events = [
-      createToolCallEvent({ eventId: "e1", sessionId: "sess-1", toolName: "read_file", parameters: { path: "src/a.ts" } }),
+      createToolCallEvent({
+        eventId: "e1",
+        sessionId: "sess-1",
+        toolName: "read_file",
+        parameters: { path: "src/a.ts" },
+      }),
       createToolResultEvent({ eventId: "e2", sessionId: "sess-1", toolCallId: "e1", result: "ok" }),
       createFileEditEvent({ eventId: "e3", sessionId: "sess-1", filePath: "src/a.ts" }),
     ];

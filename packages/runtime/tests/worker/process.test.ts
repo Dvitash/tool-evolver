@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import fs from "node:fs";
+import { describe, expect, it } from "vitest";
 import { WorkerProcess } from "../../src/worker/process.js";
 
 describe("WorkerProcess", () => {

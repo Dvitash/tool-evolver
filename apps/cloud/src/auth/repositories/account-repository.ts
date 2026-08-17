@@ -1,4 +1,4 @@
-import { DatabasePool, Queryable } from "../../db/client.js";
+import { type DatabasePool, Queryable } from "../../db/client.js";
 
 /**
  * Account representation.
@@ -76,7 +76,12 @@ export interface AccountRepository {
   createAccount(account: { id: string; name: string; plan?: string }): Promise<Account>;
 
   getWorkspace(id: string): Promise<Workspace | null>;
-  createWorkspace(workspace: { id: string; accountId: string; name: string; slug: string }): Promise<Workspace>;
+  createWorkspace(workspace: {
+    id: string;
+    accountId: string;
+    name: string;
+    slug: string;
+  }): Promise<Workspace>;
   listWorkspacesForAccount(accountId: string): Promise<Workspace[]>;
 
   getMembership(workspaceId: string, userId: string): Promise<WorkspaceMembership | null>;
@@ -201,7 +206,11 @@ export class MemoryAccountRepository implements AccountRepository {
     return created;
   }
 
-  async isUserInWorkspace(userId: string, workspaceId: string, accountId?: string): Promise<boolean> {
+  async isUserInWorkspace(
+    userId: string,
+    workspaceId: string,
+    accountId?: string,
+  ): Promise<boolean> {
     const membership = this.memberships.get(`${workspaceId}:${userId}`);
     if (!membership) return false;
     if (accountId && membership.accountId !== accountId) return false;
@@ -348,7 +357,9 @@ export class DatabaseAccountRepository implements AccountRepository {
   constructor(private pool: DatabasePool) {}
 
   async getAccount(id: string): Promise<Account | null> {
-    const res = await this.pool.query<Account>(`SELECT * FROM accounts WHERE id = $1 LIMIT 1`, [id]);
+    const res = await this.pool.query<Account>(`SELECT * FROM accounts WHERE id = $1 LIMIT 1`, [
+      id,
+    ]);
     return res.rows[0] ?? null;
   }
 
@@ -364,7 +375,9 @@ export class DatabaseAccountRepository implements AccountRepository {
   }
 
   async getWorkspace(id: string): Promise<Workspace | null> {
-    const res = await this.pool.query<Workspace>(`SELECT * FROM workspaces WHERE id = $1 LIMIT 1`, [id]);
+    const res = await this.pool.query<Workspace>(`SELECT * FROM workspaces WHERE id = $1 LIMIT 1`, [
+      id,
+    ]);
     return res.rows[0] ?? null;
   }
 
@@ -412,7 +425,14 @@ export class DatabaseAccountRepository implements AccountRepository {
       `INSERT INTO workspace_memberships (id, workspace_id, account_id, user_id, role, created_at)
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (id) DO UPDATE SET role = $5`,
-      [id, membership.workspaceId, membership.accountId, membership.userId, membership.role ?? "member", now],
+      [
+        id,
+        membership.workspaceId,
+        membership.accountId,
+        membership.userId,
+        membership.role ?? "member",
+        now,
+      ],
     );
     return {
       id,
@@ -424,7 +444,11 @@ export class DatabaseAccountRepository implements AccountRepository {
     };
   }
 
-  async isUserInWorkspace(userId: string, workspaceId: string, accountId?: string): Promise<boolean> {
+  async isUserInWorkspace(
+    userId: string,
+    workspaceId: string,
+    accountId?: string,
+  ): Promise<boolean> {
     const res = await this.pool.query(
       `SELECT id FROM workspace_memberships WHERE workspace_id = $1 AND user_id = $2 ${
         accountId ? "AND account_id = $3" : ""
@@ -482,10 +506,10 @@ export class DatabaseAccountRepository implements AccountRepository {
 
   async revokeDevice(id: string): Promise<boolean> {
     const now = new Date().toISOString();
-    await this.pool.query(
-      `UPDATE devices SET status = 'revoked', updated_at = $1 WHERE id = $2`,
-      [now, id],
-    );
+    await this.pool.query(`UPDATE devices SET status = 'revoked', updated_at = $1 WHERE id = $2`, [
+      now,
+      id,
+    ]);
     return true;
   }
 
@@ -495,7 +519,10 @@ export class DatabaseAccountRepository implements AccountRepository {
   }
 
   async getInstallation(id: string): Promise<Installation | null> {
-    const res = await this.pool.query<Installation>(`SELECT * FROM installations WHERE id = $1 LIMIT 1`, [id]);
+    const res = await this.pool.query<Installation>(
+      `SELECT * FROM installations WHERE id = $1 LIMIT 1`,
+      [id],
+    );
     return res.rows[0] ?? null;
   }
 

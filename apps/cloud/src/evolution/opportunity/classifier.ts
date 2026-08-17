@@ -1,5 +1,5 @@
-import { InferenceService } from "../../models/service.js";
-import {
+import type { InferenceService } from "../../models/service.js";
+import type {
   EpisodeSignature,
   OpportunityClassification,
   OpportunityInferredInput,
@@ -33,7 +33,8 @@ function generateHeuristicClassification(sig: EpisodeSignature): OpportunityClas
     title = "Automated Test Discovery and Execution";
     pattern = "test_execution_flow";
     suggestedToolName = "run_test_suite";
-    description = "Executes test runner commands and parses results with automated failure recovery.";
+    description =
+      "Executes test runner commands and parses results with automated failure recovery.";
     inferredInputs.push({
       name: "testPattern",
       type: "string",
@@ -136,7 +137,10 @@ export class OpportunityClassifier {
           description: opp.description || fallback.description,
           taskClass: opp.taskClass || fallback.taskClass,
           pattern: opp.pattern || fallback.pattern,
-          confidenceScore: typeof opp.confidenceScore === "number" ? opp.confidenceScore : fallback.confidenceScore,
+          confidenceScore:
+            typeof opp.confidenceScore === "number"
+              ? opp.confidenceScore
+              : fallback.confidenceScore,
           priority: opp.priority || fallback.priority,
           inferredInputs: fallback.inferredInputs,
           candidateOutputSchema: fallback.candidateOutputSchema,

@@ -27,11 +27,43 @@ function makeTool(id = "cloud_weather", name = "get_weather"): ToolManifest {
       maxOutputSizeBytes: 1048576,
     },
     capabilities: {
-      fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-      net: { allowOutbound: true, allowedDomains: [], allowedHosts: [], allowedPorts: [443], allowedProtocols: ["https" as const], allowLocalhost: false, denyPrivateRanges: true },
-      command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-      secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-      limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+      fs: {
+        readPaths: [],
+        writePaths: [],
+        allowWorkspaceRoot: false,
+        allowTemp: false,
+        denyPaths: [],
+        maxFileSizeBytes: 10485760,
+      },
+      net: {
+        allowOutbound: true,
+        allowedDomains: [],
+        allowedHosts: [],
+        allowedPorts: [443],
+        allowedProtocols: ["https" as const],
+        allowLocalhost: false,
+        denyPrivateRanges: true,
+      },
+      command: {
+        allowShellExecution: false,
+        allowedCommands: [],
+        allowedBinaries: [],
+        forbiddenPatterns: [],
+        allowEnvPassthrough: [],
+      },
+      secrets: {
+        allowedSecretNames: [],
+        allowedPrefixes: [],
+        denyDirectRead: true,
+        injectAsEnv: true,
+      },
+      limits: {
+        maxConcurrentExecutions: 4,
+        maxCpuUsagePercent: 100,
+        maxMemoryMb: 128,
+        maxExecutionTimeMs: 30000,
+        maxOutputSizeBytes: 1048576,
+      },
     },
     limits: {
       timeoutMs: 30000,
@@ -78,7 +110,7 @@ describe("Cloud Invocation Router & Forwarding", () => {
     const result = await router.forwardInvocation(
       "cloud_weather",
       { city: "San Francisco" },
-      mockWorkspaceContext
+      mockWorkspaceContext,
     );
     const ctx = capturedContext as Record<string, unknown>;
     const wsCtx = ctx.workspaceContext as Record<string, unknown>;
@@ -102,12 +134,9 @@ describe("Cloud Invocation Router & Forwarding", () => {
     abortController.abort();
 
     await expect(
-      router.forwardInvocation(
-        "cloud_weather",
-        { city: "Tokyo" },
-        mockWorkspaceContext,
-        { signal: abortController.signal }
-      )
+      router.forwardInvocation("cloud_weather", { city: "Tokyo" }, mockWorkspaceContext, {
+        signal: abortController.signal,
+      }),
     ).rejects.toThrow();
   });
 
@@ -121,12 +150,9 @@ describe("Cloud Invocation Router & Forwarding", () => {
     const router = new CloudInvocationRouter({ mockService, defaultTimeoutMs: 30 });
 
     try {
-      await router.forwardInvocation(
-        "cloud_weather",
-        { city: "London" },
-        mockWorkspaceContext,
-        { timeoutMs: 30 }
-      );
+      await router.forwardInvocation("cloud_weather", { city: "London" }, mockWorkspaceContext, {
+        timeoutMs: 30,
+      });
       expect.unreachable("Should have timed out");
     } catch (err) {
       expect(err).toBeInstanceOf(McpProtocolError);
@@ -147,14 +173,9 @@ describe("Cloud Invocation Router & Forwarding", () => {
     });
 
     const router = new CloudInvocationRouter({ mockService });
-    await router.forwardInvocation(
-      "cloud_weather",
-      { city: "Paris" },
-      mockWorkspaceContext,
-      {
-        onProgress: (progress) => progressUpdates.push(progress),
-      }
-    );
+    await router.forwardInvocation("cloud_weather", { city: "Paris" }, mockWorkspaceContext, {
+      onProgress: (progress) => progressUpdates.push(progress),
+    });
 
     expect(progressUpdates).toEqual([25, 75, 100]);
   });
@@ -168,7 +189,7 @@ describe("Cloud Invocation Router & Forwarding", () => {
 
     // 1. Tool not found
     await expect(
-      router.forwardInvocation("non_existent_tool", {}, mockWorkspaceContext)
+      router.forwardInvocation("non_existent_tool", {}, mockWorkspaceContext),
     ).rejects.toThrow();
 
     // 2. Unauthorized
@@ -209,8 +230,12 @@ describe("Cloud Invocation Router & Forwarding", () => {
 
     // Failures
     mockService.simulateOffline(true);
-    await expect(router.forwardInvocation("cloud_weather", { city: "Madrid" }, mockWorkspaceContext)).rejects.toThrow();
-    await expect(router.forwardInvocation("cloud_weather", { city: "Madrid" }, mockWorkspaceContext)).rejects.toThrow();
+    await expect(
+      router.forwardInvocation("cloud_weather", { city: "Madrid" }, mockWorkspaceContext),
+    ).rejects.toThrow();
+    await expect(
+      router.forwardInvocation("cloud_weather", { city: "Madrid" }, mockWorkspaceContext),
+    ).rejects.toThrow();
 
     // Tripped to OPEN
     expect(circuitBreaker.getState()).toBe("OPEN");

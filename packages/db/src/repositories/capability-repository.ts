@@ -62,9 +62,10 @@ export class CapabilityRepository {
       is_frozen: number;
       created_at: string;
       updated_at: string | null;
-    }>("SELECT * FROM capability_envelopes WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 1;", [
-      workspaceId,
-    ]);
+    }>(
+      "SELECT * FROM capability_envelopes WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 1;",
+      [workspaceId],
+    );
 
     if (!row) {
       return null;

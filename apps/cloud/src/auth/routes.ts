@@ -1,13 +1,13 @@
-import { IncomingMessage, ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { sha256 } from "@tool-evolver/crypto";
 import {
   DeviceAuthBootstrapRequestSchema,
   DeviceRevocationRequestSchema,
   DeviceTokenExchangeRequestSchema,
   TokenRotationRequestSchema,
 } from "@tool-evolver/protocol";
-import { sha256 } from "@tool-evolver/crypto";
-import { TokenError } from "./tokens.js";
 import type { AuthService } from "./index.js";
+import { TokenError } from "./tokens.js";
 
 /**
  * Helper to send JSON responses.
@@ -44,7 +44,7 @@ export async function handleAuthRoutes(
   if (path === "/v1/auth/device/code" && method === "POST") {
     try {
       const parsed = DeviceAuthBootstrapRequestSchema.parse(body);
-      const host = (req.headers["host"] as string) || "127.0.0.1";
+      const host = (req.headers.host as string) || "127.0.0.1";
       const proto = req.headers["x-forwarded-proto"] || "http";
       const verificationUri = `${proto}://${host}/device`;
 
@@ -173,12 +173,7 @@ export async function handleAuthRoutes(
         await authService.tokens.revokeTokenFamily(familyId, "user_logout");
       }
 
-      sendJsonResponse(
-        res,
-        200,
-        { loggedOut: true, message: "Successfully logged out" },
-        headers,
-      );
+      sendJsonResponse(res, 200, { loggedOut: true, message: "Successfully logged out" }, headers);
       return true;
     } catch (err) {
       sendJsonResponse(
@@ -218,7 +213,12 @@ export async function handleAuthRoutes(
       });
 
       if (!result.success) {
-        sendJsonResponse(res, 400, { error: "authorization_failed", error_description: result.error }, headers);
+        sendJsonResponse(
+          res,
+          400,
+          { error: "authorization_failed", error_description: result.error },
+          headers,
+        );
         return true;
       }
 
@@ -251,7 +251,12 @@ export async function handleAuthRoutes(
 
       const result = await authService.deviceFlow.denyUserCode(userCode);
       if (!result.success) {
-        sendJsonResponse(res, 400, { error: "denial_failed", error_description: result.error }, headers);
+        sendJsonResponse(
+          res,
+          400,
+          { error: "denial_failed", error_description: result.error },
+          headers,
+        );
         return true;
       }
 

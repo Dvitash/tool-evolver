@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   TenantAccessDeniedError,
-  TenantContext,
+  type TenantContext,
   TenantContextMissingError,
   TenantGuard,
   getTenantContext,

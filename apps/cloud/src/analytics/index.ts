@@ -54,21 +54,13 @@ export {
   type IMetricsRepository,
 } from "./repositories/metrics-repository.js";
 
-export {
-  RolloutWindowMaterializer,
-} from "./materializer.js";
+export { RolloutWindowMaterializer } from "./materializer.js";
 
-export {
-  EfficiencyCalculator,
-} from "./efficiency.js";
+export { EfficiencyCalculator } from "./efficiency.js";
 
-export {
-  EvaluationCalibrator,
-} from "./calibration.js";
+export { EvaluationCalibrator } from "./calibration.js";
 
-export {
-  AnomalyDetector,
-} from "./anomaly.js";
+export { AnomalyDetector } from "./anomaly.js";
 
 export {
   AnalyticsService,
@@ -77,6 +69,4 @@ export {
   type AnalyticsServiceOptions,
 } from "./service.js";
 
-export {
-  handleTelemetryBatchRoute,
-} from "./routes.js";
+export { handleTelemetryBatchRoute } from "./routes.js";

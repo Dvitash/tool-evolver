@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { DatabasePool, Queryable } from "../db/client.js";
 import type { CanaryMetricsWindow } from "../evolution/rollout/types.js";
 import type { IMetricsRepository } from "./repositories/metrics-repository.js";
-import {
-  type MaterializeRolloutWindowParams,
-  type RolloutMetricWindowRecord,
-  type SecurityViolationDetail,
+import type {
+  MaterializeRolloutWindowParams,
+  RolloutMetricWindowRecord,
+  SecurityViolationDetail,
 } from "./types.js";
 
 /**
@@ -90,7 +90,9 @@ export class RolloutWindowMaterializer {
         policyViolations++;
         securityViolationDetails.push({
           type: "security_violation",
-          reason: row.security_violation_reason ? String(row.security_violation_reason) : "Security rule breach",
+          reason: row.security_violation_reason
+            ? String(row.security_violation_reason)
+            : "Security rule breach",
           timestamp: String(row.timestamp),
         });
       }
@@ -140,14 +142,17 @@ export class RolloutWindowMaterializer {
 
     let latencyRegressionPercent: number | undefined;
     if (baselineP95LatencyMs !== undefined && baselineP95LatencyMs > 0) {
-      latencyRegressionPercent = ((p95LatencyMs - baselineP95LatencyMs) / baselineP95LatencyMs) * 100;
+      latencyRegressionPercent =
+        ((p95LatencyMs - baselineP95LatencyMs) / baselineP95LatencyMs) * 100;
     }
 
     // 4. Device reporting calculations
     const activeDevicesCount = activeDeviceIds.size;
-    const expectedActive = params.expectedActiveDevices ?? (activeDevicesCount > 0 ? activeDevicesCount : 1);
+    const expectedActive =
+      params.expectedActiveDevices ?? (activeDevicesCount > 0 ? activeDevicesCount : 1);
     const offlineDevicesCount = Math.max(0, expectedActive - activeDevicesCount);
-    const deviceReportingRate = expectedActive > 0 ? Math.min(1.0, activeDevicesCount / expectedActive) : 1.0;
+    const deviceReportingRate =
+      expectedActive > 0 ? Math.min(1.0, activeDevicesCount / expectedActive) : 1.0;
 
     // 5. Statistical Confidence Score: [0, 1] based on sample size and device coverage
     const sampleFactor = totalInvocations > 0 ? totalInvocations / (totalInvocations + 20) : 0;

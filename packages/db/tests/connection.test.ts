@@ -60,10 +60,12 @@ describe("LocalDatabaseConnection", () => {
     `);
 
     // Positional run
-    const res1 = conn.run(
-      "INSERT INTO test_users (id, name, age, active) VALUES (?, ?, ?, ?);",
-      ["u1", "Alice", 30, true],
-    );
+    const res1 = conn.run("INSERT INTO test_users (id, name, age, active) VALUES (?, ?, ?, ?);", [
+      "u1",
+      "Alice",
+      30,
+      true,
+    ]);
     expect(res1.changes).toBe(1);
 
     // Named object run

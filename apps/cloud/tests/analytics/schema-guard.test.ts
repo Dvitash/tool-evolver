@@ -58,7 +58,15 @@ describe("SchemaGuard: Privacy-Safe Dimension & Telemetry Validation", () => {
 
   describe("Dimension Allowlist Enforcement", () => {
     it("should allow known operational dimensions", () => {
-      const allowedKeys = ["toolId", "version", "status", "environment", "platform", "arch", "errorCode"];
+      const allowedKeys = [
+        "toolId",
+        "version",
+        "status",
+        "environment",
+        "platform",
+        "arch",
+        "errorCode",
+      ];
       for (const key of allowedKeys) {
         const check = SchemaGuard.isAllowedDimension(key, "standard_value");
         expect(check.allowed).toBe(true);
@@ -97,7 +105,9 @@ describe("SchemaGuard: Privacy-Safe Dimension & Telemetry Validation", () => {
         ],
       };
 
-      expect(() => SchemaGuard.validateBatch(batchWithInvalidKey)).toThrow(SchemaGuardValidationError);
+      expect(() => SchemaGuard.validateBatch(batchWithInvalidKey)).toThrow(
+        SchemaGuardValidationError,
+      );
     });
   });
 
@@ -233,7 +243,9 @@ describe("SchemaGuard: Privacy-Safe Dimension & Telemetry Validation", () => {
         ],
       };
 
-      expect(() => SchemaGuard.validateBatch(batchWithPathInMsg)).toThrow(SchemaGuardValidationError);
+      expect(() => SchemaGuard.validateBatch(batchWithPathInMsg)).toThrow(
+        SchemaGuardValidationError,
+      );
     });
   });
 });

@@ -92,7 +92,7 @@ const FORBIDDEN_SUMMARY_KEYS: Record<string, true> = {
  * Redacts sensitive HTTP headers by replacing their values with [REDACTED].
  */
 export function redactHeaders(
-  headers?: Record<string, string | string[] | undefined> | null
+  headers?: Record<string, string | string[] | undefined> | null,
 ): Record<string, string> {
   if (!headers || typeof headers !== "object") return {};
   const redacted: Record<string, string> = {};
@@ -155,7 +155,9 @@ export function redactUrl(rawUrl: string): string {
  * Sanitizes an arbitrary summary object to ensure no file bodies, command outputs,
  * secret payloads, or sensitive headers/URLs leak into audit logs.
  */
-export function sanitizeAuditSummary(summary?: Record<string, unknown> | null): Record<string, unknown> {
+export function sanitizeAuditSummary(
+  summary?: Record<string, unknown> | null,
+): Record<string, unknown> {
   if (!summary || typeof summary !== "object") return {};
   const sanitized: Record<string, unknown> = {};
 
@@ -170,7 +172,10 @@ export function sanitizeAuditSummary(summary?: Record<string, unknown> | null): 
       sanitized[key] = redactHeaders(value as Record<string, string>);
     } else if (lowerKey === "url" && typeof value === "string") {
       sanitized[key] = redactUrl(value);
-    } else if (typeof value === "string" && (value.startsWith("http://") || value.startsWith("https://"))) {
+    } else if (
+      typeof value === "string" &&
+      (value.startsWith("http://") || value.startsWith("https://"))
+    ) {
       sanitized[key] = redactUrl(value);
     } else if (Array.isArray(value)) {
       // Avoid large arrays or payload blobs in audit summaries
@@ -200,7 +205,12 @@ export class BrokerAuditEmitter extends EventEmitter {
   /**
    * Emits a redacted audit event to subscribers and records it in memory.
    */
-  emitAudit(event: Omit<BrokerAuditEvent, "eventId" | "timestamp"> & { eventId?: string; timestamp?: string }): BrokerAuditEvent {
+  emitAudit(
+    event: Omit<BrokerAuditEvent, "eventId" | "timestamp"> & {
+      eventId?: string;
+      timestamp?: string;
+    },
+  ): BrokerAuditEvent {
     const fullEvent: BrokerAuditEvent = {
       eventId: event.eventId ?? `audit_${Date.now()}_${randomUUID().slice(0, 8)}`,
       timestamp: event.timestamp ?? new Date().toISOString(),

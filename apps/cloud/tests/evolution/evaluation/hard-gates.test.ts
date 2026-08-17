@@ -55,7 +55,10 @@ describe("HardGateEvaluator (Non-Negotiable Hard Safety Gates)", () => {
       const candidate = createMockCandidateRevision();
       const validationResult = createMockValidationResult({
         typecheckPassed: false,
-        typecheckErrors: ["Cannot find name 'undeclaredVar'", "Type 'string' is not assignable to 'number'"],
+        typecheckErrors: [
+          "Cannot find name 'undeclaredVar'",
+          "Type 'string' is not assignable to 'number'",
+        ],
       });
 
       const result = evaluator.evaluate({
@@ -151,7 +154,8 @@ describe("HardGateEvaluator (Non-Negotiable Hard Safety Gates)", () => {
           {
             severity: "error",
             category: "undeclared_capability",
-            message: "Code uses context.brokers.net but no network capabilities are declared in manifest",
+            message:
+              "Code uses context.brokers.net but no network capabilities are declared in manifest",
           },
         ],
       });
@@ -182,10 +186,34 @@ describe("HardGateEvaluator (Non-Negotiable Hard Safety Gates)", () => {
             denyPaths: [],
             maxFileSizeBytes: 1048576,
           },
-          net: { allowOutbound: false, allowedDomains: [], allowedPorts: [], allowInsecureHttp: false, denyDomains: [], denyPrivateRanges: true },
-          command: { allowedCommands: [], allowEnvInheritance: false, denyCommands: [], allowPipes: false, maxExecutionTimeMs: 1000 },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 1000, maxOutputSizeBytes: 1048576 },
+          net: {
+            allowOutbound: false,
+            allowedDomains: [],
+            allowedPorts: [],
+            allowInsecureHttp: false,
+            denyDomains: [],
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowedCommands: [],
+            allowEnvInheritance: false,
+            denyCommands: [],
+            allowPipes: false,
+            maxExecutionTimeMs: 1000,
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 1,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 1000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
@@ -220,7 +248,14 @@ describe("HardGateEvaluator (Non-Negotiable Hard Safety Gates)", () => {
     it("fails gate if candidate requests disallowed network domains", () => {
       const manifest = createMockToolManifest({
         capabilities: {
-          fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 1048576 },
+          fs: {
+            readPaths: [],
+            writePaths: [],
+            allowWorkspaceRoot: false,
+            allowTemp: false,
+            denyPaths: [],
+            maxFileSizeBytes: 1048576,
+          },
           net: {
             allowOutbound: true,
             allowedDomains: ["unauthorized-domain.com"],
@@ -229,9 +264,26 @@ describe("HardGateEvaluator (Non-Negotiable Hard Safety Gates)", () => {
             denyDomains: [],
             denyPrivateRanges: true,
           },
-          command: { allowedCommands: [], allowEnvInheritance: false, denyCommands: [], allowPipes: false, maxExecutionTimeMs: 1000 },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 1000, maxOutputSizeBytes: 1048576 },
+          command: {
+            allowedCommands: [],
+            allowEnvInheritance: false,
+            denyCommands: [],
+            allowPipes: false,
+            maxExecutionTimeMs: 1000,
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 1,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 1000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
@@ -273,10 +325,34 @@ describe("HardGateEvaluator (Non-Negotiable Hard Safety Gates)", () => {
             denyPaths: [],
             maxFileSizeBytes: 1048576,
           },
-          net: { allowOutbound: false, allowedDomains: [], allowedPorts: [], allowInsecureHttp: false, denyDomains: [], denyPrivateRanges: true },
-          command: { allowedCommands: [], allowEnvInheritance: false, denyCommands: [], allowPipes: false, maxExecutionTimeMs: 1000 },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 1000, maxOutputSizeBytes: 1048576 },
+          net: {
+            allowOutbound: false,
+            allowedDomains: [],
+            allowedPorts: [],
+            allowInsecureHttp: false,
+            denyDomains: [],
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowedCommands: [],
+            allowEnvInheritance: false,
+            denyCommands: [],
+            allowPipes: false,
+            maxExecutionTimeMs: 1000,
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 1,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 1000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
@@ -512,7 +588,9 @@ describe("HardGateEvaluator (Non-Negotiable Hard Safety Gates)", () => {
 
       expect(result.passed).toBe(false);
       expect(result.failedGates).toContain("replay_divergence_check");
-      expect(result.rejectionReason).toContain("Critical replay invariant failed: database_state_consistency");
+      expect(result.rejectionReason).toContain(
+        "Critical replay invariant failed: database_state_consistency",
+      );
     });
   });
 
@@ -540,11 +618,42 @@ describe("HardGateEvaluator (Non-Negotiable Hard Safety Gates)", () => {
     it("fails gate if replay scenario count is below policy requirement for the risk tier", () => {
       const manifest = createMockToolManifest({
         capabilities: {
-          fs: { readPaths: [], writePaths: ["/workspace/out"], allowWorkspaceRoot: true, allowTemp: false, denyPaths: [], maxFileSizeBytes: 1048576 },
-          net: { allowOutbound: false, allowedDomains: [], allowedPorts: [], allowInsecureHttp: false, denyDomains: [], denyPrivateRanges: true },
-          command: { allowedCommands: [], allowEnvInheritance: false, denyCommands: [], allowPipes: false, maxExecutionTimeMs: 1000 },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 1000, maxOutputSizeBytes: 1048576 },
+          fs: {
+            readPaths: [],
+            writePaths: ["/workspace/out"],
+            allowWorkspaceRoot: true,
+            allowTemp: false,
+            denyPaths: [],
+            maxFileSizeBytes: 1048576,
+          },
+          net: {
+            allowOutbound: false,
+            allowedDomains: [],
+            allowedPorts: [],
+            allowInsecureHttp: false,
+            denyDomains: [],
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowedCommands: [],
+            allowEnvInheritance: false,
+            denyCommands: [],
+            allowPipes: false,
+            maxExecutionTimeMs: 1000,
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 1,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 1000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       }); // workspace_fs tier requires at least 2 replay scenarios
 

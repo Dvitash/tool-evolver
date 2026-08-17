@@ -18,7 +18,9 @@ describe("TestSynthesizer (Deterministic & LLM Test Generation)", () => {
       const manifest = createMockManifest({ name: "math_evaluator" });
       const plan = createMockPlan();
 
-      const suite = await synthesizer.synthesize(manifest, PURE_COMPUTE_TOOL_SOURCE, plan, { skipLlm: true });
+      const suite = await synthesizer.synthesize(manifest, PURE_COMPUTE_TOOL_SOURCE, plan, {
+        skipLlm: true,
+      });
 
       expect(suite.suiteId).toBeDefined();
       expect(suite.toolName).toBe("math_evaluator");
@@ -33,7 +35,7 @@ describe("TestSynthesizer (Deterministic & LLM Test Generation)", () => {
 
       // Check schema boundary missing required
       const missingA = suite.cases.find(
-        (c) => c.testType === "schema_boundary" && c.name.includes("Missing Required 'a'")
+        (c) => c.testType === "schema_boundary" && c.name.includes("Missing Required 'a'"),
       );
       expect(missingA).toBeDefined();
       expect(missingA?.expectedOutcome).toBe("validation_error");
@@ -41,14 +43,14 @@ describe("TestSynthesizer (Deterministic & LLM Test Generation)", () => {
 
       // Check schema boundary invalid type
       const invalidTypeA = suite.cases.find(
-        (c) => c.testType === "schema_boundary" && c.name.includes("Invalid Type for 'a'")
+        (c) => c.testType === "schema_boundary" && c.name.includes("Invalid Type for 'a'"),
       );
       expect(invalidTypeA).toBeDefined();
       expect(invalidTypeA?.expectedOutcome).toBe("validation_error");
 
       // Check edge cases
       const zeroEdgeCase = suite.cases.find(
-        (c) => c.testType === "edge_case" && c.name.includes("Zero Value")
+        (c) => c.testType === "edge_case" && c.name.includes("Zero Value"),
       );
       expect(zeroEdgeCase).toBeDefined();
 
@@ -77,17 +79,44 @@ describe("TestSynthesizer (Deterministic & LLM Test Generation)", () => {
             denyPaths: [],
             maxFileSizeBytes: 10485760,
           },
-          net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-          command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+          net: {
+            allowOutbound: false,
+            allowedDomains: [],
+            allowedHosts: [],
+            allowedPorts: [],
+            allowedProtocols: ["https"],
+            allowLocalhost: false,
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowShellExecution: false,
+            allowedCommands: [],
+            allowedBinaries: [],
+            forbiddenPatterns: [],
+            allowEnvPassthrough: [],
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 4,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 30000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
-      const suite = await synthesizer.synthesize(manifest, FS_TOOL_SOURCE, undefined, { skipLlm: true });
+      const suite = await synthesizer.synthesize(manifest, FS_TOOL_SOURCE, undefined, {
+        skipLlm: true,
+      });
 
       const fsErrorMode = suite.cases.find(
-        (c) => c.testType === "error_mode" && c.name.includes("Filesystem ENOENT")
+        (c) => c.testType === "error_mode" && c.name.includes("Filesystem ENOENT"),
       );
       expect(fsErrorMode).toBeDefined();
       expect(fsErrorMode?.expectedOutcome).toBe("execution_error");
@@ -105,18 +134,52 @@ describe("TestSynthesizer (Deterministic & LLM Test Generation)", () => {
           required: ["endpointUrl"],
         },
         capabilities: {
-          fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-          net: { allowOutbound: true, allowedDomains: ["api.example.com"], allowedHosts: [], allowedPorts: [443], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-          command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+          fs: {
+            readPaths: [],
+            writePaths: [],
+            allowWorkspaceRoot: false,
+            allowTemp: false,
+            denyPaths: [],
+            maxFileSizeBytes: 10485760,
+          },
+          net: {
+            allowOutbound: true,
+            allowedDomains: ["api.example.com"],
+            allowedHosts: [],
+            allowedPorts: [443],
+            allowedProtocols: ["https"],
+            allowLocalhost: false,
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowShellExecution: false,
+            allowedCommands: [],
+            allowedBinaries: [],
+            forbiddenPatterns: [],
+            allowEnvPassthrough: [],
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 4,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 30000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
-      const suite = await synthesizer.synthesize(manifest, NET_TOOL_SOURCE, undefined, { skipLlm: true });
+      const suite = await synthesizer.synthesize(manifest, NET_TOOL_SOURCE, undefined, {
+        skipLlm: true,
+      });
 
       const netErrorMode = suite.cases.find(
-        (c) => c.testType === "error_mode" && c.name.includes("Network Connection Refused")
+        (c) => c.testType === "error_mode" && c.name.includes("Network Connection Refused"),
       );
       expect(netErrorMode).toBeDefined();
       expect(netErrorMode?.expectedOutcome).toBe("execution_error");
@@ -133,18 +196,52 @@ describe("TestSynthesizer (Deterministic & LLM Test Generation)", () => {
           required: ["command"],
         },
         capabilities: {
-          fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-          net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-          command: { allowShellExecution: true, allowedCommands: ["echo"], allowedBinaries: ["echo"], forbiddenPatterns: [], allowEnvPassthrough: [] },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+          fs: {
+            readPaths: [],
+            writePaths: [],
+            allowWorkspaceRoot: false,
+            allowTemp: false,
+            denyPaths: [],
+            maxFileSizeBytes: 10485760,
+          },
+          net: {
+            allowOutbound: false,
+            allowedDomains: [],
+            allowedHosts: [],
+            allowedPorts: [],
+            allowedProtocols: ["https"],
+            allowLocalhost: false,
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowShellExecution: true,
+            allowedCommands: ["echo"],
+            allowedBinaries: ["echo"],
+            forbiddenPatterns: [],
+            allowEnvPassthrough: [],
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 4,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 30000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
-      const suite = await synthesizer.synthesize(manifest, CMD_TOOL_SOURCE, undefined, { skipLlm: true });
+      const suite = await synthesizer.synthesize(manifest, CMD_TOOL_SOURCE, undefined, {
+        skipLlm: true,
+      });
 
       const cmdErrorMode = suite.cases.find(
-        (c) => c.testType === "error_mode" && c.name.includes("Command Execution Failure")
+        (c) => c.testType === "error_mode" && c.name.includes("Command Execution Failure"),
       );
       expect(cmdErrorMode).toBeDefined();
       expect(cmdErrorMode?.expectedOutcome).toBe("execution_error");
@@ -190,11 +287,13 @@ describe("TestSynthesizer (Deterministic & LLM Test Generation)", () => {
         expect.objectContaining({
           taskClass: "test_generation",
           promptTemplateId: "test_generation",
-        })
+        }),
       );
 
       const llmUnit = suite.cases.find((c) => c.name.includes("LLM Unit - Large Number Addition"));
-      const llmProp = suite.cases.find((c) => c.name.includes("LLM Property - Commutativity of Addition"));
+      const llmProp = suite.cases.find((c) =>
+        c.name.includes("LLM Property - Commutativity of Addition"),
+      );
 
       expect(llmUnit).toBeDefined();
       expect(llmProp).toBeDefined();

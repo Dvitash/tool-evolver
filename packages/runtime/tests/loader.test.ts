@@ -4,7 +4,7 @@ import path from "node:path";
 import type { ToolManifest } from "@tool-evolver/contracts";
 import { describe, expect, it } from "vitest";
 import { buildToolBundle } from "../src/bundle/builder.js";
-import { generateBundleKeyPair, InMemoryKeyStore } from "../src/bundle/signature.js";
+import { InMemoryKeyStore, generateBundleKeyPair } from "../src/bundle/signature.js";
 import { ArtifactCache } from "../src/loader/cache.js";
 import {
   BundleSignatureError,

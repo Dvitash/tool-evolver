@@ -1,0 +1,57 @@
+# Tool Evolver Code Owners & Governance Policy
+# Each specified area requires review and approval from designated code owners.
+
+# Default global fallback ownership
+* @Dvitash
+
+# 1. Runtime & Core Services
+/packages/runtime/ @Dvitash
+/apps/observer/ @Dvitash
+/apps/gateway/ @Dvitash
+
+# 2. Brokers, Adapters & Wire Protocol
+/packages/protocol/ @Dvitash
+/packages/contracts/ @Dvitash
+/packages/harness-contracts/ @Dvitash
+/adapters/ @Dvitash
+/apps/gateway/src/ @Dvitash
+/apps/observer/src/ipc/ @Dvitash
+
+# 3. Authentication, Cryptography & Secure Vault
+/packages/crypto/ @Dvitash
+/docs/security/ @Dvitash
+/apps/cli/src/commands/init.ts @Dvitash
+/apps/cli/src/commands/logout.ts @Dvitash
+
+# 4. Privacy, Data Residency & Boundary Controls
+/docs/security/privacy-inventory.md @Dvitash
+/docs/adr/0005-privacy-data-boundaries.md @Dvitash
+/scripts/check-boundaries.mjs @Dvitash
+/scripts/check-boundaries.test.mjs @Dvitash
+/docs/architecture/boundaries.md @Dvitash
+
+# 5. Cryptographic Signing, Release Packaging & Verification
+/scripts/package-release.mjs @Dvitash
+/scripts/verify-release.mjs @Dvitash
+/scripts/verify-release.test.mjs @Dvitash
+/scripts/verify-binaries.mjs @Dvitash
+/scripts/verify-binaries.test.mjs @Dvitash
+/docs/release/ @Dvitash
+/docs/operator/key-rotation.md @Dvitash
+
+# 6. CLI, Installer & Upgrader
+/apps/cli/ @Dvitash
+
+# 7. Deployment, Operator Runbooks & Cloud Services
+/docs/operator/ @Dvitash
+/apps/cloud/ @Dvitash
+
+# 8. Architecture Decision Records (ADRs) & System Architecture
+/docs/adr/ @Dvitash
+/docs/architecture/ @Dvitash
+/scripts/verify-adrs.mjs @Dvitash
+/scripts/verify-adrs.test.mjs @Dvitash
+
+# 9. GitHub Workflows, Automation & Templates
+/.github/ @Dvitash
+/.github/workflows/ @Dvitash

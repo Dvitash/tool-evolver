@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  DevelopmentIdentityProvider,
-  OidcIdentityProvider,
-} from "../../src/auth/provider.js";
+import { DevelopmentIdentityProvider, OidcIdentityProvider } from "../../src/auth/provider.js";
 
 describe("Identity Providers", () => {
   describe("DevelopmentIdentityProvider", () => {
@@ -68,7 +65,9 @@ describe("Identity Providers", () => {
         clientId: "tool-evolver-app",
       });
 
-      const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+      const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString(
+        "base64url",
+      );
       const payload = Buffer.from(
         JSON.stringify({
           sub: "usr_oidc_999",

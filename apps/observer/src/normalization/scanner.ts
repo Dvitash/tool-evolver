@@ -80,7 +80,8 @@ export const DEFAULT_SCANNER_RULES: ScannerRule[] = [
     id: "aws_secret_key",
     name: "AWS Secret Access Key",
     secretType: "AWS_SECRET_KEY",
-    regex: /(?:aws_secret_access_key|aws_secret_key|secret_key)\s*[:=]\s*["']?([A-Za-z0-9/+=]{40})["']?/gi,
+    regex:
+      /(?:aws_secret_access_key|aws_secret_key|secret_key)\s*[:=]\s*["']?([A-Za-z0-9/+=]{40})["']?/gi,
     confidence: "high",
   },
   {
@@ -94,7 +95,8 @@ export const DEFAULT_SCANNER_RULES: ScannerRule[] = [
     id: "private_key",
     name: "PEM Private Key",
     secretType: "PRIVATE_KEY",
-    regex: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/g,
+    regex:
+      /-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/g,
     confidence: "high",
   },
   {
@@ -108,7 +110,8 @@ export const DEFAULT_SCANNER_RULES: ScannerRule[] = [
     id: "generic_credential",
     name: "Generic Password or Credential Assignment",
     secretType: "CREDENTIAL",
-    regex: /(?:password|passwd|api_key|apikey|auth_token|client_secret|private_token)\s*[:=]\s*["']?([^"'\s\n\r]{8,})["']?/gi,
+    regex:
+      /(?:password|passwd|api_key|apikey|auth_token|client_secret|private_token)\s*[:=]\s*["']?([^"'\s\n\r]{8,})["']?/gi,
     confidence: "medium",
   },
   {
@@ -179,7 +182,11 @@ export class ContentScanner {
         // If there's a capture group (e.g. key value in password: "xxx"), use group 1
         const matchedValue = match[1] ?? match[0];
         // Skip trivial or short captures or already redacted placeholders
-        if (matchedValue.length < 6 || matchedValue.startsWith("[REDACTED") || matchedValue.includes("[REDACTED_")) {
+        if (
+          matchedValue.length < 6 ||
+          matchedValue.startsWith("[REDACTED") ||
+          matchedValue.includes("[REDACTED_")
+        ) {
           continue;
         }
 
@@ -229,7 +236,8 @@ export class ContentScanner {
         const hasLower = /[a-z]/.test(candidate);
         const hasDigit = /[0-9]/.test(candidate);
         const hasSpecial = /[^A-Za-z0-9]/.test(candidate);
-        const charSetCount = (hasUpper ? 1 : 0) + (hasLower ? 1 : 0) + (hasDigit ? 1 : 0) + (hasSpecial ? 1 : 0);
+        const charSetCount =
+          (hasUpper ? 1 : 0) + (hasLower ? 1 : 0) + (hasDigit ? 1 : 0) + (hasSpecial ? 1 : 0);
 
         if (charSetCount >= 2) {
           const entropy = calculateShannonEntropy(candidate);

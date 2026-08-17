@@ -19,10 +19,7 @@ describe("Stdio Shim & Bridge Lifecycle", () => {
   });
 
   it("detects absent daemon and starts in standalone mode by default", async () => {
-    const nonExistentSocket = path.join(
-      os.tmpdir(),
-      `test-nonexistent-${Date.now()}.sock`
-    );
+    const nonExistentSocket = path.join(os.tmpdir(), `test-nonexistent-${Date.now()}.sock`);
 
     const stdin = new stream.PassThrough();
     const stdout = new stream.PassThrough();
@@ -47,10 +44,7 @@ describe("Stdio Shim & Bridge Lifecycle", () => {
   });
 
   it("reports actionable error when daemon is absent and standalone fallback disabled", async () => {
-    const nonExistentSocket = path.join(
-      os.tmpdir(),
-      `test-absent-${Date.now()}.sock`
-    );
+    const nonExistentSocket = path.join(os.tmpdir(), `test-absent-${Date.now()}.sock`);
 
     const stdin = new stream.PassThrough();
     const stdout = new stream.PassThrough();
@@ -85,7 +79,7 @@ describe("Stdio Shim & Bridge Lifecycle", () => {
   it("bridges to daemon socket when daemon is active", async () => {
     const socketPath = path.join(
       os.tmpdir(),
-      `test-daemon-${Date.now()}-${Math.random().toString(36).slice(2)}.sock`
+      `test-daemon-${Date.now()}-${Math.random().toString(36).slice(2)}.sock`,
     );
 
     // Mock daemon server

@@ -101,7 +101,9 @@ describe("Filesystem Canonicalizer", () => {
   it("matches glob path patterns accurately", () => {
     expect(matchesPathPattern("src/utils/math.ts", "src/**/*.ts", testWorkspace)).toBe(true);
     expect(matchesPathPattern("src/index.js", "src/**/*.ts", testWorkspace)).toBe(false);
-    expect(matchesPathPattern("dist/bundle.js", "<WORKSPACE_ROOT>/dist/**", testWorkspace)).toBe(true);
+    expect(matchesPathPattern("dist/bundle.js", "<WORKSPACE_ROOT>/dist/**", testWorkspace)).toBe(
+      true,
+    );
     expect(matchesPathPattern("secret.env", ".env*", testWorkspace)).toBe(false);
     expect(matchesPathPattern(".env.local", ".env*", testWorkspace)).toBe(true);
   });

@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { hashCanonicalContent } from "@tool-evolver/contracts";
+import { describe, expect, it } from "vitest";
 import { ArtifactSigner } from "../../../src/evolution/artifacts/signer.js";
 import { createMockToolManifest, createTestArtifactEnvironment } from "./helpers.js";
 
@@ -83,12 +83,22 @@ describe("ArtifactSigner - Asymmetric Artifact Signing & Trust Management", () =
     // Tampered manifest
     const alteredManifest = { ...manifest, name: "Tampered Name", digest: "" };
     alteredManifest.digest = hashCanonicalContent(alteredManifest);
-    const result2 = signer.verifySignature(artifactDigest, alteredManifest, sig, edKey.publicKeyPem);
+    const result2 = signer.verifySignature(
+      artifactDigest,
+      alteredManifest,
+      sig,
+      edKey.publicKeyPem,
+    );
     expect(result2.valid).toBe(false);
 
     // Corrupted signature bytes
-    const corruptedSig = { ...sig, signature: "deadbeef" + sig.signature.slice(8) };
-    const result3 = signer.verifySignature(artifactDigest, manifest, corruptedSig, edKey.publicKeyPem);
+    const corruptedSig = { ...sig, signature: `deadbeef${sig.signature.slice(8)}` };
+    const result3 = signer.verifySignature(
+      artifactDigest,
+      manifest,
+      corruptedSig,
+      edKey.publicKeyPem,
+    );
     expect(result3.valid).toBe(false);
   });
 
@@ -108,7 +118,9 @@ describe("ArtifactSigner - Asymmetric Artifact Signing & Trust Management", () =
     });
 
     // Verify initial signature
-    expect(signer.verifySignature(artifactDigest, manifest, initialSig, initialKey.publicKeyPem).valid).toBe(true);
+    expect(
+      signer.verifySignature(artifactDigest, manifest, initialSig, initialKey.publicKeyPem).valid,
+    ).toBe(true);
 
     // Rotate key
     const newKey = signer.generateKeyPair("ed25519");
@@ -121,7 +133,9 @@ describe("ArtifactSigner - Asymmetric Artifact Signing & Trust Management", () =
     expect(activeKey?.keyId).toBe(newKey.keyId);
 
     // Existing signature with rotated key remains valid
-    expect(signer.verifySignature(artifactDigest, manifest, initialSig, initialKey.publicKeyPem).valid).toBe(true);
+    expect(
+      signer.verifySignature(artifactDigest, manifest, initialSig, initialKey.publicKeyPem).valid,
+    ).toBe(true);
 
     // Revoke old key
     await env.signingKeyRepo.revokeKey(initialKey.keyId, "Key compromise simulation");

@@ -1,10 +1,6 @@
+import { ISOTimestampSchema, IdentifierSchema, Sha256DigestSchema } from "@tool-evolver/contracts";
 import { z } from "zod";
-import {
-  ISOTimestampSchema,
-  IdentifierSchema,
-  Sha256DigestSchema,
-} from "@tool-evolver/contracts";
-import { NormalizedEventEntity } from "./events.js";
+import type { NormalizedEventEntity } from "./events.js";
 
 /**
  * Database entity schema for immutable EvidenceSets.

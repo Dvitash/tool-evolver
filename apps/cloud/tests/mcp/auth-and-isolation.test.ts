@@ -3,6 +3,9 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { createAuthService } from "../../src/auth/index.js";
+import { loadConfig } from "../../src/config.js";
+import { MemoryDatabasePool } from "../../src/db/index.js";
 import {
   CloudCatalogService,
   CloudMcpServer,
@@ -10,15 +13,23 @@ import {
   createCloudCatalogService,
   createCloudMcpServer,
 } from "../../src/mcp/index.js";
-import { createAuthService } from "../../src/auth/index.js";
-import { loadConfig } from "../../src/config.js";
-import { MemoryDatabasePool } from "../../src/db/index.js";
 import { createCloudServer } from "../../src/server/index.js";
 
 describe("Cloud MCP - Tenant Isolation & Authentication Security", () => {
   const config = loadConfig({
-    server: { port: 0, host: "127.0.0.1", logLevel: "info", bodyLimitBytes: 1048576, requestTimeoutMs: 5000, cors: { origin: "*", allowHeaders: ["*"], allowMethods: ["*"] } },
-    auth: { allowAnonymous: false, jwtSecret: "test-secret-at-least-32-chars-long-for-hmac", tokenTtlSeconds: 3600 },
+    server: {
+      port: 0,
+      host: "127.0.0.1",
+      logLevel: "info",
+      bodyLimitBytes: 1048576,
+      requestTimeoutMs: 5000,
+      cors: { origin: "*", allowHeaders: ["*"], allowMethods: ["*"] },
+    },
+    auth: {
+      allowAnonymous: false,
+      jwtSecret: "test-secret-at-least-32-chars-long-for-hmac",
+      tokenTtlSeconds: 3600,
+    },
   });
 
   const tenantA = {
@@ -49,15 +60,58 @@ describe("Cloud MCP - Tenant Isolation & Authentication Security", () => {
         description: "Secret tool belonging only to workspace alpha",
         schemaVersion: "1.0.0",
         parameters: { type: "object", properties: {}, required: [], additionalProperties: false },
-        runtime: { runtime: "builtin", timeoutMs: 30000, memoryLimitMb: 128, cpuLimitPercent: 100, maxOutputSizeBytes: 1048576 },
-        capabilities: {
-          fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
-          net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-          command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        runtime: {
+          runtime: "builtin",
+          timeoutMs: 30000,
+          memoryLimitMb: 128,
+          cpuLimitPercent: 100,
+          maxOutputSizeBytes: 1048576,
         },
-        limits: { timeoutMs: 30000, maxOutputBytes: 1048576, maxMemoryBytes: 134217728, maxConcurrentInvocations: 4 },
+        capabilities: {
+          fs: {
+            readPaths: [],
+            writePaths: [],
+            allowWorkspaceRoot: true,
+            allowTemp: true,
+            denyPaths: [],
+            maxFileSizeBytes: 10485760,
+          },
+          net: {
+            allowOutbound: false,
+            allowedDomains: [],
+            allowedHosts: [],
+            allowedPorts: [],
+            allowedProtocols: ["https"],
+            allowLocalhost: false,
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowShellExecution: false,
+            allowedCommands: [],
+            allowedBinaries: [],
+            forbiddenPatterns: [],
+            allowEnvPassthrough: [],
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 4,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 30000,
+            maxOutputSizeBytes: 1048576,
+          },
+        },
+        limits: {
+          timeoutMs: 30000,
+          maxOutputBytes: 1048576,
+          maxMemoryBytes: 134217728,
+          maxConcurrentInvocations: 4,
+        },
         scope: "workspace",
         digest: `sha256:${"a".repeat(64)}`,
         metadata: {
@@ -222,7 +276,9 @@ describe("Cloud MCP - Tenant Isolation & Authentication Security", () => {
       const json = await res.json();
       expect(json.error).toBeDefined();
       expect(json.error.code).toBe(MCP_ERROR_CODES.RESOURCE_NOT_FOUND);
-      expect(json.error.message).toContain("Access denied: Cannot query status for workspace 'ws-alpha'");
+      expect(json.error.message).toContain(
+        "Access denied: Cannot query status for workspace 'ws-alpha'",
+      );
     } finally {
       await stop();
     }
@@ -257,7 +313,9 @@ describe("Cloud MCP - Tenant Isolation & Authentication Security", () => {
       const json = await res.json();
       expect(json.error).toBeDefined();
       expect(json.error.code).toBe(MCP_ERROR_CODES.RESOURCE_NOT_FOUND);
-      expect(json.error.message).toContain("Access denied: Cannot query tool lineage for workspace 'ws-alpha'");
+      expect(json.error.message).toContain(
+        "Access denied: Cannot query tool lineage for workspace 'ws-alpha'",
+      );
     } finally {
       await stop();
     }

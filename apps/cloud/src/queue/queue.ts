@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { QueueConfig } from "../config.js";
-import { DatabasePool } from "../db/client.js";
-import { JobEnvelope, createJobEnvelope } from "./envelope.js";
+import type { QueueConfig } from "../config.js";
+import type { DatabasePool } from "../db/client.js";
+import { type JobEnvelope, createJobEnvelope } from "./envelope.js";
 
 /**
  * Queue statistics overview.
@@ -35,11 +35,7 @@ export interface DeadLetterRecord<T = unknown> {
 /**
  * Calculate exponential backoff duration in milliseconds with jitter.
  */
-export function calculateBackoffMs(
-  attempt: number,
-  baseMs = 1000,
-  maxBackoffMs = 300000,
-): number {
+export function calculateBackoffMs(attempt: number, baseMs = 1000, maxBackoffMs = 300000): number {
   const exponent = Math.max(0, attempt - 1);
   const exponentialMs = Math.min(baseMs * 2 ** exponent, maxBackoffMs);
   const jitter = Math.floor(Math.random() * (baseMs * 0.25));

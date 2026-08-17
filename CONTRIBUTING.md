@@ -1,30 +1,88 @@
 # Contributing to Tool Evolver
 
-Thank you for contributing to Tool Evolver! Please follow the guidelines below.
+Thank you for contributing to Tool Evolver! Please follow the guidelines below to maintain quality, security, and architectural integrity across the repository.
 
-## Development Workflow
+---
 
-1. **Prerequisites**:
-   - Node.js >= 22.0.0
-   - pnpm 10.24.0 (`corepack enable` or install via `npm i -g pnpm@10.24.0`)
+## Development Workflow & Local Verification
 
-2. **Branching & PRs**:
-   - Create feature branches off `main`.
-   - Ensure all CI checks pass before requesting review.
+Before submitting any pull request or pushing changes, ensure your local workspace passes all required checks.
 
-3. **Code Style & Formatting**:
-   - We use [Biome](https://biomejs.dev/) for fast linting and formatting.
-   - Run `pnpm lint` or `pnpm format` to ensure adherence.
+### Complete Local Verification Gate
 
-4. **Type Safety & TypeScript**:
-   - Strict TypeScript is enforced throughout all packages.
-   - Run `pnpm typecheck` to verify types across project references.
+Run the master verification command that mirrors the complete CI gate set:
 
-5. **Package Boundary Rules**:
-   - Packages must strictly communicate through declared exports (`@tool-evolver/<pkg>`).
-   - Deep imports into internal files of sibling packages are rejected by `pnpm check:boundaries` and CI.
-   - All cross-package dependencies must be listed in `package.json`.
+```bash
+pnpm run check:all
+```
 
-6. **Testing**:
-   - Write unit tests under `tests/` using [Vitest](https://vitest.dev/).
-   - Run `pnpm test` before committing.
+`pnpm run check:all` executes the complete sequence in order:
+1. `pnpm run check:adrs` — Architecture Decision Record (ADR) format, sequence, and glossary validation
+2. `pnpm run check:boundaries` — Monorepo package boundary and architectural import validation
+3. `pnpm run check:secrets` — Standalone secret scanner checking for unencrypted private keys, tokens, credentials, and canary leaks
+4. `pnpm run lint` — Biome formatting and code style linting
+5. `pnpm run typecheck` — TypeScript strict type checking across all packages and apps
+6. `pnpm run build` — Topological build of all workspace packages and apps
+7. `pnpm run test` — Unit test suite execution via Vitest
+8. `pnpm run release:test` — Unit and integrity test suite for release packaging and Ed25519 verification
+9. `pnpm run test:e2e` — End-to-end integration test execution
+10. `pnpm run check:smoke` — Binary entry-point smoke tests for all 4 executable binaries
+11. `pnpm run release:verify` — Release artifact, manifest signature, SBOM, channel, and documentation verification
+
+- **Install Dependencies:** `pnpm install --frozen-lockfile`
+- **Lint & Format:** `pnpm run lint` / `pnpm run format`
+- **Typecheck:** `pnpm run typecheck`
+- **Build:** `pnpm run build`
+- **Unit Tests:** `pnpm run test`
+- **E2E Tests:** `pnpm run test:e2e`
+- **Smoke Tests:** `pnpm run check:smoke` (or `pnpm run smoke`)
+- **Package Boundaries:** `pnpm run check:boundaries`
+- **ADR Check:** `pnpm run check:adrs`
+- **Release Verification:** `pnpm run release:verify`
+- **Release Test Suite:** `pnpm run release:test`
+
+---
+
+## Pull Request Lifecycle & Governance Policy
+
+### Branch Protection & PR-Only Gate
+
+The `main` branch is strictly protected and enforces PR-only release gates:
+- **Direct Pushes Blocked:** Direct commits and pushes to `main` are disabled. All changes must arrive via pull request.
+- **Force Pushes Disabled:** Force-pushing to `main` is strictly forbidden.
+- **Independent Code Review Required:** Every PR requires at least one approving review from a designated code owner (`.github/CODEOWNERS`). The PR author cannot approve their own pull request.
+- **Dismiss Stale Approvals:** Any new commits pushed to an open pull request automatically dismiss previous approvals, requiring re-review.
+- **Branch Protection Automation:** Run `./scripts/configure-branch-protection.sh` (or `pnpm exec ./scripts/configure-branch-protection.sh`) to automatically configure strict branch protection rules via GitHub API / gh CLI.
+- **Required Status Checks:** All 10 parallel CI jobs and the rollup `ci-gate` must pass before merging:
+  1. `lint` (Biome Lint & Format Check)
+  2. `typecheck` (TypeScript Typecheck)
+  3. `build` (Monorepo Build)
+  4. `test-unit` (Unit Tests)
+  5. `test-e2e` (End-to-End Tests)
+  6. `check-boundaries` (Package Import Boundaries)
+  7. `check-adrs` (ADR Integrity & Glossary Validation)
+  8. `release-verification` (Release Packaging, Digest, SBOM, and Docs Cross-Links)
+  9. `binary-smoke` (Binary Entry Point Smoke Tests)
+  10. `secret-scan` (Gitleaks and Standalone Secret Scanner)
+  11. `ci-gate` (Rollup Status Gate)
+
+### PR Template & Checklist
+
+All pull requests must use `.github/pull_request_template.md` and provide:
+- Detailed acceptance criteria evidence with verifiable command outputs or test artifacts.
+- Local verification commands executed (`pnpm run check:all`).
+- Security and privacy impact assessment (cryptography, secrets, capability envelopes, data residency).
+- Migration and backward compatibility impact.
+- Confirmation that workspace binary entry points build and pass smoke checks.
+
+---
+
+## Code Style & Architectural Boundaries
+
+1. **Package Boundaries:**
+   - Packages must strictly communicate through declared exports (e.g. `@tool-evolver/contracts`).
+   - Deep imports into internal files (`src/`) of sibling packages are prohibited.
+   - All cross-package dependencies must be explicitly declared in `package.json`.
+2. **Deterministic Release Packaging:**
+   - Release assets, tarballs, and SBOMs must be generated through `scripts/package-release.mjs`.
+   - Signatures are verified cryptographically via Ed25519 in `scripts/verify-release.mjs`.

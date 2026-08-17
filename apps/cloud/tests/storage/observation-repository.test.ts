@@ -1,14 +1,14 @@
-import { describe, expect, it } from "vitest";
 import {
-  NormalizedSessionEvent,
+  type NormalizedSessionEvent,
   canonicalJsonStringify,
   hashCanonicalContent,
 } from "@tool-evolver/contracts";
+import { describe, expect, it } from "vitest";
 import { MemoryDatabasePool } from "../../src/db/client.js";
 import { runMigrations } from "../../src/db/migrations.js";
 import { ObservationRepository } from "../../src/storage/repositories/observation-repository.js";
 import { SessionRepository } from "../../src/storage/repositories/session-repository.js";
-import { TenantContext } from "../../src/tenant.js";
+import type { TenantContext } from "../../src/tenant.js";
 
 describe("ObservationRepository", () => {
   const setup = async () => {
@@ -28,13 +28,26 @@ describe("ObservationRepository", () => {
     };
 
     // Pre-create account/workspace if needed
-    await pool.query(
-      `INSERT INTO accounts (id, name, plan) VALUES ($1, $2, $3), ($4, $5, $6)`,
-      ["acc-alpha", "Alpha Corp", "enterprise", "acc-beta", "Beta LLC", "standard"],
-    );
+    await pool.query(`INSERT INTO accounts (id, name, plan) VALUES ($1, $2, $3), ($4, $5, $6)`, [
+      "acc-alpha",
+      "Alpha Corp",
+      "enterprise",
+      "acc-beta",
+      "Beta LLC",
+      "standard",
+    ]);
     await pool.query(
       `INSERT INTO workspaces (id, account_id, name, slug) VALUES ($1, $2, $3, $4), ($5, $6, $7, $8)`,
-      ["ws-alpha", "acc-alpha", "Alpha Workspace", "alpha", "ws-beta", "acc-beta", "Beta Workspace", "beta"],
+      [
+        "ws-alpha",
+        "acc-alpha",
+        "Alpha Workspace",
+        "alpha",
+        "ws-beta",
+        "acc-beta",
+        "Beta Workspace",
+        "beta",
+      ],
     );
 
     return { pool, obsRepo, sessionRepo, tenantA, tenantB };
@@ -143,7 +156,7 @@ describe("ObservationRepository", () => {
         eventId: `evt-page-${i}`,
         schemaVersion: "1.0.0",
         sessionId: "sess-300",
-        timestamp: `2026-08-17T10:0${i < 10 ? "0" + i : i}:00.000Z`,
+        timestamp: `2026-08-17T10:0${i < 10 ? `0${i}` : i}:00.000Z`,
         type: i % 2 === 0 ? "tool_invocation" : "message",
         role: "user",
         content: `Msg ${i}`,

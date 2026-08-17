@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  RolloutAssignmentRouter,
   MemoryAssignmentStore,
+  RolloutAssignmentRouter,
 } from "../../../src/evolution/rollout/assignment.js";
 import {
   type RolloutEntity,
@@ -240,24 +240,9 @@ describe("RolloutAssignmentRouter - Sticky Session Routing & Schema Isolation", 
   it("should produce deterministic canary bucketing across repeated calls with identical keys", () => {
     const router = new RolloutAssignmentRouter();
 
-    const bucket1 = router.computeCanaryBucket(
-      "ws_1",
-      "sess_abc",
-      "tool_xyz",
-      "1.0.0",
-    );
-    const bucket2 = router.computeCanaryBucket(
-      "ws_1",
-      "sess_abc",
-      "tool_xyz",
-      "1.0.0",
-    );
-    const bucket3 = router.computeCanaryBucket(
-      "ws_1",
-      "sess_different",
-      "tool_xyz",
-      "1.0.0",
-    );
+    const bucket1 = router.computeCanaryBucket("ws_1", "sess_abc", "tool_xyz", "1.0.0");
+    const bucket2 = router.computeCanaryBucket("ws_1", "sess_abc", "tool_xyz", "1.0.0");
+    const bucket3 = router.computeCanaryBucket("ws_1", "sess_different", "tool_xyz", "1.0.0");
 
     expect(bucket1).toBe(bucket2);
     expect(bucket1).toBeGreaterThanOrEqual(0);

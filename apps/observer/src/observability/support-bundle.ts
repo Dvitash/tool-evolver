@@ -76,7 +76,9 @@ export class SupportBundleGenerator {
   private readonly auditTrail?: AuditTrailManager;
   private readonly telemetry?: TelemetryAggregator;
   private readonly recoveryController?: RecoveryController;
-  private readonly dbDiagnosticsProvider?: () => Promise<Record<string, unknown>> | Record<string, unknown>;
+  private readonly dbDiagnosticsProvider?: () =>
+    | Promise<Record<string, unknown>>
+    | Record<string, unknown>;
   private readonly maxLogs: number;
   private readonly maxAuditEntries: number;
 
@@ -127,7 +129,9 @@ export class SupportBundleGenerator {
     }
 
     // 3. Sanitized Config
-    const sanitizedConfig = this.config ? (redactConfig(this.config) as Record<string, unknown>) : {};
+    const sanitizedConfig = this.config
+      ? (redactConfig(this.config) as Record<string, unknown>)
+      : {};
 
     // 4. Kill switches
     const killSwitches = this.killSwitches ? this.killSwitches.getSnapshot() : undefined;
@@ -175,7 +179,9 @@ export class SupportBundleGenerator {
     }
 
     // 8. Quarantined tools
-    const quarantinedTools = this.recoveryController ? this.recoveryController.getQuarantinedTools() : [];
+    const quarantinedTools = this.recoveryController
+      ? this.recoveryController.getQuarantinedTools()
+      : [];
 
     // 9. Sanitized Logs
     const rawLogs = this.logger ? this.logger.getRecentLogs(this.maxLogs) : [];

@@ -90,10 +90,7 @@ export async function removeHarnessMcpConfigurations(options: {
   const cleaned: string[] = [];
 
   // 1. Claude Code (~/.claude.json)
-  const claudePaths = [
-    path.join(home, ".claude.json"),
-    path.join(home, ".claude", "config.json"),
-  ];
+  const claudePaths = [path.join(home, ".claude.json"), path.join(home, ".claude", "config.json")];
   for (const cPath of claudePaths) {
     const content = await fsBridge.readFile(cPath);
     if (content) {
@@ -116,12 +113,15 @@ export async function removeHarnessMcpConfigurations(options: {
   // 2. Codex CLI (~/.codex/config.toml)
   const codexPath = path.join(home, ".codex", "config.toml");
   const codexContent = await fsBridge.readFile(codexPath);
-  if (codexContent && codexContent.includes("tool-evolver")) {
+  if (codexContent?.includes("tool-evolver")) {
     const lines = codexContent.split("\n");
     const filtered: string[] = [];
     let inSection = false;
     for (const line of lines) {
-      if (line.includes("[mcp_servers.tool-evolver]") || line.includes("[mcp_servers.toolevolver]")) {
+      if (
+        line.includes("[mcp_servers.tool-evolver]") ||
+        line.includes("[mcp_servers.toolevolver]")
+      ) {
         inSection = true;
         continue;
       }
@@ -274,7 +274,9 @@ export async function uninstallCommand(
       process.stdout.write("\n✓ Tool Evolver uninstalled successfully.\n");
       process.stdout.write("  • Service stopped and unit removed.\n");
       if (cleanedHarnesses.length > 0) {
-        process.stdout.write(`  • Removed MCP configurations for: ${cleanedHarnesses.join(", ")}\n`);
+        process.stdout.write(
+          `  • Removed MCP configurations for: ${cleanedHarnesses.join(", ")}\n`,
+        );
       }
       if (purgeAll) {
         process.stdout.write(`  • Purged directory: ${toolEvolverHome}\n`);
@@ -292,9 +294,7 @@ export async function uninstallCommand(
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (flags.json) {
-      process.stdout.write(
-        `${JSON.stringify({ error: msg, success: false }, null, 2)}\n`,
-      );
+      process.stdout.write(`${JSON.stringify({ error: msg, success: false }, null, 2)}\n`);
     } else {
       process.stderr.write(`\nUninstall failed: ${msg}\n`);
     }

@@ -1,11 +1,11 @@
 import {
-  CircuitState,
+  type CircuitState,
   ModelCapability,
-  ModelPolicy,
+  type ModelPolicy,
   ModelPolicySchema,
-  ModelProvider,
-  ModelTaskClass,
-  RouteSelectionResult,
+  type ModelProvider,
+  type ModelTaskClass,
+  type RouteSelectionResult,
 } from "./types.js";
 
 /**
@@ -76,10 +76,12 @@ export class ModelRouter {
   public readonly failureThreshold: number;
   public readonly circuitCooldownMs: number;
 
-  constructor(options: {
-    failureThreshold?: number;
-    circuitCooldownMs?: number;
-  } = {}) {
+  constructor(
+    options: {
+      failureThreshold?: number;
+      circuitCooldownMs?: number;
+    } = {},
+  ) {
     this.failureThreshold = options.failureThreshold ?? 5;
     this.circuitCooldownMs = options.circuitCooldownMs ?? 30000;
     this.initializeDefaultPolicies();
@@ -247,7 +249,10 @@ export class ModelRouter {
   /**
    * Returns ordered fallback routes excluding already failed providers.
    */
-  getFallbackRoutes(request: RouteSelectionRequest, failedProviderId?: string): RouteSelectionResult[] {
+  getFallbackRoutes(
+    request: RouteSelectionRequest,
+    failedProviderId?: string,
+  ): RouteSelectionResult[] {
     const policy = this.getPolicy(request.taskClass, request.policyOverride);
     const excludeIds = new Set(request.excludeProviderIds ?? []);
     if (failedProviderId) {

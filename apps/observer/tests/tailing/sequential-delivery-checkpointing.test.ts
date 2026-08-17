@@ -51,11 +51,19 @@ describe("Sequential Record Delivery and Atomic Checkpointing", () => {
     expect(parsed[0].cursor.sequence).toBe(1);
     expect(parsed[0].cursor.line).toBe(1);
 
-    expect(parsed[1].parsedJson).toEqual({ type: "tool_call", tool: "calc", input: { a: 1, b: 2 } });
+    expect(parsed[1].parsedJson).toEqual({
+      type: "tool_call",
+      tool: "calc",
+      input: { a: 1, b: 2 },
+    });
     expect(parsed[1].cursor.sequence).toBe(2);
     expect(parsed[1].cursor.line).toBe(2);
 
-    expect(parsed[2].parsedJson).toEqual({ type: "tool_result", tool: "calc", output: { result: 3 } });
+    expect(parsed[2].parsedJson).toEqual({
+      type: "tool_result",
+      tool: "calc",
+      output: { result: 3 },
+    });
     expect(parsed[2].cursor.sequence).toBe(3);
     expect(parsed[2].cursor.line).toBe(3);
 
@@ -176,9 +184,9 @@ describe("Sequential Record Delivery and Atomic Checkpointing", () => {
       timestamp: new Date().toISOString(),
     };
 
-    await expect(
-      cursorManager.commitCheckpoint("sess-mono", regressiveCursor),
-    ).rejects.toThrow(/Cannot regress cursor/);
+    await expect(cursorManager.commitCheckpoint("sess-mono", regressiveCursor)).rejects.toThrow(
+      /Cannot regress cursor/,
+    );
 
     // If allowRegression is set (e.g. during explicit file reset/truncation), it succeeds
     await cursorManager.commitCheckpoint("sess-mono", regressiveCursor, { allowRegression: true });

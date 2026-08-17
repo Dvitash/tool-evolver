@@ -46,11 +46,15 @@ describe("HealthAggregator", () => {
   it("sets overall status to offline when a critical component is offline", async () => {
     const aggregator = createHealthAggregator();
 
-    aggregator.registerComponent("gateway", () => ({
-      status: "offline",
-      reasonCode: "GATEWAY_UNREACHABLE",
-      message: "Socket connection refused",
-    }), { critical: true });
+    aggregator.registerComponent(
+      "gateway",
+      () => ({
+        status: "offline",
+        reasonCode: "GATEWAY_UNREACHABLE",
+        message: "Socket connection refused",
+      }),
+      { critical: true },
+    );
 
     const report = await aggregator.checkHealth();
     expect(report.overallStatus).toBe("offline");

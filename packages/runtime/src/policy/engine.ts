@@ -427,8 +427,7 @@ export class CapabilityPolicyEngine {
     }
 
     // 6. Check Cache
-    const effectiveWorkspaceRoot =
-      context.workspaceRoot ?? this.workspaceRoot;
+    const effectiveWorkspaceRoot = context.workspaceRoot ?? this.workspaceRoot;
     const cacheKey = this.computeCacheKey(
       envelope,
       requestedCapabilities,
@@ -468,7 +467,9 @@ export class CapabilityPolicyEngine {
 
       if (intersection.expansionAttempted) {
         const primaryViolation = intersection.violations[0];
-        const denyCode = primaryViolation ? violationToDenyCode(primaryViolation) : "ENVELOPE_FROZEN";
+        const denyCode = primaryViolation
+          ? violationToDenyCode(primaryViolation)
+          : "ENVELOPE_FROZEN";
         const result: PolicyEvaluationResult = {
           allowed: false,
           denyCode: "ENVELOPE_FROZEN",

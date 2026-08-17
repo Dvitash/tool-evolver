@@ -178,11 +178,7 @@ export class SigningKeyRepository {
   /**
    * Rotates an active key: marks the old key as 'rotated' and saves the new active key.
    */
-  async rotateKey(
-    oldKeyId: string,
-    newKey: SigningKeyMetadata,
-    db?: Queryable,
-  ): Promise<void> {
+  async rotateKey(oldKeyId: string, newKey: SigningKeyMetadata, db?: Queryable): Promise<void> {
     const client = db ?? this.pool;
     const now = new Date().toISOString();
 

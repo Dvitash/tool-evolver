@@ -109,13 +109,19 @@ export class DeviceAuthClient {
     params: DeviceAuthRequestParams = {},
   ): Promise<DeviceAuthBootstrapResponse> {
     const deviceId =
-      params.deviceId ?? `dev_${os.hostname().toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
-    const installationId = `inst_${os.hostname().toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
+      params.deviceId ??
+      `dev_${os
+        .hostname()
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "_")}`;
+    const installationId = `inst_${os
+      .hostname()
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "_")}`;
     const hostname = os.hostname() || "localhost";
     const platform =
       process.platform === "darwin" ? "darwin" : process.platform === "linux" ? "linux" : "other";
-    const arch =
-      process.arch === "arm64" ? "arm64" : process.arch === "x64" ? "x64" : "other";
+    const arch = process.arch === "arm64" ? "arm64" : process.arch === "x64" ? "x64" : "other";
     const clientVersion = params.clientVersion ?? "0.1.0";
     const scopes = params.requestedScopes ?? DEFAULT_DEVICE_SCOPES;
 
@@ -209,7 +215,8 @@ export class DeviceAuthClient {
         throw new Error("Device authorization was denied by user.");
       }
 
-      const desc = (data.errorDescription as string) || (data.error as string) || response.statusText;
+      const desc =
+        (data.errorDescription as string) || (data.error as string) || response.statusText;
       throw new Error(`Device token exchange failed: ${desc}`);
     }
 
@@ -225,14 +232,10 @@ export class DeviceAuthClient {
 
     // 1. Store in SecretManager
     try {
-      await this.secretManager.addSecret(
-        "cloud_device_access_token",
-        tokenResponse.accessToken,
-        {
-          description: "Tool Evolver Cloud Device Access Token",
-          workspaceId,
-        },
-      );
+      await this.secretManager.addSecret("cloud_device_access_token", tokenResponse.accessToken, {
+        description: "Tool Evolver Cloud Device Access Token",
+        workspaceId,
+      });
 
       if (tokenResponse.refreshToken) {
         await this.secretManager.addSecret(
@@ -279,7 +282,11 @@ export class DeviceAuthClient {
 
   async bootstrap(options: DeviceAuthBootstrapOptions = {}): Promise<DeviceAuthBootstrapResult> {
     const deviceId =
-      options.deviceId ?? `dev_${os.hostname().toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
+      options.deviceId ??
+      `dev_${os
+        .hostname()
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "_")}`;
     const workspaceId = options.workspaceId ?? "ws_default";
 
     try {
@@ -302,7 +309,9 @@ export class DeviceAuthClient {
         process.stdout.write("\n=======================================================\n");
         process.stdout.write(" Tool Evolver Cloud Device Authentication\n");
         process.stdout.write("=======================================================\n");
-        process.stdout.write(`\n1. Navigate to: ${bootstrapResponse.verificationUriComplete || bootstrapResponse.verificationUri}\n`);
+        process.stdout.write(
+          `\n1. Navigate to: ${bootstrapResponse.verificationUriComplete || bootstrapResponse.verificationUri}\n`,
+        );
         process.stdout.write(`2. Enter code:   ${bootstrapResponse.userCode}\n\n`);
         process.stdout.write("Waiting for device authorization in browser...\n\n");
       }
@@ -311,7 +320,9 @@ export class DeviceAuthClient {
       const tokenResponse = await this.pollTokenExchange({
         deviceCode: bootstrapResponse.deviceCode,
         deviceId,
-        interval: options.pollIntervalMs ? options.pollIntervalMs / 1000 : bootstrapResponse.interval,
+        interval: options.pollIntervalMs
+          ? options.pollIntervalMs / 1000
+          : bootstrapResponse.interval,
         timeoutMs: options.timeoutMs ?? bootstrapResponse.expiresIn * 1000,
         abortSignal: options.abortSignal,
       });
@@ -378,7 +389,12 @@ export class DeviceAuthClient {
         );
         const refreshToken = await store.getSecret("cloud_device_refresh_token");
 
-        const scopes: AuthScope[] = ["device:connect", "observations:write", "catalog:read", "artifacts:read"];
+        const scopes: AuthScope[] = [
+          "device:connect",
+          "observations:write",
+          "catalog:read",
+          "artifacts:read",
+        ];
         const createdAtIso = metadata?.createdAt
           ? new Date(metadata.createdAt).toISOString()
           : new Date().toISOString();

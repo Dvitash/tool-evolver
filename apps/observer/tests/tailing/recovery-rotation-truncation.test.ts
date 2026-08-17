@@ -2,10 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  SourceRecoveryEngine,
-  TranscriptWatcher,
-} from "../../src/tailing/index.js";
+import { SourceRecoveryEngine, TranscriptWatcher } from "../../src/tailing/index.js";
 
 describe("Recovery Engine, Rotation, Truncation, and Lineage", () => {
   let tmpDir: string;

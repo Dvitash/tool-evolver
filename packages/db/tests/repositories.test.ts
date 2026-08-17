@@ -69,7 +69,7 @@ describe("Repositories End-to-End Round-Trip & Operations", () => {
         isFrozen: false,
         createdAt: "2026-08-17T12:00:00.000Z",
       },
-      activeTools: { "tool_git_diff": "1.0.0" },
+      activeTools: { tool_git_diff: "1.0.0" },
       createdAt: "2026-08-17T12:00:00.000Z",
     };
 
@@ -272,7 +272,9 @@ describe("Repositories End-to-End Round-Trip & Operations", () => {
           format: "js_bundle",
         },
         entrypoint: "index.js",
-        checksums: { "index.js": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789" },
+        checksums: {
+          "index.js": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        },
       },
       provenance: {
         synthesizedAt: "2026-08-17T12:00:00.000Z",

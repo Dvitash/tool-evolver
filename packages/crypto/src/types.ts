@@ -130,11 +130,7 @@ export interface SecretStore {
   /**
    * Encrypts and stores a named secret with optional metadata.
    */
-  setSecret(
-    name: string,
-    value: string,
-    options?: SetSecretOptions
-  ): Promise<SecretMetadata>;
+  setSecret(name: string, value: string, options?: SetSecretOptions): Promise<SecretMetadata>;
 
   /**
    * Deletes a named secret from the store.

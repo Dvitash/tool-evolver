@@ -1,6 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
-import { randomUUID } from "node:crypto";
 import type {
   HarnessSession,
   RawHarnessRecord,
@@ -107,7 +107,8 @@ export class TranscriptTailer extends EventEmitter {
 
   constructor(options: TranscriptTailerOptions = {}) {
     super();
-    this.cursorManager = options.cursorManager ?? new SourceCursorManager({ deviceId: options.deviceId });
+    this.cursorManager =
+      options.cursorManager ?? new SourceCursorManager({ deviceId: options.deviceId });
     this.defaultBackfillPolicy = options.defaultBackfillPolicy ?? { mode: "all" };
     this.defaultBatchSize = options.defaultBatchSize ?? 50;
     this.defaultQueueCapacity = options.defaultQueueCapacity ?? 1000;
@@ -146,7 +147,12 @@ export class TranscriptTailer extends EventEmitter {
     let startCursor = await this.cursorManager.getCursor(session.sessionId);
     const policy = options.backfillPolicy ?? this.defaultBackfillPolicy;
 
-    if (!startCursor && policy.mode !== "all" && session.transcriptPath && fs.existsSync(session.transcriptPath)) {
+    if (
+      !startCursor &&
+      policy.mode !== "all" &&
+      session.transcriptPath &&
+      fs.existsSync(session.transcriptPath)
+    ) {
       startCursor = await this.computeBackfillCursor(session.transcriptPath, policy);
     }
 
@@ -291,11 +297,9 @@ export class TranscriptTailer extends EventEmitter {
         return watcher.getCursor();
       },
       async detectRotation(): Promise<boolean> {
-        const assessment = await watcher.getRecoveryEngine().probe(
-          watcher.filePath,
-          watcher.getCursor().offset,
-          watcher.getCursor().line,
-        );
+        const assessment = await watcher
+          .getRecoveryEngine()
+          .probe(watcher.filePath, watcher.getCursor().offset, watcher.getCursor().line);
         return assessment.condition === "rotated" || assessment.condition === "truncated";
       },
       async close(): Promise<void> {
@@ -344,7 +348,7 @@ export class TranscriptTailer extends EventEmitter {
         const skipLines = Math.max(0, allLines.length - policy.maxLines);
         let offset = 0;
         for (let i = 0; i < skipLines; i++) {
-          offset += Buffer.byteLength(allLines[i] + "\n", "utf8");
+          offset += Buffer.byteLength(`${allLines[i]}\n`, "utf8");
         }
 
         return {
@@ -404,14 +408,10 @@ export class TranscriptTailer extends EventEmitter {
       context.queue.ack(batch.map((r) => r.recordId));
 
       // 2. Commit atomic cursor to SQLite
-      await this.cursorManager.commitCheckpoint(
-        context.session.sessionId,
-        latestInBatch.cursor,
-        {
-          workspaceId: context.options.workspaceId ?? context.session.workspaceId,
-          deviceId: context.options.deviceId ?? this.defaultDeviceId,
-        },
-      );
+      await this.cursorManager.commitCheckpoint(context.session.sessionId, latestInBatch.cursor, {
+        workspaceId: context.options.workspaceId ?? context.session.workspaceId,
+        deviceId: context.options.deviceId ?? this.defaultDeviceId,
+      });
 
       // 3. Notify event source of committed checkpoint
       await context.source.checkpoint(latestInBatch.cursor);
@@ -447,7 +447,9 @@ export class TranscriptTailer extends EventEmitter {
 
     try {
       if (context.queue.size < context.queue.highWatermark) {
-        const records = await context.source.readNext(context.options.maxBatchSize ?? this.defaultBatchSize);
+        const records = await context.source.readNext(
+          context.options.maxBatchSize ?? this.defaultBatchSize,
+        );
         if (records.length > 0) {
           await this.handleIncomingRecords(context, records);
         }

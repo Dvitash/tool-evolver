@@ -1,6 +1,6 @@
 import { gunzipSync, inflateSync } from "node:zlib";
 import {
-  NormalizedSessionEvent,
+  type NormalizedSessionEvent,
   NormalizedSessionEventSchema,
   RedactionMetaSchema,
   hashCanonicalContent,
@@ -8,9 +8,9 @@ import {
 } from "@tool-evolver/contracts";
 import {
   ChecksumMismatchError,
-  ObservationBatchRequest,
+  type ObservationBatchRequest,
   ObservationBatchRequestSchema,
-  ProtocolMessageEnvelope,
+  type ProtocolMessageEnvelope,
   ProtocolMessageEnvelopeSchema,
 } from "@tool-evolver/protocol";
 import { z } from "zod";
@@ -72,15 +72,15 @@ export class DecompressionError extends Error {
  * Validation configuration options.
  */
 export interface BatchValidatorOptions {
-  maxBatchSizeBytes?: number;        // Default 10MB
+  maxBatchSizeBytes?: number; // Default 10MB
   maxDecompressedSizeBytes?: number; // Default 50MB
-  maxEventsPerBatch?: number;        // Default 1,000
-  minEventsPerBatch?: number;        // Default 1
-  enforceTimestampOrdering?: boolean;// Default true
+  maxEventsPerBatch?: number; // Default 1,000
+  minEventsPerBatch?: number; // Default 1
+  enforceTimestampOrdering?: boolean; // Default true
 }
 
 export const DEFAULT_BATCH_VALIDATOR_OPTIONS: Required<BatchValidatorOptions> = {
-  maxBatchSizeBytes: 10 * 1024 * 1024,        // 10 MB
+  maxBatchSizeBytes: 10 * 1024 * 1024, // 10 MB
   maxDecompressedSizeBytes: 50 * 1024 * 1024, // 50 MB
   maxEventsPerBatch: 1000,
   minEventsPerBatch: 1,
@@ -117,9 +117,7 @@ export class ObservationBatchValidator {
     data: Buffer | Uint8Array | string,
     compression: "none" | "gzip" | "zstd" | "deflate" = "none",
   ): string {
-    const rawBuffer = typeof data === "string"
-      ? Buffer.from(data, "utf8")
-      : Buffer.from(data);
+    const rawBuffer = typeof data === "string" ? Buffer.from(data, "utf8") : Buffer.from(data);
 
     if (rawBuffer.length > this.options.maxBatchSizeBytes) {
       throw new PayloadLimitExceededError(
@@ -136,16 +134,24 @@ export class ObservationBatchValidator {
     let decompressed: Buffer;
     try {
       if (compression === "gzip") {
-        decompressed = gunzipSync(rawBuffer, { maxOutputLength: this.options.maxDecompressedSizeBytes });
+        decompressed = gunzipSync(rawBuffer, {
+          maxOutputLength: this.options.maxDecompressedSizeBytes,
+        });
       } else if (compression === "deflate") {
-        decompressed = inflateSync(rawBuffer, { maxOutputLength: this.options.maxDecompressedSizeBytes });
+        decompressed = inflateSync(rawBuffer, {
+          maxOutputLength: this.options.maxDecompressedSizeBytes,
+        });
       } else {
         throw new DecompressionError(`Unsupported compression algorithm: ${compression}`);
       }
     } catch (err: unknown) {
       if (err instanceof DecompressionError) throw err;
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("maxOutputLength") || msg.includes("limit") || msg.includes("Cannot create a Buffer")) {
+      if (
+        msg.includes("maxOutputLength") ||
+        msg.includes("limit") ||
+        msg.includes("Cannot create a Buffer")
+      ) {
         throw new PayloadLimitExceededError(
           `Decompressed payload exceeds maximum size limit of ${this.options.maxDecompressedSizeBytes} bytes`,
           this.options.maxDecompressedSizeBytes,
@@ -169,10 +175,7 @@ export class ObservationBatchValidator {
   /**
    * Validates an observation batch request or envelope.
    */
-  validateBatch(
-    input: unknown,
-    rawByteSize?: number,
-  ): ValidatedBatch {
+  validateBatch(input: unknown, rawByteSize?: number): ValidatedBatch {
     if (!input || typeof input !== "object") {
       throw new ObservationValidationError("Invalid request body: expected JSON object");
     }
@@ -245,9 +248,10 @@ export class ObservationBatchValidator {
       const obs = request.observations[i];
       const parsedEvent = NormalizedSessionEventSchema.safeParse(obs);
       if (!parsedEvent.success) {
-        const obsId = (typeof obs === "object" && obs !== null && "eventId" in obs)
-          ? String((obs as Record<string, unknown>).eventId)
-          : "unknown";
+        const obsId =
+          typeof obs === "object" && obs !== null && "eventId" in obs
+            ? String((obs as Record<string, unknown>).eventId)
+            : "unknown";
         throw new ObservationValidationError(
           `Invalid event schema at index ${i} (eventId: ${obsId}): ${parsedEvent.error.message}`,
           parsedEvent.error.issues.map((issue) => ({

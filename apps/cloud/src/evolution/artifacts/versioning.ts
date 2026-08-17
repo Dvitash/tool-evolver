@@ -1,8 +1,5 @@
 import type { ToolManifest } from "@tool-evolver/contracts";
-import type {
-  SemanticVersionIncrement,
-  VersionDiffReport,
-} from "./types.js";
+import type { SemanticVersionIncrement, VersionDiffReport } from "./types.js";
 
 /**
  * Semantic Version Classifier and Manifest Diff Engine.
@@ -14,10 +11,7 @@ export class SemanticVersionClassifier {
    * Compares a candidate manifest against its prior active manifest
    * and produces a detailed VersionDiffReport.
    */
-  diffManifests(
-    candidateManifest: ToolManifest,
-    priorManifest?: ToolManifest,
-  ): VersionDiffReport {
+  diffManifests(candidateManifest: ToolManifest, priorManifest?: ToolManifest): VersionDiffReport {
     const breakingChanges: string[] = [];
     const contractChanges: string[] = [];
 
@@ -46,9 +40,12 @@ export class SemanticVersionClassifier {
         const c = candidateManifest.capabilities;
         if (c.fs?.readPaths?.length) candCaps.push(...c.fs.readPaths.map((p) => `fs:read:${p}`));
         if (c.fs?.writePaths?.length) candCaps.push(...c.fs.writePaths.map((p) => `fs:write:${p}`));
-        if (c.net?.allowedHosts?.length) candCaps.push(...c.net.allowedHosts.map((h) => `net:${h}`));
-        if (c.command?.allowedCommands?.length) candCaps.push(...c.command.allowedCommands.map((cmd) => `cmd:${cmd}`));
-        if (c.secrets?.allowedSecretNames?.length) candCaps.push(...c.secrets.allowedSecretNames.map((s) => `secret:${s}`));
+        if (c.net?.allowedHosts?.length)
+          candCaps.push(...c.net.allowedHosts.map((h) => `net:${h}`));
+        if (c.command?.allowedCommands?.length)
+          candCaps.push(...c.command.allowedCommands.map((cmd) => `cmd:${cmd}`));
+        if (c.secrets?.allowedSecretNames?.length)
+          candCaps.push(...c.secrets.allowedSecretNames.map((s) => `secret:${s}`));
       }
 
       return {
@@ -106,15 +103,21 @@ export class SemanticVersionClassifier {
     // Detect modified parameters
     for (const key of priorParamKeys) {
       if (key in candParams) {
-        const pProp = priorParams[key] as { type?: string; description?: string; enum?: unknown[] } | undefined;
-        const cProp = candParams[key] as { type?: string; description?: string; enum?: unknown[] } | undefined;
+        const pProp = priorParams[key] as
+          | { type?: string; description?: string; enum?: unknown[] }
+          | undefined;
+        const cProp = candParams[key] as
+          | { type?: string; description?: string; enum?: unknown[] }
+          | undefined;
 
         let modified = false;
 
         // Type changed (Breaking!)
         if (pProp?.type && cProp?.type && pProp.type !== cProp.type) {
           modified = true;
-          breakingChanges.push(`Parameter '${key}' type changed from '${pProp.type}' to '${cProp.type}'`);
+          breakingChanges.push(
+            `Parameter '${key}' type changed from '${pProp.type}' to '${cProp.type}'`,
+          );
         }
 
         // Required status changed (Optional -> Required is breaking!)
@@ -186,15 +189,23 @@ export class SemanticVersionClassifier {
       increment = "patch";
     }
 
-    const nextVersion = this.computeNextVersion(priorManifest.version, increment, candidateManifest.version);
+    const nextVersion = this.computeNextVersion(
+      priorManifest.version,
+      increment,
+      candidateManifest.version,
+    );
 
     const summaryParts: string[] = [];
     if (breakingChanges.length > 0) {
-      summaryParts.push(`Major bump (${increment}): ${breakingChanges.length} breaking changes detected.`);
+      summaryParts.push(
+        `Major bump (${increment}): ${breakingChanges.length} breaking changes detected.`,
+      );
     } else if (increment === "minor") {
       summaryParts.push(`Minor bump (${increment}): backward-compatible features and additions.`);
     } else {
-      summaryParts.push(`Patch bump (${increment}): backward-compatible fixes and internal updates.`);
+      summaryParts.push(
+        `Patch bump (${increment}): backward-compatible fixes and internal updates.`,
+      );
     }
 
     return {
@@ -237,9 +248,9 @@ export class SemanticVersionClassifier {
       return candidateVersion || "1.0.0";
     }
 
-    const major = parseInt(match[1], 10);
-    const minor = parseInt(match[2], 10);
-    const patch = parseInt(match[3], 10);
+    const major = Number.parseInt(match[1], 10);
+    const minor = Number.parseInt(match[2], 10);
+    const patch = Number.parseInt(match[3], 10);
     const suffix = match[4] || "";
 
     switch (increment) {
@@ -247,7 +258,6 @@ export class SemanticVersionClassifier {
         return `${major + 1}.0.0${suffix}`;
       case "minor":
         return `${major}.${minor + 1}.0${suffix}`;
-      case "patch":
       default:
         return `${major}.${minor}.${patch + 1}${suffix}`;
     }

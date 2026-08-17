@@ -39,7 +39,7 @@ export function isRiskTierAtLeast(tierA: RiskTier, tierB: RiskTier): boolean {
  */
 export function classifyRiskTier(
   manifest?: ToolManifest,
-  capabilities?: CapabilityManifest
+  capabilities?: CapabilityManifest,
 ): RiskTier {
   const cap = capabilities ?? manifest?.capabilities;
   if (!cap) {
@@ -82,18 +82,18 @@ export function classifyRiskTier(
  */
 export const STANDARD_RISK_TIER_THRESHOLDS: Record<RiskTier, RiskTierThresholds> = {
   read_only: {
-    minCompositeScore: 0.70,
-    minConfidence: 0.60,
+    minCompositeScore: 0.7,
+    minConfidence: 0.6,
     minTestPassRate: 1.0,
-    minReplayPassRate: 0.80,
+    minReplayPassRate: 0.8,
     minCoveragePercent: 70,
     maxAllowedStaticWarnings: 5,
     requireZeroStaticErrors: true,
     minReplayScenarioCount: 1,
   },
   workspace_fs: {
-    minCompositeScore: 0.80,
-    minConfidence: 0.70,
+    minCompositeScore: 0.8,
+    minConfidence: 0.7,
     minTestPassRate: 1.0,
     minReplayPassRate: 0.85,
     minCoveragePercent: 80,
@@ -103,16 +103,16 @@ export const STANDARD_RISK_TIER_THRESHOLDS: Record<RiskTier, RiskTierThresholds>
   },
   network_client: {
     minCompositeScore: 0.85,
-    minConfidence: 0.80,
+    minConfidence: 0.8,
     minTestPassRate: 1.0,
-    minReplayPassRate: 0.90,
+    minReplayPassRate: 0.9,
     minCoveragePercent: 85,
     maxAllowedStaticWarnings: 2,
     requireZeroStaticErrors: true,
     minReplayScenarioCount: 2,
   },
   command_exec: {
-    minCompositeScore: 0.90,
+    minCompositeScore: 0.9,
     minConfidence: 0.85,
     minTestPassRate: 1.0,
     minReplayPassRate: 1.0,
@@ -123,7 +123,7 @@ export const STANDARD_RISK_TIER_THRESHOLDS: Record<RiskTier, RiskTierThresholds>
   },
   secret_mediated: {
     minCompositeScore: 0.95,
-    minConfidence: 0.90,
+    minConfidence: 0.9,
     minTestPassRate: 1.0,
     minReplayPassRate: 1.0,
     minCoveragePercent: 95,
@@ -138,9 +138,9 @@ export const STANDARD_RISK_TIER_THRESHOLDS: Record<RiskTier, RiskTierThresholds>
  */
 export const STANDARD_DIMENSION_WEIGHTS: PolicyDimensionWeights = {
   correctness: 0.25,
-  replayCoverage: 0.20,
+  replayCoverage: 0.2,
   securityPolicyFit: 0.15,
-  reliability: 0.10,
+  reliability: 0.1,
   latencyResources: 0.08,
   tokenSavings: 0.08,
   timeSavings: 0.05,
@@ -180,7 +180,7 @@ export const STANDARD_UNCERTAINTY_CONFIG: UncertaintyPolicyConfig = {
   penaltyPerMissingScenario: 0.15,
   minOccurrencesForFullConfidence: 2,
   minDistinctSessionsForFullConfidence: 2,
-  untestedCodePathPenaltyWeight: 0.20,
+  untestedCodePathPenaltyWeight: 0.2,
 };
 
 /**
@@ -200,7 +200,8 @@ export const STANDARD_EVALUATION_POLICY_V1: EvaluationPolicy = {
   policyId: "standard-policy",
   version: "1.0.0",
   name: "Standard Evaluation Policy v1",
-  description: "Standard production evaluation policy enforcing risk-tiered safety gates and multi-dimensional scoring.",
+  description:
+    "Standard production evaluation policy enforcing risk-tiered safety gates and multi-dimensional scoring.",
   riskTierThresholds: STANDARD_RISK_TIER_THRESHOLDS,
   weights: STANDARD_DIMENSION_WEIGHTS,
   hardGates: STANDARD_HARD_GATES,
@@ -218,11 +219,12 @@ export const STRICT_EVALUATION_POLICY_V1: EvaluationPolicy = {
   policyId: "strict-policy",
   version: "1.0.0",
   name: "Strict Evaluation Policy v1",
-  description: "Zero-tolerance high-assurance evaluation policy requiring full test pass, high replay fidelity, and strict envelope compliance.",
+  description:
+    "Zero-tolerance high-assurance evaluation policy requiring full test pass, high replay fidelity, and strict envelope compliance.",
   riskTierThresholds: {
     read_only: {
       minCompositeScore: 0.85,
-      minConfidence: 0.80,
+      minConfidence: 0.8,
       minTestPassRate: 1.0,
       minReplayPassRate: 0.95,
       minCoveragePercent: 85,
@@ -231,7 +233,7 @@ export const STRICT_EVALUATION_POLICY_V1: EvaluationPolicy = {
       minReplayScenarioCount: 2,
     },
     workspace_fs: {
-      minCompositeScore: 0.90,
+      minCompositeScore: 0.9,
       minConfidence: 0.85,
       minTestPassRate: 1.0,
       minReplayPassRate: 1.0,
@@ -242,7 +244,7 @@ export const STRICT_EVALUATION_POLICY_V1: EvaluationPolicy = {
     },
     network_client: {
       minCompositeScore: 0.95,
-      minConfidence: 0.90,
+      minConfidence: 0.9,
       minTestPassRate: 1.0,
       minReplayPassRate: 1.0,
       minCoveragePercent: 95,
@@ -272,10 +274,10 @@ export const STRICT_EVALUATION_POLICY_V1: EvaluationPolicy = {
     },
   },
   weights: {
-    correctness: 0.30,
+    correctness: 0.3,
     replayCoverage: 0.25,
-    securityPolicyFit: 0.20,
-    reliability: 0.10,
+    securityPolicyFit: 0.2,
+    reliability: 0.1,
     latencyResources: 0.05,
     tokenSavings: 0.04,
     timeSavings: 0.02,
@@ -318,20 +320,20 @@ export const PERMISSIVE_EVALUATION_POLICY_V1: EvaluationPolicy = {
   description: "Relaxed policy for local development and rapid iterative experimentation.",
   riskTierThresholds: {
     read_only: {
-      minCompositeScore: 0.50,
-      minConfidence: 0.40,
-      minTestPassRate: 0.90,
-      minReplayPassRate: 0.50,
+      minCompositeScore: 0.5,
+      minConfidence: 0.4,
+      minTestPassRate: 0.9,
+      minReplayPassRate: 0.5,
       minCoveragePercent: 50,
       maxAllowedStaticWarnings: 20,
       requireZeroStaticErrors: false,
       minReplayScenarioCount: 0,
     },
     workspace_fs: {
-      minCompositeScore: 0.60,
-      minConfidence: 0.50,
+      minCompositeScore: 0.6,
+      minConfidence: 0.5,
       minTestPassRate: 0.95,
-      minReplayPassRate: 0.60,
+      minReplayPassRate: 0.6,
       minCoveragePercent: 60,
       maxAllowedStaticWarnings: 15,
       requireZeroStaticErrors: false,
@@ -341,7 +343,7 @@ export const PERMISSIVE_EVALUATION_POLICY_V1: EvaluationPolicy = {
       minCompositeScore: 0.65,
       minConfidence: 0.55,
       minTestPassRate: 0.95,
-      minReplayPassRate: 0.70,
+      minReplayPassRate: 0.7,
       minCoveragePercent: 65,
       maxAllowedStaticWarnings: 10,
       requireZeroStaticErrors: true,
@@ -351,7 +353,7 @@ export const PERMISSIVE_EVALUATION_POLICY_V1: EvaluationPolicy = {
       minCompositeScore: 0.75,
       minConfidence: 0.65,
       minTestPassRate: 1.0,
-      minReplayPassRate: 0.80,
+      minReplayPassRate: 0.8,
       minCoveragePercent: 75,
       maxAllowedStaticWarnings: 5,
       requireZeroStaticErrors: true,
@@ -361,7 +363,7 @@ export const PERMISSIVE_EVALUATION_POLICY_V1: EvaluationPolicy = {
       minCompositeScore: 0.85,
       minConfidence: 0.75,
       minTestPassRate: 1.0,
-      minReplayPassRate: 0.90,
+      minReplayPassRate: 0.9,
       minCoveragePercent: 85,
       maxAllowedStaticWarnings: 2,
       requireZeroStaticErrors: true,
@@ -372,7 +374,7 @@ export const PERMISSIVE_EVALUATION_POLICY_V1: EvaluationPolicy = {
     correctness: 0.35,
     replayCoverage: 0.15,
     securityPolicyFit: 0.15,
-    reliability: 0.10,
+    reliability: 0.1,
     latencyResources: 0.05,
     tokenSavings: 0.05,
     timeSavings: 0.05,
@@ -419,7 +421,8 @@ export const SHADOW_CALIBRATION_POLICY_V1: EvaluationPolicy = {
   policyId: "shadow-calibration-policy",
   version: "1.0.0",
   name: "Shadow Calibration Policy v1",
-  description: "Candidate calibration policy testing prospective threshold elevations in shadow mode.",
+  description:
+    "Candidate calibration policy testing prospective threshold elevations in shadow mode.",
   riskTierThresholds: {
     read_only: {
       minCompositeScore: 0.75,
@@ -435,14 +438,14 @@ export const SHADOW_CALIBRATION_POLICY_V1: EvaluationPolicy = {
       minCompositeScore: 0.85,
       minConfidence: 0.75,
       minTestPassRate: 1.0,
-      minReplayPassRate: 0.90,
+      minReplayPassRate: 0.9,
       minCoveragePercent: 85,
       maxAllowedStaticWarnings: 2,
       requireZeroStaticErrors: true,
       minReplayScenarioCount: 2,
     },
     network_client: {
-      minCompositeScore: 0.90,
+      minCompositeScore: 0.9,
       minConfidence: 0.85,
       minTestPassRate: 1.0,
       minReplayPassRate: 0.95,

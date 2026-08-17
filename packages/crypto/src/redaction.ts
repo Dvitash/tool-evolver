@@ -28,12 +28,14 @@ const STANDARD_SECRET_PATTERNS: Array<{ pattern: RegExp; description: string }> 
   },
   // Generic API Keys, tokens, passwords, and secrets in JSON/YAML/env key-value contexts
   {
-    pattern: /(?:['"]?(?:api[_-]?key|secret|token|password|auth[_-]?token|access[_-]?token|private[_-]?key)['"]?\s*[:=]\s*['"]?)([^'"\s,;}{]+)(?:['"]?)/gi,
+    pattern:
+      /(?:['"]?(?:api[_-]?key|secret|token|password|auth[_-]?token|access[_-]?token|private[_-]?key)['"]?\s*[:=]\s*['"]?)([^'"\s,;}{]+)(?:['"]?)/gi,
     description: "Generic API key or secret",
   },
   // PEM Private Keys
   {
-    pattern: /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/g,
+    pattern:
+      /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/g,
     description: "PEM Private Key",
   },
   // JSON Web Tokens (JWT)
@@ -238,7 +240,7 @@ export class SecretRedactor {
 
     // 1. Redact known exact secrets and encodings, sorted by length descending to match longest first
     const sortedEntries = Array.from(this.literalReplacements.entries()).sort(
-      (a, b) => b[0].length - a[0].length
+      (a, b) => b[0].length - a[0].length,
     );
 
     for (const [secretStr, mask] of sortedEntries) {
@@ -252,13 +254,13 @@ export class SecretRedactor {
       // Bearer tokens
       result = result.replaceAll(
         /\bBearer\s+([A-Za-z0-9_\-\.]{16,})\b/gi,
-        "Bearer [REDACTED_BEARER_TOKEN]"
+        "Bearer [REDACTED_BEARER_TOKEN]",
       );
 
       // GitHub tokens
       result = result.replaceAll(
         /\b(gh[pousr]_[A-Za-z0-9_]{36,255})\b/g,
-        "[REDACTED_GITHUB_TOKEN]"
+        "[REDACTED_GITHUB_TOKEN]",
       );
 
       // AWS Access Key ID
@@ -267,7 +269,7 @@ export class SecretRedactor {
       // AWS Secret Access Key in key-value pairs
       result = result.replaceAll(
         /((?:aws_secret_access_key|aws_secret_key)\s*[:=]\s*['"]?)([A-Za-z0-9/+=]{40})(['"]?)/gi,
-        "$1[REDACTED_AWS_SECRET_KEY]$3"
+        "$1[REDACTED_AWS_SECRET_KEY]$3",
       );
 
       // Generic credentials in key-value format: e.g. api_key="secret123" -> api_key="[REDACTED]"
@@ -278,13 +280,13 @@ export class SecretRedactor {
             return match;
           }
           return `${prefix}[REDACTED]${suffix}`;
-        }
+        },
       );
 
       // PEM Private Keys
       result = result.replaceAll(
         /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/g,
-        "[REDACTED_PRIVATE_KEY]"
+        "[REDACTED_PRIVATE_KEY]",
       );
     }
 
@@ -313,7 +315,7 @@ export class SecretRedactor {
 
     if (obj instanceof Error) {
       const sanitizedError = new (obj.constructor as new (msg: string) => Error)(
-        this.redact(obj.message)
+        this.redact(obj.message),
       );
       sanitizedError.name = obj.name;
       if (obj.stack) {

@@ -1,10 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import {
-  DigestMismatchError,
-  MemoryObjectStore,
-  ObjectStore,
-} from "../src/storage/index.js";
+import { DigestMismatchError, MemoryObjectStore, type ObjectStore } from "../src/storage/index.js";
 
 describe("Content-Addressed Object Store", () => {
   it("should store and retrieve objects with valid SHA-256 digest", async () => {

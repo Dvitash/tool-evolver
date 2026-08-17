@@ -110,7 +110,8 @@ describe("StructuredLogger", () => {
       userPassword: "PlainPassword99",
       sessionSecret: "super-secret-key-material",
       nested: {
-        privateKey: "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0...\n-----END RSA PRIVATE KEY-----",
+        privateKey:
+          "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0...\n-----END RSA PRIVATE KEY-----",
         safeValue: "public-metadata",
       },
     });

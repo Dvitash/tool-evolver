@@ -1,18 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
-  canonicalJson,
   type CapabilityManifest,
   type ToolManifest,
   ToolManifestSchema,
   type ToolRuntimeRequirement,
+  canonicalJson,
 } from "@tool-evolver/contracts";
 import { computeSha256, parseTarArchive } from "../bundle/builder.js";
 import {
   type BundleSignatureData,
-  createDevelopmentKeyStore,
   type KeyStore,
   type SignatureVerificationResult,
+  createDevelopmentKeyStore,
   verifyBundleSignature,
 } from "../bundle/signature.js";
 import {
@@ -56,9 +56,10 @@ export async function inspectBundleArchive(
   archiveBufferOrPath: Buffer | string,
   options: InspectBundleOptions = {},
 ): Promise<BundleInspectionResult> {
-  const archiveBuffer = typeof archiveBufferOrPath === "string"
-    ? await fs.promises.readFile(archiveBufferOrPath)
-    : archiveBufferOrPath;
+  const archiveBuffer =
+    typeof archiveBufferOrPath === "string"
+      ? await fs.promises.readFile(archiveBufferOrPath)
+      : archiveBufferOrPath;
 
   const bundleDigest = computeSha256(archiveBuffer);
   const rawEntries = parseTarArchive(archiveBuffer);
@@ -284,14 +285,18 @@ export function formatInspectionSummary(result: BundleInspectionResult): string 
 
   if (result.signature) {
     const status = result.signatureVerification?.valid ? "VALID" : "INVALID / UNVERIFIED";
-    lines.push(`Signature: ${status} (Key: ${result.signature.keyId}, Algorithm: ${result.signature.algorithm})`);
+    lines.push(
+      `Signature: ${status} (Key: ${result.signature.keyId}, Algorithm: ${result.signature.algorithm})`,
+    );
   } else {
     lines.push("Signature: None (unsigned)");
   }
 
   lines.push("Files:");
   for (const file of result.files) {
-    lines.push(`  - ${file.path} (${file.sizeBytes} bytes, digest: ${file.digest.slice(0, 12)}...)`);
+    lines.push(
+      `  - ${file.path} (${file.sizeBytes} bytes, digest: ${file.digest.slice(0, 12)}...)`,
+    );
   }
 
   return lines.join("\n");
@@ -325,7 +330,9 @@ export async function cliInspect(argv: string[]): Promise<number> {
     }
     return 0;
   } catch (err) {
-    process.stderr.write(`Inspection failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(
+      `Inspection failed: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
     return 1;
   }
 }

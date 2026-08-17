@@ -50,7 +50,8 @@ describe("Fixture Sanitization Engine", () => {
     });
 
     it("detects JWT tokens", () => {
-      const text = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgN_mock_signature_part_here";
+      const text =
+        "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgN_mock_signature_part_here";
       const findings = scanForSensitiveData(text);
       expect(findings.some((f) => f.rule === "jwt_token" || f.rule === "bearer_token")).toBe(true);
 
@@ -137,10 +138,7 @@ MIIEowIBAAKCAQEA0mockKeyContentHere1234567890abcdef
           homeDir: "/Users/dev_user/project",
           apiKey: "sk-proj-1234567890abcdef1234567890abcdef",
         },
-        logs: [
-          "Connect to 192.168.0.50",
-          "Token ghp_1234567890abcdef1234567890abcdef12 provided",
-        ],
+        logs: ["Connect to 192.168.0.50", "Token ghp_1234567890abcdef1234567890abcdef12 provided"],
       };
 
       const cleaned = sanitizeFixture(fixture, { normalizeUserPaths: true });

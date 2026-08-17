@@ -1,43 +1,38 @@
-import { createServer, IncomingMessage, Server, ServerResponse } from "node:http";
-import { AddressInfo, Socket } from "node:net";
 import { randomUUID } from "node:crypto";
-import { CloudConfig, loadConfig } from "../config.js";
-import { DatabasePool, createDatabasePool } from "../db/client.js";
-import { OutboxPublisher, OutboxRepository } from "../db/outbox.js";
-import { DurableQueue, createDurableQueue } from "../queue/queue.js";
-import { createJobEnvelope } from "../queue/envelope.js";
-import { ObjectStore, createObjectStore } from "../storage/object-store.js";
+import { type IncomingMessage, type Server, type ServerResponse, createServer } from "node:http";
+import type { AddressInfo, Socket } from "node:net";
 import {
-  TenantContext,
-  TenantGuard,
-  getTenantContext,
-  runWithTenant,
-} from "../tenant.js";
+  type AnalyticsService,
+  createAnalyticsService,
+  handleTelemetryBatchRoute,
+} from "../analytics/index.js";
 import {
-  AuthContext,
-  AuthService,
+  type AuthContext,
+  type AuthService,
   TokenError,
   authenticateHttpRequest,
   authenticateWebSocket,
   createAuthService,
   handleAuthRoutes,
 } from "../auth/index.js";
+import { type CloudConfig, loadConfig } from "../config.js";
+import { type DatabasePool, createDatabasePool } from "../db/client.js";
+import { OutboxPublisher, OutboxRepository } from "../db/outbox.js";
 import {
-  ObservationIngestionService,
+  type ObservationIngestionService,
   createObservationIngestionService,
   handleObservationBatchRoute,
 } from "../ingestion/index.js";
 import {
-  CloudCatalogService,
+  type CloudCatalogService,
+  type CloudMcpServer,
   createCloudCatalogService,
-  CloudMcpServer,
   createCloudMcpServer,
 } from "../mcp/index.js";
-import {
-  AnalyticsService,
-  createAnalyticsService,
-  handleTelemetryBatchRoute,
-} from "../analytics/index.js";
+import { createJobEnvelope } from "../queue/envelope.js";
+import { type DurableQueue, createDurableQueue } from "../queue/queue.js";
+import { type ObjectStore, createObjectStore } from "../storage/object-store.js";
+import { type TenantContext, TenantGuard, getTenantContext, runWithTenant } from "../tenant.js";
 
 /**
  * Health check status response.
@@ -116,9 +111,7 @@ export class CloudServer {
       createCloudMcpServer({
         catalogService: this.catalogService,
       });
-    this.analyticsService =
-      options.analyticsService ??
-      createAnalyticsService(this.dbPool);
+    this.analyticsService = options.analyticsService ?? createAnalyticsService(this.dbPool);
   }
 
   getDbPool(): DatabasePool {
@@ -257,7 +250,12 @@ export class CloudServer {
     return promise;
   }
 
-  private sendJson(res: ServerResponse, statusCode: number, data: unknown, headers: Record<string, string> = {}): void {
+  private sendJson(
+    res: ServerResponse,
+    statusCode: number,
+    data: unknown,
+    headers: Record<string, string> = {},
+  ): void {
     res.writeHead(statusCode, {
       "Content-Type": "application/json",
       ...headers,
@@ -274,7 +272,8 @@ export class CloudServer {
       "x-trace-id": traceId,
       "x-request-id": requestId,
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization, x-account-id, x-workspace-id, x-trace-id, x-request-id",
+      "Access-Control-Allow-Headers":
+        "Content-Type, Authorization, x-account-id, x-workspace-id, x-trace-id, x-request-id",
       "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     };
 
@@ -424,7 +423,12 @@ export class CloudServer {
       return;
     }
 
-    this.sendJson(res, 404, { error: "NOT_FOUND", message: `Route ${path} not found` }, standardHeaders);
+    this.sendJson(
+      res,
+      404,
+      { error: "NOT_FOUND", message: `Route ${path} not found` },
+      standardHeaders,
+    );
   }
 
   private async routeV1(
@@ -490,7 +494,9 @@ export class CloudServer {
     // Accounts
     if (path === "/v1/accounts") {
       if (req.method === "GET") {
-        const result = await this.dbPool.query("SELECT * FROM accounts WHERE id = $1", [tenant.accountId]);
+        const result = await this.dbPool.query("SELECT * FROM accounts WHERE id = $1", [
+          tenant.accountId,
+        ]);
         this.sendJson(res, 200, { accounts: result.rows }, headers);
         return;
       }
@@ -511,10 +517,9 @@ export class CloudServer {
     // Workspaces
     if (path === "/v1/workspaces") {
       if (req.method === "GET") {
-        const result = await this.dbPool.query(
-          "SELECT * FROM workspaces WHERE account_id = $1",
-          [tenant.accountId],
-        );
+        const result = await this.dbPool.query("SELECT * FROM workspaces WHERE account_id = $1", [
+          tenant.accountId,
+        ]);
         this.sendJson(res, 200, { workspaces: result.rows }, headers);
         return;
       }
@@ -527,7 +532,12 @@ export class CloudServer {
           "INSERT INTO workspaces (id, account_id, name, slug, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)",
           [id, tenant.accountId, name, slug, new Date().toISOString(), new Date().toISOString()],
         );
-        this.sendJson(res, 201, { workspace: { id, accountId: tenant.accountId, name, slug } }, headers);
+        this.sendJson(
+          res,
+          201,
+          { workspace: { id, accountId: tenant.accountId, name, slug } },
+          headers,
+        );
         return;
       }
     }
@@ -549,9 +559,31 @@ export class CloudServer {
         const platform = (body.platform as string) || "darwin-arm64";
         await this.dbPool.query(
           "INSERT INTO devices (id, account_id, workspace_id, name, platform, status, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-          [id, tenant.accountId, tenant.workspaceId, name, platform, "registered", new Date().toISOString(), new Date().toISOString()],
+          [
+            id,
+            tenant.accountId,
+            tenant.workspaceId,
+            name,
+            platform,
+            "registered",
+            new Date().toISOString(),
+            new Date().toISOString(),
+          ],
         );
-        this.sendJson(res, 201, { device: { id, accountId: tenant.accountId, workspaceId: tenant.workspaceId, name, platform } }, headers);
+        this.sendJson(
+          res,
+          201,
+          {
+            device: {
+              id,
+              accountId: tenant.accountId,
+              workspaceId: tenant.workspaceId,
+              name,
+              platform,
+            },
+          },
+          headers,
+        );
         return;
       }
     }
@@ -583,7 +615,9 @@ export class CloudServer {
     if (path === "/v1/jobs/dead-letter") {
       if (req.method === "GET") {
         const dlqJobs = await this.queue.getDeadLetterJobs();
-        const filtered = dlqJobs.filter((j) => j.accountId === tenant.accountId && j.workspaceId === tenant.workspaceId);
+        const filtered = dlqJobs.filter(
+          (j) => j.accountId === tenant.accountId && j.workspaceId === tenant.workspaceId,
+        );
         this.sendJson(res, 200, { deadLetterJobs: filtered }, headers);
         return;
       }
@@ -610,9 +644,12 @@ export class CloudServer {
 
       const scopedKey = `${tenant.accountId}/${tenant.workspaceId}/${key}`;
 
-      const presigned = method === "PUT"
-        ? await this.objectStore.createPresignedPutUrl(scopedKey, ttl, { contentType: body.contentType as string })
-        : await this.objectStore.createPresignedGetUrl(scopedKey, ttl);
+      const presigned =
+        method === "PUT"
+          ? await this.objectStore.createPresignedPutUrl(scopedKey, ttl, {
+              contentType: body.contentType as string,
+            })
+          : await this.objectStore.createPresignedGetUrl(scopedKey, ttl);
 
       this.sendJson(res, 200, presigned, headers);
       return;
@@ -634,7 +671,12 @@ export class CloudServer {
           res.end(buffer);
           return;
         } catch {
-          this.sendJson(res, 404, { error: "NOT_FOUND", message: `Object '${rawKey}' not found` }, headers);
+          this.sendJson(
+            res,
+            404,
+            { error: "NOT_FOUND", message: `Object '${rawKey}' not found` },
+            headers,
+          );
           return;
         }
       }
@@ -661,7 +703,9 @@ export class CloudServer {
     if (path === "/v1/outbox") {
       if (req.method === "GET") {
         const records = await OutboxRepository.fetchPending(this.dbPool);
-        const scoped = records.filter((r) => r.accountId === tenant.accountId && r.workspaceId === tenant.workspaceId);
+        const scoped = records.filter(
+          (r) => r.accountId === tenant.accountId && r.workspaceId === tenant.workspaceId,
+        );
         this.sendJson(res, 200, { outbox: scoped }, headers);
         return;
       }
@@ -686,7 +730,12 @@ export class CloudServer {
       return;
     }
 
-    this.sendJson(res, 404, { error: "NOT_FOUND", message: `V1 endpoint '${path}' not found` }, headers);
+    this.sendJson(
+      res,
+      404,
+      { error: "NOT_FOUND", message: `V1 endpoint '${path}' not found` },
+      headers,
+    );
   }
 }
 

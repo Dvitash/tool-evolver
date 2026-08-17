@@ -183,7 +183,9 @@ export class CodexSessionDecoder {
   /**
    * Decodes an entire transcript or batch of lines into NormalizedSessionEvents.
    */
-  decodeTranscript(transcript: string | Array<string | Record<string, unknown>>): NormalizedSessionEvent[] {
+  decodeTranscript(
+    transcript: string | Array<string | Record<string, unknown>>,
+  ): NormalizedSessionEvent[] {
     const events: NormalizedSessionEvent[] = [];
 
     if (typeof transcript === "string") {
@@ -221,8 +223,7 @@ export class CodexSessionDecoder {
       rawType === "session_resume" ||
       rawType === "session_crash"
     ) {
-      const lifecycleType = (
-        p.lifecycleType ||
+      const lifecycleType = (p.lifecycleType ||
         (rawType === "session_start"
           ? "start"
           : rawType === "session_end"
@@ -233,15 +234,19 @@ export class CodexSessionDecoder {
                 ? "resume"
                 : rawType === "session_crash"
                   ? "crash"
-                  : "start")
-      ) as "start" | "pause" | "resume" | "end" | "crash";
+                  : "start")) as "start" | "pause" | "resume" | "end" | "crash";
 
       const header = this.nextHeader(timestamp, rawEventId);
       const evt: NormalizedSessionLifecycleEvent = {
         ...header,
         type: "session_lifecycle",
         lifecycleType,
-        exitReason: typeof p.exitReason === "string" ? p.exitReason : typeof p.reason === "string" ? p.reason : undefined,
+        exitReason:
+          typeof p.exitReason === "string"
+            ? p.exitReason
+            : typeof p.reason === "string"
+              ? p.reason
+              : undefined,
         harnessName: typeof p.harnessName === "string" ? p.harnessName : "codex-cli",
         workspaceId: typeof p.workspaceId === "string" ? p.workspaceId : this.workspaceId,
       };
@@ -289,9 +294,7 @@ export class CodexSessionDecoder {
         content = p.text;
       } else if (Array.isArray(p.content)) {
         contentParts = p.content as MessageContentPart[];
-        content = (p.content as Array<{ text?: string }>)
-          .map((part) => part.text ?? "")
-          .join("\n");
+        content = (p.content as Array<{ text?: string }>).map((part) => part.text ?? "").join("\n");
       } else if (typeof p.message === "object" && p.message !== null) {
         const msg = p.message as Record<string, unknown>;
         content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg);
@@ -334,9 +337,7 @@ export class CodexSessionDecoder {
         content = p.text;
       } else if (Array.isArray(p.content)) {
         contentParts = p.content as MessageContentPart[];
-        content = (p.content as Array<{ text?: string }>)
-          .map((part) => part.text ?? "")
-          .join("\n");
+        content = (p.content as Array<{ text?: string }>).map((part) => part.text ?? "").join("\n");
       } else if (typeof p.message === "object" && p.message !== null) {
         const msg = p.message as Record<string, unknown>;
         content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg);
@@ -364,9 +365,9 @@ export class CodexSessionDecoder {
       if (toolCalls && toolCalls.length > 0) {
         for (const tc of toolCalls as Array<Record<string, unknown>>) {
           const callId = String(tc.id || tc.call_id || generateEventId("call"));
-          const fn = (typeof tc.function === "object" && tc.function !== null
-            ? tc.function
-            : tc) as Record<string, unknown>;
+          const fn = (
+            typeof tc.function === "object" && tc.function !== null ? tc.function : tc
+          ) as Record<string, unknown>;
           const toolName = String(fn.name || fn.tool_name || tc.name || "unknown_tool");
           const params = parseParameters(fn.arguments || tc.parameters || tc.input);
 
@@ -440,13 +441,16 @@ export class CodexSessionDecoder {
       rawType === "mcp_result" ||
       rawType === "tool"
     ) {
-      const callId = String(p.callId || p.call_id || p.tool_call_id || p.id || generateEventId("call"));
+      const callId = String(
+        p.callId || p.call_id || p.tool_call_id || p.id || generateEventId("call"),
+      );
       const cached = this.callMap.get(callId);
       const toolName = String(
         p.toolName || p.tool_name || p.name || cached?.toolName || "unknown_tool",
       );
 
-      const result = p.result !== undefined ? p.result : p.output !== undefined ? p.output : p.content;
+      const result =
+        p.result !== undefined ? p.result : p.output !== undefined ? p.output : p.content;
       const isError = Boolean(p.isError || p.is_error || p.error);
       const durationMs =
         typeof p.executionDurationMs === "number"
@@ -487,8 +491,18 @@ export class CodexSessionDecoder {
     ) {
       const command = String(p.command || p.cmd || "");
       const args = Array.isArray(p.args) ? (p.args as string[]) : [];
-      const exitCode = typeof p.exitCode === "number" ? p.exitCode : typeof p.exit_code === "number" ? p.exit_code : 0;
-      const stdout = typeof p.stdout === "string" ? p.stdout : typeof p.output === "string" ? p.output : undefined;
+      const exitCode =
+        typeof p.exitCode === "number"
+          ? p.exitCode
+          : typeof p.exit_code === "number"
+            ? p.exit_code
+            : 0;
+      const stdout =
+        typeof p.stdout === "string"
+          ? p.stdout
+          : typeof p.output === "string"
+            ? p.output
+            : undefined;
       const stderr = typeof p.stderr === "string" ? p.stderr : undefined;
       const durationMs =
         typeof p.durationMs === "number"
@@ -503,7 +517,12 @@ export class CodexSessionDecoder {
         type: "command_exec",
         command,
         args,
-        cwd: typeof p.cwd === "string" ? p.cwd : typeof p.workingDirectory === "string" ? p.workingDirectory : undefined,
+        cwd:
+          typeof p.cwd === "string"
+            ? p.cwd
+            : typeof p.workingDirectory === "string"
+              ? p.workingDirectory
+              : undefined,
         exitCode,
         stdout,
         stderr,
@@ -520,24 +539,29 @@ export class CodexSessionDecoder {
       rawType === "write_file"
     ) {
       const filePath = String(p.filePath || p.file_path || p.path || "unknown_file");
-      const operation = (
-        p.operation ||
+      const operation = (p.operation ||
         p.action ||
-        (rawType === "write_file" ? "create" : "update")
-      ) as "create" | "update" | "delete" | "patch";
+        (rawType === "write_file" ? "create" : "update")) as
+        | "create"
+        | "update"
+        | "delete"
+        | "patch";
 
       const header = this.nextHeader(timestamp, rawEventId);
       const evt: NormalizedFileEditEvent = {
         ...header,
         type: "file_edit",
         filePath,
-        operation: ["create", "update", "delete", "patch"].includes(operation) ? operation : "update",
+        operation: ["create", "update", "delete", "patch"].includes(operation)
+          ? operation
+          : "update",
         patch: typeof p.patch === "string" ? p.patch : undefined,
         beforeHash: typeof p.beforeHash === "string" ? p.beforeHash : undefined,
         afterHash: typeof p.afterHash === "string" ? p.afterHash : undefined,
-        diffStats: (typeof p.diffStats === "object" && p.diffStats !== null
-          ? (p.diffStats as FileDiffStats)
-          : undefined),
+        diffStats:
+          typeof p.diffStats === "object" && p.diffStats !== null
+            ? (p.diffStats as FileDiffStats)
+            : undefined,
       };
       return [evt];
     }
@@ -548,11 +572,11 @@ export class CodexSessionDecoder {
       rawType === "context_compaction" ||
       rawType === "truncate_context"
     ) {
-      const triggerReason = (
-        p.triggerReason ||
-        p.trigger_reason ||
-        "context_limit"
-      ) as "context_limit" | "manual" | "scheduled" | "turn_threshold";
+      const triggerReason = (p.triggerReason || p.trigger_reason || "context_limit") as
+        | "context_limit"
+        | "manual"
+        | "scheduled"
+        | "turn_threshold";
 
       const tokensBefore =
         typeof p.tokensBefore === "number"
@@ -572,7 +596,9 @@ export class CodexSessionDecoder {
       const evt: NormalizedCompactionEvent = {
         ...header,
         type: "compaction",
-        triggerReason: ["context_limit", "manual", "scheduled", "turn_threshold"].includes(triggerReason)
+        triggerReason: ["context_limit", "manual", "scheduled", "turn_threshold"].includes(
+          triggerReason,
+        )
           ? triggerReason
           : "context_limit",
         tokensBefore,
@@ -593,7 +619,11 @@ export class CodexSessionDecoder {
         p.sourceSessionId || p.source_session_id || p.parentSessionId || this.sessionId,
       );
       const branchPointEventId = String(
-        p.branchPointEventId || p.branch_point_event_id || p.forkPoint || p.branchPoint || "evt_root",
+        p.branchPointEventId ||
+          p.branch_point_event_id ||
+          p.forkPoint ||
+          p.branchPoint ||
+          "evt_root",
       );
 
       const header = this.nextHeader(timestamp, rawEventId);
@@ -615,24 +645,26 @@ export class CodexSessionDecoder {
       rawType === "subagent_start" ||
       rawType === "subagent_terminate"
     ) {
-      const subagentId = String(p.subagentId || p.subagent_id || p.agentId || generateEventId("sub"));
-      const lifecycleType = (
-        p.lifecycleType ||
+      const subagentId = String(
+        p.subagentId || p.subagent_id || p.agentId || generateEventId("sub"),
+      );
+      const lifecycleType = (p.lifecycleType ||
         (rawType === "subagent_spawn"
           ? "spawn"
           : rawType === "subagent_start"
             ? "start"
             : rawType === "subagent_terminate"
               ? "terminate"
-              : "spawn")
-      ) as "spawn" | "start" | "pause" | "resume" | "terminate" | "settle";
+              : "spawn")) as "spawn" | "start" | "pause" | "resume" | "terminate" | "settle";
 
       const header = this.nextHeader(timestamp, rawEventId);
       const evt: NormalizedSubagentLifecycleEvent = {
         ...header,
         type: "subagent_lifecycle",
         subagentId,
-        lifecycleType: ["spawn", "start", "pause", "resume", "terminate", "settle"].includes(lifecycleType)
+        lifecycleType: ["spawn", "start", "pause", "resume", "terminate", "settle"].includes(
+          lifecycleType,
+        )
           ? lifecycleType
           : "spawn",
         parentId: typeof p.parentId === "string" ? p.parentId : this.sessionId,
@@ -659,11 +691,11 @@ export class CodexSessionDecoder {
     // 13. Error Event
     if (rawType === "error" || (p.error && typeof p.error === "object")) {
       const errorObj =
-        typeof p.error === "object" && p.error !== null
-          ? (p.error as Record<string, unknown>)
-          : p;
+        typeof p.error === "object" && p.error !== null ? (p.error as Record<string, unknown>) : p;
 
-      const errorType = String(errorObj.errorType || errorObj.type || errorObj.name || "RuntimeError");
+      const errorType = String(
+        errorObj.errorType || errorObj.type || errorObj.name || "RuntimeError",
+      );
       const message = String(errorObj.message || errorObj.msg || "Unknown error occurred");
       const stack = typeof errorObj.stack === "string" ? errorObj.stack : undefined;
       const recoverable = Boolean(errorObj.recoverable ?? false);
@@ -676,9 +708,10 @@ export class CodexSessionDecoder {
         message,
         stack,
         recoverable,
-        details: typeof errorObj.details === "object" && errorObj.details !== null
-          ? (errorObj.details as Record<string, unknown>)
-          : undefined,
+        details:
+          typeof errorObj.details === "object" && errorObj.details !== null
+            ? (errorObj.details as Record<string, unknown>)
+            : undefined,
       };
       return [evt];
     }

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { EpisodeSegmenter } from "../../../src/evolution/opportunity/episode.js";
 import {
+  SignatureExtractor,
   classifyToolOrCommand,
   normalizePathAlias,
-  SignatureExtractor,
 } from "../../../src/evolution/opportunity/signature.js";
 import {
   createCommandExecEvent,
@@ -41,18 +41,46 @@ describe("SignatureExtractor", () => {
 
     // Workflow A: read source file, edit source file, run vitest
     const eventsA = [
-      createToolCallEvent({ eventId: "a1", sessionId: "sess-a", toolName: "read_file", parameters: { path: "src/auth/service.ts" } }),
-      createToolResultEvent({ eventId: "a2", sessionId: "sess-a", toolCallId: "a1", result: "..." }),
+      createToolCallEvent({
+        eventId: "a1",
+        sessionId: "sess-a",
+        toolName: "read_file",
+        parameters: { path: "src/auth/service.ts" },
+      }),
+      createToolResultEvent({
+        eventId: "a2",
+        sessionId: "sess-a",
+        toolCallId: "a1",
+        result: "...",
+      }),
       createFileEditEvent({ eventId: "a3", sessionId: "sess-a", filePath: "src/auth/service.ts" }),
-      createCommandExecEvent({ eventId: "a4", sessionId: "sess-a", command: "vitest run tests/auth.test.ts" }),
+      createCommandExecEvent({
+        eventId: "a4",
+        sessionId: "sess-a",
+        command: "vitest run tests/auth.test.ts",
+      }),
     ];
 
     // Workflow B: read another source file, edit another source file, run vitest (different session & concrete paths)
     const eventsB = [
-      createToolCallEvent({ eventId: "b1", sessionId: "sess-b", toolName: "read_file", parameters: { path: "src/storage/store.ts" } }),
-      createToolResultEvent({ eventId: "b2", sessionId: "sess-b", toolCallId: "b1", result: "..." }),
+      createToolCallEvent({
+        eventId: "b1",
+        sessionId: "sess-b",
+        toolName: "read_file",
+        parameters: { path: "src/storage/store.ts" },
+      }),
+      createToolResultEvent({
+        eventId: "b2",
+        sessionId: "sess-b",
+        toolCallId: "b1",
+        result: "...",
+      }),
       createFileEditEvent({ eventId: "b3", sessionId: "sess-b", filePath: "src/storage/store.ts" }),
-      createCommandExecEvent({ eventId: "b4", sessionId: "sess-b", command: "vitest run tests/storage.test.ts" }),
+      createCommandExecEvent({
+        eventId: "b4",
+        sessionId: "sess-b",
+        command: "vitest run tests/storage.test.ts",
+      }),
     ];
 
     const [epA] = segmenter.segmentEvents(eventsA);

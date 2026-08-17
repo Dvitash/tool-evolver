@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { CapabilityEnvelope, hashCanonical } from "@tool-evolver/contracts";
+import { type CapabilityEnvelope, hashCanonical } from "@tool-evolver/contracts";
 import { DeterministicSelfReviewer } from "./self-reviewer.js";
-import {
+import type {
   CandidateGenerationOptions,
   CandidateRevision,
   GeneratedArtifactSet,
@@ -33,7 +33,7 @@ export class RepairOrchestrator {
   orchestrate(
     initialArtifacts: GeneratedArtifactSet,
     candidateId: string,
-    options: CandidateGenerationOptions = {}
+    options: CandidateGenerationOptions = {},
   ): RepairOrchestrationResult {
     const maxIterations = options.maxRepairIterations ?? 3;
     const envelope = options.envelope;
@@ -78,7 +78,7 @@ export class RepairOrchestrator {
       const { repairedArtifacts, fixedIssues } = this.applyDeterministicRepairs(
         currentArtifacts,
         errorIssues,
-        envelope
+        envelope,
       );
 
       currentArtifacts = {
@@ -127,11 +127,11 @@ export class RepairOrchestrator {
   private applyDeterministicRepairs(
     artifacts: GeneratedArtifactSet,
     errors: SelfReviewIssue[],
-    envelope?: CapabilityEnvelope
+    envelope?: CapabilityEnvelope,
   ): { repairedArtifacts: GeneratedArtifactSet; fixedIssues: string[] } {
     let sourceCode = artifacts.sourceCode;
     let capabilities = { ...artifacts.capabilities };
-    let plan = { ...artifacts.plan };
+    const plan = { ...artifacts.plan };
     let manifest = { ...artifacts.manifest };
     const fixedIssues: string[] = [];
 
@@ -146,7 +146,10 @@ export class RepairOrchestrator {
               allowWorkspaceRoot: true,
               allowTemp: true,
               readPaths: capabilities.fs.readPaths.length > 0 ? capabilities.fs.readPaths : ["."],
-              writePaths: error.message.includes("write") && capabilities.fs.writePaths.length === 0 ? ["."] : capabilities.fs.writePaths,
+              writePaths:
+                error.message.includes("write") && capabilities.fs.writePaths.length === 0
+                  ? ["."]
+                  : capabilities.fs.writePaths,
             },
           };
           fixedIssues.push("Granted required filesystem capabilities in manifest");
@@ -156,8 +159,14 @@ export class RepairOrchestrator {
             ...capabilities,
             command: {
               ...capabilities.command,
-              allowedBinaries: capabilities.command.allowedBinaries.length > 0 ? capabilities.command.allowedBinaries : ["git", "node", "pnpm", "npm"],
-              allowedCommands: capabilities.command.allowedCommands.length > 0 ? capabilities.command.allowedCommands : ["git status"],
+              allowedBinaries:
+                capabilities.command.allowedBinaries.length > 0
+                  ? capabilities.command.allowedBinaries
+                  : ["git", "node", "pnpm", "npm"],
+              allowedCommands:
+                capabilities.command.allowedCommands.length > 0
+                  ? capabilities.command.allowedCommands
+                  : ["git status"],
             },
           };
           fixedIssues.push("Declared allowed command binaries in capability manifest");
@@ -178,7 +187,10 @@ export class RepairOrchestrator {
             ...capabilities,
             secrets: {
               ...capabilities.secrets,
-              allowedSecretNames: capabilities.secrets.allowedSecretNames.length > 0 ? capabilities.secrets.allowedSecretNames : ["SECRET"],
+              allowedSecretNames:
+                capabilities.secrets.allowedSecretNames.length > 0
+                  ? capabilities.secrets.allowedSecretNames
+                  : ["SECRET"],
             },
           };
           fixedIssues.push("Added allowed secret names in capability manifest");
@@ -188,7 +200,10 @@ export class RepairOrchestrator {
       // 2. Repair illegal imports
       if (error.category === "imports") {
         // Remove direct imports of forbidden modules
-        sourceCode = sourceCode.replace(/import\s+.*?\s+from\s+["'](?:node:)?(?:fs|child_process|net|http|https|process)["'];?\n?/g, "");
+        sourceCode = sourceCode.replace(
+          /import\s+.*?\s+from\s+["'](?:node:)?(?:fs|child_process|net|http|https|process)["'];?\n?/g,
+          "",
+        );
         fixedIssues.push("Removed illegal native runtime import statement");
       }
 
@@ -209,7 +224,7 @@ ${body}
     throw new Error(\`Execution error: \${errorMessage}\`);
   }
 });`;
-            }
+            },
           );
           fixedIssues.push("Wrapped handler body in try/catch error handling block");
         }
@@ -218,7 +233,7 @@ ${body}
       // 4. Repair AST / defineTool wrapper
       if (error.category === "ast") {
         if (!sourceCode.includes("defineTool")) {
-          sourceCode = `import { defineTool, type ToolContext } from "@tool-evolver/runtime";\nimport { z } from "zod";\n\n` + sourceCode;
+          sourceCode = `import { defineTool, type ToolContext } from "@tool-evolver/runtime";\nimport { z } from "zod";\n\n${sourceCode}`;
           fixedIssues.push("Added defineTool and ToolContext SDK imports");
         }
       }

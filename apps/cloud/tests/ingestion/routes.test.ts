@@ -1,6 +1,6 @@
 import { gzipSync } from "node:zlib";
-import { NormalizedSessionEvent } from "@tool-evolver/contracts";
-import { ObservationBatchRequest, ObservationBatchResponse } from "@tool-evolver/protocol";
+import type { NormalizedSessionEvent } from "@tool-evolver/contracts";
+import type { ObservationBatchRequest, ObservationBatchResponse } from "@tool-evolver/protocol";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/config.js";
 import { MemoryDatabasePool, OutboxRepository, runMigrations } from "../../src/db/index.js";
@@ -117,10 +117,9 @@ describe("Observation Ingestion HTTP API (POST /v1/observations/batch)", () => {
       expect(body.cursorAck).toBe("seq-10");
 
       // Verify DB receipt
-      const receipts = await dbPool.query(
-        "SELECT * FROM ingestion_receipts WHERE batch_id = $1",
-        ["batch-http-100"],
-      );
+      const receipts = await dbPool.query("SELECT * FROM ingestion_receipts WHERE batch_id = $1", [
+        "batch-http-100",
+      ]);
       expect(receipts.rows.length).toBe(1);
 
       // Verify transactional outbox job
@@ -135,10 +134,13 @@ describe("Observation Ingestion HTTP API (POST /v1/observations/batch)", () => {
   it("should support gzip compressed batch body via Content-Encoding: gzip", async () => {
     const { baseUrl, stop } = await setupTestServer();
     try {
-      const jsonBuffer = Buffer.from(JSON.stringify({
-        ...validBatch,
-        batchId: "batch-gzip-1",
-      }), "utf8");
+      const jsonBuffer = Buffer.from(
+        JSON.stringify({
+          ...validBatch,
+          batchId: "batch-gzip-1",
+        }),
+        "utf8",
+      );
       const compressed = gzipSync(jsonBuffer);
 
       const res = await fetch(`${baseUrl}/v1/observations/batch`, {

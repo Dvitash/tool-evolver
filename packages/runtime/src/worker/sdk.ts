@@ -4,11 +4,16 @@ import type { WorkerMessageType } from "./protocol.js";
  * Brokered file system client interface.
  */
 export interface FsBrokerClient {
-  readFile(filePath: string, encoding?: "utf-8" | "base64" | "buffer"): Promise<string | Uint8Array>;
+  readFile(
+    filePath: string,
+    encoding?: "utf-8" | "base64" | "buffer",
+  ): Promise<string | Uint8Array>;
   writeFile(filePath: string, content: string | Uint8Array): Promise<void>;
   exists(filePath: string): Promise<boolean>;
   listDir(dirPath?: string): Promise<string[]>;
-  stat(targetPath: string): Promise<{ size: number; isFile: boolean; isDirectory: boolean; mtime: string }>;
+  stat(
+    targetPath: string,
+  ): Promise<{ size: number; isFile: boolean; isDirectory: boolean; mtime: string }>;
   removeFile(filePath: string): Promise<void>;
 }
 
@@ -38,7 +43,7 @@ export interface NetBrokerClient {
       method?: string;
       headers?: Record<string, string>;
       body?: string;
-    }
+    },
   ): Promise<BrokeredFetchResponse>;
 }
 
@@ -53,7 +58,7 @@ export interface CmdBrokerClient {
       cwd?: string;
       env?: Record<string, string>;
       timeoutMs?: number;
-    }
+    },
   ): Promise<{ exitCode: number; stdout: string; stderr: string }>;
 }
 
@@ -75,7 +80,7 @@ export interface ToolBrokerClient {
   request<T = unknown>(
     service: "fs" | "net" | "cmd" | "secret",
     action: string,
-    payload?: Record<string, unknown>
+    payload?: Record<string, unknown>,
   ): Promise<T>;
 }
 
@@ -109,14 +114,14 @@ export interface ToolContext<TInput = unknown> {
  * Tool entrypoint function signature.
  */
 export type ToolHandler<TInput = unknown, TOutput = unknown> = (
-  context: ToolContext<TInput>
+  context: ToolContext<TInput>,
 ) => Promise<TOutput> | TOutput;
 
 /**
  * Helper to define and type a tool execution handler.
  */
 export function defineTool<TInput = unknown, TOutput = unknown>(
-  handler: ToolHandler<TInput, TOutput>
+  handler: ToolHandler<TInput, TOutput>,
 ): ToolHandler<TInput, TOutput> {
   return handler;
 }
@@ -124,7 +129,7 @@ export function defineTool<TInput = unknown, TOutput = unknown>(
 export type BrokerRequestHandlerFn = (
   service: "fs" | "net" | "cmd" | "secret",
   action: string,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ) => Promise<unknown>;
 
 export interface ToolContextOptions<TInput = unknown> {
@@ -134,7 +139,11 @@ export interface ToolContextOptions<TInput = unknown> {
   scratchDir?: string;
   metadata?: Record<string, unknown>;
   onProgress?: (percentage: number, message?: string, stage?: string) => void | Promise<void>;
-  onLog?: (level: "debug" | "info" | "warn" | "error", message: string, data?: unknown) => void | Promise<void>;
+  onLog?: (
+    level: "debug" | "info" | "warn" | "error",
+    message: string,
+    data?: unknown,
+  ) => void | Promise<void>;
   brokerHandler: BrokerRequestHandlerFn;
 }
 
@@ -147,7 +156,7 @@ export class DefaultToolBrokerClient implements ToolBrokerClient {
   async request<T = unknown>(
     service: "fs" | "net" | "cmd" | "secret",
     action: string,
-    payload: Record<string, unknown> = {}
+    payload: Record<string, unknown> = {},
   ): Promise<T> {
     return (await this.handler(service, action, payload)) as T;
   }
@@ -170,8 +179,8 @@ export class DefaultToolBrokerClient implements ToolBrokerClient {
         typeof content === "string"
           ? content
           : typeof Buffer !== "undefined"
-          ? Buffer.from(content).toString("base64")
-          : btoa(String.fromCharCode(...content));
+            ? Buffer.from(content).toString("base64")
+            : btoa(String.fromCharCode(...content));
       const encoding = typeof content === "string" ? "utf-8" : "base64";
       await this.request("fs", "writeFile", { path: filePath, content: serialized, encoding });
     },
@@ -179,7 +188,7 @@ export class DefaultToolBrokerClient implements ToolBrokerClient {
       const res = await this.request<{ exists: boolean }>("fs", "exists", { path: filePath });
       return res.exists;
     },
-    listDir: async (dirPath: string = ".") => {
+    listDir: async (dirPath = ".") => {
       const res = await this.request<{ entries: string[] }>("fs", "listDir", { path: dirPath });
       return res.entries;
     },
@@ -197,7 +206,10 @@ export class DefaultToolBrokerClient implements ToolBrokerClient {
   };
 
   readonly net: NetBrokerClient = {
-    fetch: async (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => {
+    fetch: async (
+      url: string,
+      init?: { method?: string; headers?: Record<string, string>; body?: string },
+    ) => {
       const res = await this.request<{
         status: number;
         statusText: string;
@@ -216,12 +228,20 @@ export class DefaultToolBrokerClient implements ToolBrokerClient {
   };
 
   readonly cmd: CmdBrokerClient = {
-    exec: async (command: string, args: string[] = [], options: { cwd?: string; env?: Record<string, string>; timeoutMs?: number } = {}) => {
-      return await this.request<{ exitCode: number; stdout: string; stderr: string }>("cmd", "exec", {
-        command,
-        args,
-        ...options,
-      });
+    exec: async (
+      command: string,
+      args: string[] = [],
+      options: { cwd?: string; env?: Record<string, string>; timeoutMs?: number } = {},
+    ) => {
+      return await this.request<{ exitCode: number; stdout: string; stderr: string }>(
+        "cmd",
+        "exec",
+        {
+          command,
+          args,
+          ...options,
+        },
+      );
     },
   };
 
@@ -236,10 +256,16 @@ export class DefaultToolBrokerClient implements ToolBrokerClient {
 /**
  * Creates a fully functional ToolContext instance.
  */
-export function createToolContext<TInput = unknown>(options: ToolContextOptions<TInput>): ToolContext<TInput> {
+export function createToolContext<TInput = unknown>(
+  options: ToolContextOptions<TInput>,
+): ToolContext<TInput> {
   const brokerClient = new DefaultToolBrokerClient(options.brokerHandler);
 
-  const logFn = async (level: "debug" | "info" | "warn" | "error", message: string, data?: unknown) => {
+  const logFn = async (
+    level: "debug" | "info" | "warn" | "error",
+    message: string,
+    data?: unknown,
+  ) => {
     if (options.onLog) {
       await options.onLog(level, message, data);
     }

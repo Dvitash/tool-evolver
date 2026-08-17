@@ -221,7 +221,8 @@ describe("Telemetry Ingestion HTTP API (POST /v1/telemetry/batch)", () => {
             value: 120,
             tags: {
               toolId: "build_tool",
-              status: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.t-IDcSemACt8x4iTMCda8Yhe3iZaWbvV5XKSTbuAn0M",
+              status:
+                "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.t-IDcSemACt8x4iTMCda8Yhe3iZaWbvV5XKSTbuAn0M",
             },
             timestamp: "2026-08-17T12:00:00.000Z",
           },

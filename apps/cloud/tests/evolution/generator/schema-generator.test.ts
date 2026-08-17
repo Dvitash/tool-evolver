@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SchemaGenerator } from "../../../src/evolution/generator/schema-generator.js";
-import { VariableInputDefinition } from "../../../src/evolution/generator/types.js";
+import type { VariableInputDefinition } from "../../../src/evolution/generator/types.js";
 
 describe("SchemaGenerator", () => {
   const schemaGen = new SchemaGenerator();
@@ -8,8 +8,19 @@ describe("SchemaGenerator", () => {
   it("should derive MCP-compliant ToolParameterSchema with required and optional fields", () => {
     const inputs: VariableInputDefinition[] = [
       { name: "filePath", type: "string", description: "Target path", required: true },
-      { name: "count", type: "number", description: "Max count", required: false, defaultValue: 10 },
-      { name: "recursive", type: "boolean", description: "Recurse subdirectories", required: false },
+      {
+        name: "count",
+        type: "number",
+        description: "Max count",
+        required: false,
+        defaultValue: 10,
+      },
+      {
+        name: "recursive",
+        type: "boolean",
+        description: "Recurse subdirectories",
+        required: false,
+      },
       { name: "tags", type: "array", description: "Tags list", required: true },
     ];
 
@@ -44,14 +55,20 @@ describe("SchemaGenerator", () => {
   it("should generate valid Zod source code for parameter schema", () => {
     const paramSchema = schemaGen.deriveInputSchema([
       { name: "query", type: "string", description: "Search query", required: true },
-      { name: "limit", type: "number", description: "Max results", required: false, defaultValue: 50 },
+      {
+        name: "limit",
+        type: "number",
+        description: "Max results",
+        required: false,
+        defaultValue: 50,
+      },
     ]);
 
     const zodSource = schemaGen.generateZodSource(paramSchema);
 
     expect(zodSource).toContain("z.object(");
-    expect(zodSource).toContain("\"query\": z.string()");
-    expect(zodSource).toContain("\"limit\": z.number()");
+    expect(zodSource).toContain('"query": z.string()');
+    expect(zodSource).toContain('"limit": z.number()');
     expect(zodSource).toContain(".default(50)");
     expect(zodSource).toContain(".strict()");
   });
@@ -61,7 +78,7 @@ describe("SchemaGenerator", () => {
     const zodSource = schemaGen.generateOutputZodSource(outputSchema);
 
     expect(zodSource).toContain("z.object(");
-    expect(zodSource).toContain("\"success\": z.boolean()");
+    expect(zodSource).toContain('"success": z.boolean()');
     expect(zodSource).toContain(".strict()");
   });
 });

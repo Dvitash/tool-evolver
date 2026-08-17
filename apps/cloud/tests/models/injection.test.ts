@@ -32,7 +32,9 @@ describe("Prompt Injection Defense & System Instruction Integrity", () => {
     const recordedCall = fakeProvider.recordedCalls[0];
 
     // System instruction MUST remain the original trusted instruction
-    expect(recordedCall.systemInstruction).toContain("You are the Tool Evolver Opportunity Detection Engine");
+    expect(recordedCall.systemInstruction).toContain(
+      "You are the Tool Evolver Opportunity Detection Engine",
+    );
     expect(recordedCall.systemInstruction).not.toContain("hacked");
 
     // The user message contains the sanitized user input

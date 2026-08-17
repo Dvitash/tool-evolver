@@ -1,5 +1,5 @@
-import { ToolManifest } from "@tool-evolver/contracts";
-import { CoverageResult, CoverageStatus, WorkflowCluster } from "./types.js";
+import type { ToolManifest } from "@tool-evolver/contracts";
+import type { CoverageResult, CoverageStatus, WorkflowCluster } from "./types.js";
 
 /**
  * Calculates string similarity using Dice coefficient on bigrams.
@@ -87,13 +87,19 @@ export class CoverageEngine {
 
     if (bestMatch.similarity >= 0.9) {
       status = "duplicate";
-      suggestedActions.push(`Reject candidate: Identical to existing tool '${bestMatch.tool.name}'`);
+      suggestedActions.push(
+        `Reject candidate: Identical to existing tool '${bestMatch.tool.name}'`,
+      );
     } else if (bestMatch.similarity >= 0.75) {
       status = "covered";
-      suggestedActions.push(`Workflow is adequately handled by existing tool '${bestMatch.tool.name}'`);
+      suggestedActions.push(
+        `Workflow is adequately handled by existing tool '${bestMatch.tool.name}'`,
+      );
     } else {
       status = "update_candidate";
-      suggestedActions.push(`Propose updating existing tool '${bestMatch.tool.name}' with new parameters or capabilities`);
+      suggestedActions.push(
+        `Propose updating existing tool '${bestMatch.tool.name}' with new parameters or capabilities`,
+      );
     }
 
     return {
@@ -124,7 +130,11 @@ export class CoverageEngine {
     let matchingOpsCount = 0;
     for (const op of ops) {
       const cleanOp = op.replace(/^tool:|^command:|^edit:/, "").toLowerCase();
-      if (cleanOp.includes(toolNameNorm) || toolNameNorm.includes(cleanOp) || cleanOp.includes(toolIdNorm)) {
+      if (
+        cleanOp.includes(toolNameNorm) ||
+        toolNameNorm.includes(cleanOp) ||
+        cleanOp.includes(toolIdNorm)
+      ) {
         matchingOpsCount++;
       } else {
         const sim = computeStringSimilarity(cleanOp, toolNameNorm);
@@ -135,9 +145,12 @@ export class CoverageEngine {
 
     // 2. Check parameter overlap
     let paramOverlap = 0;
-    const toolParamKeys = tool.parameters && typeof tool.parameters === "object" && "properties" in tool.parameters
-      ? Object.keys((tool.parameters as { properties?: Record<string, unknown> }).properties ?? {})
-      : [];
+    const toolParamKeys =
+      tool.parameters && typeof tool.parameters === "object" && "properties" in tool.parameters
+        ? Object.keys(
+            (tool.parameters as { properties?: Record<string, unknown> }).properties ?? {},
+          )
+        : [];
 
     if (toolParamKeys.length > 0) {
       let matchedParams = 0;
@@ -150,7 +163,9 @@ export class CoverageEngine {
     }
 
     // 3. Composite similarity
-    const similarity = 0.65 * opCoverage + 0.35 * (paramOverlap > 0 ? paramOverlap : (opCoverage >= 0.9 ? 1.0 : opCoverage));
+    const similarity =
+      0.65 * opCoverage +
+      0.35 * (paramOverlap > 0 ? paramOverlap : opCoverage >= 0.9 ? 1.0 : opCoverage);
     const overlapRatio = opCoverage;
 
     let reason = "";
@@ -171,7 +186,10 @@ export class CoverageEngine {
 /**
  * Convenience function to evaluate coverage.
  */
-export function evaluateToolCoverage(cluster: WorkflowCluster, existingTools: ToolManifest[] = []): CoverageResult {
+export function evaluateToolCoverage(
+  cluster: WorkflowCluster,
+  existingTools: ToolManifest[] = [],
+): CoverageResult {
   const engine = new CoverageEngine();
   return engine.evaluateCoverage(cluster, existingTools);
 }

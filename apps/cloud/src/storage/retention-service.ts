@@ -1,5 +1,5 @@
-import { DatabasePool, Queryable } from "../db/client.js";
-import { TenantContext } from "../tenant.js";
+import type { DatabasePool, Queryable } from "../db/client.js";
+import type { TenantContext } from "../tenant.js";
 import { RetentionRepository } from "./repositories/retention-repository.js";
 
 /**
@@ -52,8 +52,12 @@ export class RetentionService {
     const sessionRetentionDays = options.sessionRetentionDays ?? 90;
     const dryRun = options.dryRun ?? false;
 
-    const eventCutoffTime = new Date(nowDate.getTime() - eventRetentionDays * 86400000).toISOString();
-    const sessionCutoffTime = new Date(nowDate.getTime() - sessionRetentionDays * 86400000).toISOString();
+    const eventCutoffTime = new Date(
+      nowDate.getTime() - eventRetentionDays * 86400000,
+    ).toISOString();
+    const sessionCutoffTime = new Date(
+      nowDate.getTime() - sessionRetentionDays * 86400000,
+    ).toISOString();
 
     let scannedSessions = 0;
     let scannedEvents = 0;
@@ -63,8 +67,18 @@ export class RetentionService {
     let preservedHeldEvents = 0;
 
     // Check if entire account or workspace is under hold
-    const isAccountHeld = await this.retentionRepo.isTargetHeld(tenant, "account", tenant.accountId, nowIso);
-    const isWorkspaceHeld = await this.retentionRepo.isTargetHeld(tenant, "workspace", tenant.workspaceId, nowIso);
+    const isAccountHeld = await this.retentionRepo.isTargetHeld(
+      tenant,
+      "account",
+      tenant.accountId,
+      nowIso,
+    );
+    const isWorkspaceHeld = await this.retentionRepo.isTargetHeld(
+      tenant,
+      "workspace",
+      tenant.workspaceId,
+      nowIso,
+    );
 
     if (isAccountHeld || isWorkspaceHeld) {
       return {
@@ -89,7 +103,12 @@ export class RetentionService {
       const sessionId = String(sessionRow.id);
 
       // Check if session has active hold
-      const isSessionHeld = await this.retentionRepo.isTargetHeld(tenant, "session", sessionId, nowIso);
+      const isSessionHeld = await this.retentionRepo.isTargetHeld(
+        tenant,
+        "session",
+        sessionId,
+        nowIso,
+      );
 
       // Check if any evidence set for this session has active hold
       const evidenceSetsRes = await this.pool.query<Record<string, unknown>>(
@@ -100,7 +119,12 @@ export class RetentionService {
       let isAnyEvidenceHeld = false;
       for (const evRow of evidenceSetsRes.rows) {
         const evSetId = String(evRow.id);
-        const isEvHeld = await this.retentionRepo.isTargetHeld(tenant, "evidence_set", evSetId, nowIso);
+        const isEvHeld = await this.retentionRepo.isTargetHeld(
+          tenant,
+          "evidence_set",
+          evSetId,
+          nowIso,
+        );
         if (isEvHeld) {
           isAnyEvidenceHeld = true;
           break;
@@ -163,7 +187,12 @@ export class RetentionService {
       const sessionId = String(evtRow.session_id);
 
       // Check if session or event is held
-      const isSessionHeld = await this.retentionRepo.isTargetHeld(tenant, "session", sessionId, nowIso);
+      const isSessionHeld = await this.retentionRepo.isTargetHeld(
+        tenant,
+        "session",
+        sessionId,
+        nowIso,
+      );
       if (isSessionHeld) {
         preservedHeldEvents++;
         continue;

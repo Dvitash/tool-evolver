@@ -71,9 +71,7 @@ describe("GatewayRouter & Tool Lifecycle", () => {
     })) as JsonRpcSuccessResponse<CallToolResult>;
 
     expect(callResp.error).toBeUndefined();
-    expect(callResp.result.content).toEqual([
-      { type: "text", text: "Echo: Hello Gateway!" },
-    ]);
+    expect(callResp.result.content).toEqual([{ type: "text", text: "Echo: Hello Gateway!" }]);
   });
 
   it("sends progress notifications when progressToken is supplied", async () => {
@@ -113,9 +111,7 @@ describe("GatewayRouter & Tool Lifecycle", () => {
 
     expect(callResp.error).toBeUndefined();
     expect(notifications.length).toBeGreaterThanOrEqual(1);
-    const progressNotifs = notifications.filter(
-      (n) => n.method === "notifications/progress"
-    );
+    const progressNotifs = notifications.filter((n) => n.method === "notifications/progress");
     expect(progressNotifs.length).toBe(3);
     expect(progressNotifs[0].params).toMatchObject({
       progressToken: "token-abc",
@@ -198,11 +194,11 @@ describe("GatewayRouter & Tool Lifecycle", () => {
         name: "new_dynamic_tool",
         inputSchema: { type: "object" },
       },
-      async () => ({ content: [{ type: "text", text: "dynamic" }] })
+      async () => ({ content: [{ type: "text", text: "dynamic" }] }),
     );
 
     const listChangedNotifs = notifications.filter(
-      (n) => n.method === "notifications/tools/list_changed"
+      (n) => n.method === "notifications/tools/list_changed",
     );
     expect(listChangedNotifs.length).toBeGreaterThanOrEqual(1);
   });

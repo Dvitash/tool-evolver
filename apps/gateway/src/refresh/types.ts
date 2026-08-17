@@ -1,7 +1,4 @@
-import {
-  ISOTimestampSchema,
-  SchemaVersionSchema,
-} from "@tool-evolver/contracts";
+import { ISOTimestampSchema, SchemaVersionSchema } from "@tool-evolver/contracts";
 import type {
   CatalogChangeSummary,
   HarnessWorkspace,

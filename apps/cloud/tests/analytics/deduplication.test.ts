@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   TelemetryBatchConflictError,
   TelemetryDeduplicator,
@@ -88,12 +88,7 @@ describe("TelemetryDeduplicator: Idempotent Batch Processing & Conflict Detectio
     const hash1 = deduplicator.computeBatchContentHash(sampleBatch);
 
     // Initial submission
-    await deduplicator.checkAndRecord(
-      sampleBatch.workspaceId,
-      sampleBatch.batchId,
-      hash1,
-      1,
-    );
+    await deduplicator.checkAndRecord(sampleBatch.workspaceId, sampleBatch.batchId, hash1, 1);
 
     // Altered batch payload with same batchId
     const alteredBatch: TelemetryBatchRequest = {
@@ -111,12 +106,7 @@ describe("TelemetryDeduplicator: Idempotent Batch Processing & Conflict Detectio
     expect(hash1).not.toBe(hash2);
 
     await expect(
-      deduplicator.checkAndRecord(
-        alteredBatch.workspaceId,
-        alteredBatch.batchId,
-        hash2,
-        1,
-      ),
+      deduplicator.checkAndRecord(alteredBatch.workspaceId, alteredBatch.batchId, hash2, 1),
     ).rejects.toThrow(TelemetryBatchConflictError);
   });
 
@@ -142,12 +132,7 @@ describe("TelemetryDeduplicator: Idempotent Batch Processing & Conflict Detectio
 
     const alteredHash = "different_hash_value";
     await expect(
-      memoryDedup.checkAndRecord(
-        sampleBatch.workspaceId,
-        sampleBatch.batchId,
-        alteredHash,
-        1,
-      ),
+      memoryDedup.checkAndRecord(sampleBatch.workspaceId, sampleBatch.batchId, alteredHash, 1),
     ).rejects.toThrow(TelemetryBatchConflictError);
   });
 });

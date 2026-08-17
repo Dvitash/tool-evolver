@@ -1,13 +1,13 @@
 import { gzipSync } from "node:zlib";
 import {
-  NormalizedSessionEvent,
+  type NormalizedSessionEvent,
   hashCanonicalContent,
   normalizeSha256,
 } from "@tool-evolver/contracts";
 import {
   ChecksumMismatchError,
-  ObservationBatchRequest,
-  ProtocolMessageEnvelope,
+  type ObservationBatchRequest,
+  type ProtocolMessageEnvelope,
 } from "@tool-evolver/protocol";
 import { describe, expect, it } from "vitest";
 import {
@@ -173,7 +173,9 @@ describe("ObservationBatchValidator", () => {
     const jsonStr = JSON.stringify(validRequest); // > 200 bytes
     const compressedBuffer = gzipSync(Buffer.from(jsonStr, "utf8"));
 
-    expect(() => validator.decompressPayload(compressedBuffer, "gzip")).toThrow(PayloadLimitExceededError);
+    expect(() => validator.decompressPayload(compressedBuffer, "gzip")).toThrow(
+      PayloadLimitExceededError,
+    );
   });
 
   it("should reject malformed event schema", () => {

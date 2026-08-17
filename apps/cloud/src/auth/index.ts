@@ -1,18 +1,12 @@
-import { AuthConfig } from "../config.js";
+import type { AuthConfig } from "../config.js";
 import { ConsentManager } from "./consent.js";
 import { DeviceFlowEngine } from "./device-flow.js";
+import { DevelopmentIdentityProvider, type IdentityProvider } from "./provider.js";
 import {
-  DevelopmentIdentityProvider,
-  IdentityProvider,
-} from "./provider.js";
-import {
-  AccountRepository,
+  type AccountRepository,
   MemoryAccountRepository,
 } from "./repositories/account-repository.js";
-import {
-  MemoryTokenRepository,
-  TokenRepository,
-} from "./repositories/token-repository.js";
+import { MemoryTokenRepository, type TokenRepository } from "./repositories/token-repository.js";
 import { TokenService } from "./tokens.js";
 
 export * from "./provider.js";
@@ -53,7 +47,8 @@ export class AuthService {
 
   constructor(options: AuthServiceOptions = {}) {
     const config = options.config;
-    const jwtSecret = options.jwtSecret ?? config?.jwtSecret ?? "dev-jwt-secret-min-16-characters-long";
+    const jwtSecret =
+      options.jwtSecret ?? config?.jwtSecret ?? "dev-jwt-secret-min-16-characters-long";
     const issuer = options.issuer ?? config?.issuer ?? "tool-evolver-cloud";
     const audience = options.audience ?? config?.audience ?? "tool-evolver-client";
     const accessTokenTtlSeconds = options.accessTokenTtlSeconds ?? config?.tokenTtlSeconds ?? 3600;

@@ -12,10 +12,9 @@ describe("Model Providers (Fake & OpenAI-Compatible)", () => {
   it("should record calls and support mock handlers in FakeModelProvider", async () => {
     const provider = new FakeModelProvider({ id: "test-fake" });
 
-    provider.setMockResponse(
-      (req) => req.userMessage.includes("special trigger"),
-      { custom: "handled" },
-    );
+    provider.setMockResponse((req) => req.userMessage.includes("special trigger"), {
+      custom: "handled",
+    });
 
     const res1 = await provider.execute({
       model: "fake-default-model",
@@ -53,10 +52,7 @@ describe("Model Providers (Fake & OpenAI-Compatible)", () => {
       }),
     ).rejects.toThrow("Injected simulated error");
 
-    provider.injectInvalidJson(
-      (req) => req.userMessage.includes("invalid_json"),
-      "{ broken...",
-    );
+    provider.injectInvalidJson((req) => req.userMessage.includes("invalid_json"), "{ broken...");
 
     const invalidRes = await provider.execute({
       model: "fake-default-model",
@@ -141,7 +137,7 @@ describe("Model Providers (Fake & OpenAI-Compatible)", () => {
     });
 
     expect(capturedUrl).toBe("https://api.openai.com/v1/chat/completions");
-    expect(capturedHeaders["Authorization"]).toBe("Bearer sk-test-mock-key-12345");
+    expect(capturedHeaders.Authorization).toBe("Bearer sk-test-mock-key-12345");
     expect(capturedBody.model).toBe("gpt-4o-mini");
     expect(capturedBody.temperature).toBe(0.1);
     expect(capturedBody.seed).toBe(42);

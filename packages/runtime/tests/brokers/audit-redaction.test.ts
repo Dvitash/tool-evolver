@@ -21,18 +21,19 @@ describe("Broker Audit Trail & Redaction", () => {
 
     const redacted = redactHeaders(rawHeaders);
 
-    expect(redacted["Authorization"]).toBe("[REDACTED]");
+    expect(redacted.Authorization).toBe("[REDACTED]");
     expect(redacted["X-Api-Key"]).toBe("[REDACTED]");
-    expect(redacted["Cookie"]).toBe("[REDACTED]");
+    expect(redacted.Cookie).toBe("[REDACTED]");
     expect(redacted["Set-Cookie"]).toBe("[REDACTED]");
     expect(redacted["X-Custom-Secret"]).toBe("[REDACTED]");
     expect(redacted["Content-Type"]).toBe("application/json");
-    expect(redacted["Accept"]).toBe("text/plain");
+    expect(redacted.Accept).toBe("text/plain");
     expect(redacted["User-Agent"]).toBe("ToolEvolver/1.0");
   });
 
   it("redacts credentials and sensitive query parameters in URLs", () => {
-    const sensitiveUrl = "https://admin:SuperPassword123@api.partner.io/v1/query?token=secretTokenVal&apiKey=abc999&search=apples";
+    const sensitiveUrl =
+      "https://admin:SuperPassword123@api.partner.io/v1/query?token=secretTokenVal&apiKey=abc999&search=apples";
     const cleaned = redactUrl(sensitiveUrl);
 
     expect(cleaned).not.toContain("SuperPassword123");
@@ -65,26 +66,26 @@ describe("Broker Audit Trail & Redaction", () => {
     const sanitized = sanitizeAuditSummary(rawSummary);
 
     // Forbidden keys must be completely absent
-    expect(sanitized["content"]).toBeUndefined();
-    expect(sanitized["fileContent"]).toBeUndefined();
-    expect(sanitized["stdout"]).toBeUndefined();
-    expect(sanitized["stderr"]).toBeUndefined();
-    expect(sanitized["secret"]).toBeUndefined();
-    expect(sanitized["secretValue"]).toBeUndefined();
-    expect(sanitized["password"]).toBeUndefined();
+    expect(sanitized.content).toBeUndefined();
+    expect(sanitized.fileContent).toBeUndefined();
+    expect(sanitized.stdout).toBeUndefined();
+    expect(sanitized.stderr).toBeUndefined();
+    expect(sanitized.secret).toBeUndefined();
+    expect(sanitized.secretValue).toBeUndefined();
+    expect(sanitized.password).toBeUndefined();
 
     // Safe metadata must be preserved
-    expect(sanitized["path"]).toBe("/app/data.json");
-    expect(sanitized["size"]).toBe(1024);
-    expect(sanitized["exitCode"]).toBe(0);
-    expect(sanitized["durationMs"]).toBe(120);
+    expect(sanitized.path).toBe("/app/data.json");
+    expect(sanitized.size).toBe(1024);
+    expect(sanitized.exitCode).toBe(0);
+    expect(sanitized.durationMs).toBe(120);
 
     // Headers and URLs must be redacted
-    const headers = sanitized["headers"] as Record<string, string>;
-    expect(headers["Authorization"]).toBe("[REDACTED]");
-    expect(headers["Host"]).toBe("api.example.com");
+    const headers = sanitized.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("[REDACTED]");
+    expect(headers.Host).toBe("api.example.com");
 
-    const url = sanitized["url"] as string;
+    const url = sanitized.url as string;
     expect(url).not.toContain("pass");
     expect(url).not.toContain("secret123");
     expect(url).toContain("[REDACTED]");
@@ -120,7 +121,7 @@ describe("Broker Audit Trail & Redaction", () => {
     const fsEvents = emitter.getEvents({ service: "fs" });
     expect(fsEvents.length).toBe(1);
     expect(fsEvents[0]?.action).toBe("readFile");
-    expect(fsEvents[0]?.summary["content"]).toBeUndefined(); // Verify redaction on emitted event
+    expect(fsEvents[0]?.summary.content).toBeUndefined(); // Verify redaction on emitted event
 
     const deniedEvents = emitter.getEvents({ status: "denied" });
     expect(deniedEvents.length).toBe(1);

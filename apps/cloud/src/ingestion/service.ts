@@ -1,37 +1,29 @@
-import {
-  NormalizedSessionEvent,
-} from "@tool-evolver/contracts";
-import {
+import type { NormalizedSessionEvent } from "@tool-evolver/contracts";
+import type {
   ObservationBatchRequest,
   ObservationBatchResponse,
   ProtocolMessageEnvelope,
 } from "@tool-evolver/protocol";
 import { ConsentManager } from "../auth/consent.js";
-import { DatabasePool, Queryable } from "../db/client.js";
+import type { DatabasePool, Queryable } from "../db/client.js";
 import { OutboxRepository } from "../db/outbox.js";
-import { TenantContext } from "../tenant.js";
+import type { TenantContext } from "../tenant.js";
 import {
   ConsentRequiredError,
   IngestionConsentGuard,
   RawConsentRequiredError,
 } from "./consent-guard.js";
-import {
-  BatchConflictError,
-  IngestionDeduplicator,
-} from "./deduplicator.js";
-import {
-  QuotaExceededError,
-  QuotaLimiter,
-} from "./quota.js";
+import { BatchConflictError, IngestionDeduplicator } from "./deduplicator.js";
+import { QuotaExceededError, QuotaLimiter } from "./quota.js";
 import {
   IngestionReceipt,
-  IngestionReceiptRepository,
+  type IngestionReceiptRepository,
   createIngestionReceiptRepository,
 } from "./receipt-repository.js";
 import {
-  BatchValidatorOptions,
+  type BatchValidatorOptions,
   ObservationBatchValidator,
-  ValidatedBatch,
+  type ValidatedBatch,
 } from "./validator.js";
 
 /**
@@ -154,9 +146,12 @@ export class ObservationIngestionService {
     const startTime = Date.now();
 
     // 1. Extract request from envelope if wrapped
-    const rawReq = ("payload" in batchRequest && typeof batchRequest.payload === "object" && batchRequest.payload !== null)
-      ? (batchRequest as ProtocolMessageEnvelope<ObservationBatchRequest>).payload
-      : (batchRequest as ObservationBatchRequest);
+    const rawReq =
+      "payload" in batchRequest &&
+      typeof batchRequest.payload === "object" &&
+      batchRequest.payload !== null
+        ? (batchRequest as ProtocolMessageEnvelope<ObservationBatchRequest>).payload
+        : (batchRequest as ObservationBatchRequest);
 
     const eventCount = Array.isArray(rawReq.observations) ? rawReq.observations.length : 0;
     const byteSize = rawByteSize ?? JSON.stringify(batchRequest).length;
@@ -171,7 +166,12 @@ export class ObservationIngestionService {
     );
 
     // 3. Validate Tenant and Device Boundaries (Anti-Spoofing)
-    if (context.workspaceId && context.workspaceId !== "system" && rawReq.workspaceId && rawReq.workspaceId !== context.workspaceId) {
+    if (
+      context.workspaceId &&
+      context.workspaceId !== "system" &&
+      rawReq.workspaceId &&
+      rawReq.workspaceId !== context.workspaceId
+    ) {
       throw new TenantMismatchError(
         `Cross-tenant workspace spoofing detected: token workspace '${context.workspaceId}' does not match request workspace '${rawReq.workspaceId}'`,
         "workspaceId",
@@ -180,7 +180,11 @@ export class ObservationIngestionService {
       );
     }
 
-    if (context.installationId && rawReq.installationId && rawReq.installationId !== context.installationId) {
+    if (
+      context.installationId &&
+      rawReq.installationId &&
+      rawReq.installationId !== context.installationId
+    ) {
       throw new TenantMismatchError(
         `Installation mismatch: authenticated installation '${context.installationId}' does not match request installation '${rawReq.installationId}'`,
         "installationId",
@@ -222,7 +226,8 @@ export class ObservationIngestionService {
 
     if (dedupeResult.isConflict) {
       throw new BatchConflictError(
-        dedupeResult.reason ?? `Conflicting batch: batchId '${request.batchId}' already exists with altered content`,
+        dedupeResult.reason ??
+          `Conflicting batch: batchId '${request.batchId}' already exists with altered content`,
         request.batchId,
         request.installationId,
         request.workspaceId,

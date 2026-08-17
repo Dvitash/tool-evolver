@@ -1,6 +1,4 @@
-import type {
-  ToolManifest,
-} from "@tool-evolver/contracts";
+import type { ToolManifest } from "@tool-evolver/contracts";
 import type {
   AllowedBrokerOperation,
   DivergenceFinding,
@@ -24,7 +22,7 @@ export class ReplayTraceComparator {
   async compareTrace(
     scenario: ReplayScenario,
     trace: ReplayExecutionTrace,
-    candidateManifest?: ToolManifest | Partial<ToolManifest>
+    candidateManifest?: ToolManifest | Partial<ToolManifest>,
   ): Promise<ReplayScenarioExecutionResult> {
     const invariantEvaluations: InvariantEvaluationResult[] = [];
     const divergenceFindings: DivergenceFinding[] = [];
@@ -95,9 +93,7 @@ export class ReplayTraceComparator {
   /**
    * Aggregates individual scenario results into overall replay status, metrics, and findings.
    */
-  compareOverall(
-    scenarioResults: ReplayScenarioExecutionResult[]
-  ): {
+  compareOverall(scenarioResults: ReplayScenarioExecutionResult[]): {
     status: ReplayStatus;
     passed: boolean;
     overallMetrics: ReplayMetricsComparison;
@@ -141,13 +137,18 @@ export class ReplayTraceComparator {
     }
 
     const stepReductionCount = Math.max(0, totalBaselineSteps - totalCandidateSteps);
-    const stepReductionPercent = totalBaselineSteps > 0 ? Math.round((stepReductionCount / totalBaselineSteps) * 100) : 0;
+    const stepReductionPercent =
+      totalBaselineSteps > 0 ? Math.round((stepReductionCount / totalBaselineSteps) * 100) : 0;
 
     const durationReductionMs = Math.max(0, totalBaselineDuration - totalCandidateDuration);
-    const durationReductionPercent = totalBaselineDuration > 0 ? Math.round((durationReductionMs / totalBaselineDuration) * 100) : 0;
+    const durationReductionPercent =
+      totalBaselineDuration > 0
+        ? Math.round((durationReductionMs / totalBaselineDuration) * 100)
+        : 0;
 
     const tokenSavingsCount = Math.max(0, totalBaselineTokens - totalCandidateTokens);
-    const tokenSavingsPercent = totalBaselineTokens > 0 ? Math.round((tokenSavingsCount / totalBaselineTokens) * 100) : 0;
+    const tokenSavingsPercent =
+      totalBaselineTokens > 0 ? Math.round((tokenSavingsCount / totalBaselineTokens) * 100) : 0;
 
     const overallMetrics: ReplayMetricsComparison = {
       baselineStepCount: totalBaselineSteps,
@@ -183,7 +184,7 @@ export class ReplayTraceComparator {
     invariant: ReplayInvariant,
     scenario: ReplayScenario,
     trace: ReplayExecutionTrace,
-    manifest?: ToolManifest | Partial<ToolManifest>
+    manifest?: ToolManifest | Partial<ToolManifest>,
   ): Promise<InvariantEvaluationResult> {
     const baseResult: InvariantEvaluationResult = {
       invariantId: invariant.id,
@@ -323,7 +324,7 @@ export class ReplayTraceComparator {
    */
   private checkSideEffectContainment(
     scenario: ReplayScenario,
-    trace: ReplayExecutionTrace
+    trace: ReplayExecutionTrace,
   ): DivergenceFinding[] {
     const findings: DivergenceFinding[] = [];
     const allowed = scenario.allowedBrokerOperations;
@@ -344,7 +345,12 @@ export class ReplayTraceComparator {
         }
 
         // Command pattern check for cmd operations
-        if (op.service === "cmd" && a.commandPattern && op.args[0] && typeof op.args[0] === "string") {
+        if (
+          op.service === "cmd" &&
+          a.commandPattern &&
+          op.args[0] &&
+          typeof op.args[0] === "string"
+        ) {
           if (!new RegExp(a.commandPattern).test(op.args[0])) return false;
         }
 
@@ -372,9 +378,10 @@ export class ReplayTraceComparator {
   /**
    * Checks whether operation execution ordering satisfies causal ordering rules.
    */
-  private checkOperationOrdering(
-    operations: ExecutedBrokerOperation[]
-  ): { valid: boolean; reason?: string } {
+  private checkOperationOrdering(operations: ExecutedBrokerOperation[]): {
+    valid: boolean;
+    reason?: string;
+  } {
     return { valid: true };
   }
 
@@ -383,7 +390,7 @@ export class ReplayTraceComparator {
    */
   private checkNegativeScenarioOutcome(
     scenario: ReplayScenario,
-    trace: ReplayExecutionTrace
+    trace: ReplayExecutionTrace,
   ): { passed: boolean; message?: string } {
     const hasError = !!trace.error;
     const outputHasError =
@@ -418,7 +425,7 @@ export class ReplayTraceComparator {
    */
   private computeMetricsComparison(
     scenario: ReplayScenario,
-    trace: ReplayExecutionTrace
+    trace: ReplayExecutionTrace,
   ): ReplayMetricsComparison {
     const baseline = scenario.baselineMetrics;
     const candidateStepCount = Math.max(trace.stepCount, 1);
@@ -429,7 +436,9 @@ export class ReplayTraceComparator {
     const candidateDurationMs = trace.durationMs;
     const durationReductionMs = Math.max(0, baseline.totalDurationMs - candidateDurationMs);
     const durationReductionPercent =
-      baseline.totalDurationMs > 0 ? Math.round((durationReductionMs / baseline.totalDurationMs) * 100) : 0;
+      baseline.totalDurationMs > 0
+        ? Math.round((durationReductionMs / baseline.totalDurationMs) * 100)
+        : 0;
 
     const candidateTokens = trace.tokensUsed ?? Math.min(100, baseline.totalTokens);
     const tokenSavingsCount = Math.max(0, baseline.totalTokens - candidateTokens);
@@ -462,7 +471,7 @@ export class ReplayTraceComparator {
   private determineScenarioStatus(
     trace: ReplayExecutionTrace,
     evaluations: InvariantEvaluationResult[],
-    findings: DivergenceFinding[]
+    findings: DivergenceFinding[],
   ): ReplayStatus {
     if (findings.some((f) => f.category === "sandbox_failure")) {
       return "infrastructure_failure";
@@ -470,7 +479,13 @@ export class ReplayTraceComparator {
 
     const criticalFindings = findings.filter((f) => f.severity === "critical");
     if (criticalFindings.length > 0) {
-      if (criticalFindings.some((f) => f.category === "unauthorized_side_effect" || f.category === "operation_ordering_violation")) {
+      if (
+        criticalFindings.some(
+          (f) =>
+            f.category === "unauthorized_side_effect" ||
+            f.category === "operation_ordering_violation",
+        )
+      ) {
         return "terminal_divergence";
       }
       return "repairable_divergence";
@@ -488,7 +503,7 @@ export class ReplayTraceComparator {
    * Helper to map invariant type to divergence finding category.
    */
   private mapInvariantTypeToFindingCategory(
-    type: ReplayInvariant["type"]
+    type: ReplayInvariant["type"],
   ): DivergenceFinding["category"] {
     switch (type) {
       case "output_schema":
@@ -517,7 +532,9 @@ export class ReplayTraceComparator {
     }
 
     if (typeof actual === "string" && typeof expected === "string") {
-      return actual.trim() === expected.trim() || actual.includes(expected) || expected.includes(actual);
+      return (
+        actual.trim() === expected.trim() || actual.includes(expected) || expected.includes(actual)
+      );
     }
 
     if (typeof actual === "number" && typeof expected === "number") {

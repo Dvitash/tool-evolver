@@ -20,7 +20,8 @@ describe("Secret Redaction & Audit Safety", () => {
   });
 
   it("should redact raw JWT tokens in log-safe format", () => {
-    const rawToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgN_pkwGptEOWvdsmv_3xgo7sCGwF_m_wW_wZg_M";
+    const rawToken =
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgN_pkwGptEOWvdsmv_3xgo7sCGwF_m_wW_wZg_M";
     const redacted = redactToken(rawToken);
 
     expect(redacted).not.toBe(rawToken);

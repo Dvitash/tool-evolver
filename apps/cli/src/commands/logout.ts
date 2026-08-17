@@ -114,9 +114,7 @@ export async function logoutCommand(
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (flags.json) {
-      process.stdout.write(
-        `${JSON.stringify({ error: msg, success: false }, null, 2)}\n`,
-      );
+      process.stdout.write(`${JSON.stringify({ error: msg, success: false }, null, 2)}\n`);
     } else {
       process.stderr.write(`\nError during logout: ${msg}\n`);
     }

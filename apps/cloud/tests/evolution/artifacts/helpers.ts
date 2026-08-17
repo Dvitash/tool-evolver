@@ -1,23 +1,28 @@
 import {
-  type EvolutionCandidate,
   type EvaluationResult,
+  type EvolutionCandidate,
   type ToolManifest,
   hashCanonicalContent,
 } from "@tool-evolver/contracts";
 import { MemoryDatabasePool } from "../../../src/db/client.js";
 import { runMigrations } from "../../../src/db/migrations.js";
 import { OutboxPublisher } from "../../../src/db/outbox.js";
-import { MemoryObjectStore } from "../../../src/storage/object-store.js";
 import { ArtifactBuilder } from "../../../src/evolution/artifacts/builder.js";
-import { SigningKeyRepository, ToolRegistryRepository } from "../../../src/evolution/artifacts/repositories/index.js";
+import {
+  SigningKeyRepository,
+  ToolRegistryRepository,
+} from "../../../src/evolution/artifacts/repositories/index.js";
 import { ToolArtifactRegistryService } from "../../../src/evolution/artifacts/service.js";
 import { ArtifactSigner } from "../../../src/evolution/artifacts/signer.js";
 import { SemanticVersionClassifier } from "../../../src/evolution/artifacts/versioning.js";
+import { MemoryObjectStore } from "../../../src/storage/object-store.js";
 
 /**
  * Creates a valid mock ToolManifest for testing.
  */
-export function computeManifestDigest(manifest: Omit<ToolManifest, "digest"> | ToolManifest): string {
+export function computeManifestDigest(
+  manifest: Omit<ToolManifest, "digest"> | ToolManifest,
+): string {
   const { digest: _digest, ...rest } = manifest as ToolManifest;
   return hashCanonicalContent(rest);
 }

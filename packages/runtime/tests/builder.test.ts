@@ -76,7 +76,10 @@ const sampleManifest: ToolManifest = {
 describe("bundle builder", () => {
   it("produces 100% deterministic archives for identical inputs in different order", async () => {
     const filesSetA = [
-      { path: "src/index.ts", content: "export function add(a: number, b: number) { return a + b; }" },
+      {
+        path: "src/index.ts",
+        content: "export function add(a: number, b: number) { return a + b; }",
+      },
       { path: "tests/index.test.ts", content: "import { add } from '../src/index.js';" },
       { path: "README.txt", content: "Deterministic tool bundle" },
     ];
@@ -84,7 +87,10 @@ describe("bundle builder", () => {
     const filesSetB = [
       { path: "README.txt", content: "Deterministic tool bundle" },
       { path: "tests/index.test.ts", content: "import { add } from '../src/index.js';" },
-      { path: "src/index.ts", content: "export function add(a: number, b: number) { return a + b; }" },
+      {
+        path: "src/index.ts",
+        content: "export function add(a: number, b: number) { return a + b; }",
+      },
     ];
 
     const bundleA = await buildToolBundle({
@@ -106,7 +112,8 @@ describe("bundle builder", () => {
   });
 
   it("handles long file paths exceeding standard 100-character tar header limit", () => {
-    const longPath = "src/nested/deeply/sub/submodule/very/long/directory/structure/that/exceeds/one/hundred/characters/index.ts";
+    const longPath =
+      "src/nested/deeply/sub/submodule/very/long/directory/structure/that/exceeds/one/hundred/characters/index.ts";
     expect(longPath.length).toBeGreaterThan(100);
 
     const files = [
@@ -128,9 +135,7 @@ describe("bundle builder", () => {
 
     const bundle = await buildToolBundle({
       manifest: sampleManifest,
-      files: [
-        { path: "src/index.ts", content: "export const value = 42;" },
-      ],
+      files: [{ path: "src/index.ts", content: "export const value = 42;" }],
       signOptions: {
         keyId: keyPair.keyId,
         privateKeyPem: keyPair.privateKeyPem,

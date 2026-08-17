@@ -1,12 +1,9 @@
 import { describe, expect, it } from "vitest";
-import {
-  AuthService,
-  createAuthService,
-} from "../../src/auth/index.js";
-import { CloudServer, createCloudServer } from "../../src/server/index.js";
+import { AuthService, createAuthService } from "../../src/auth/index.js";
 import { loadConfig } from "../../src/config.js";
 import { MemoryDatabasePool } from "../../src/db/index.js";
 import { MemoryDurableQueue } from "../../src/queue/index.js";
+import { CloudServer, createCloudServer } from "../../src/server/index.js";
 import { MemoryObjectStore } from "../../src/storage/index.js";
 import { TenantGuard, runWithTenant } from "../../src/tenant.js";
 

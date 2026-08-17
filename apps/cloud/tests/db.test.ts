@@ -22,7 +22,10 @@ describe("Database Client, Migrations & Outbox", () => {
 
     // Insert item
     await pool.query(`INSERT INTO test_items (id, name) VALUES ($1, $2)`, ["item-1", "Alpha"]);
-    const res1 = await pool.query<{ id: string; name: string }>(`SELECT id, name FROM test_items WHERE id = $1`, ["item-1"]);
+    const res1 = await pool.query<{ id: string; name: string }>(
+      `SELECT id, name FROM test_items WHERE id = $1`,
+      ["item-1"],
+    );
     expect(res1.rows.length).toBe(1);
     expect(res1.rows[0].name).toBe("Alpha");
 
@@ -98,7 +101,13 @@ describe("Database Client, Migrations & Outbox", () => {
       // 1. Domain entity
       await tx.query(
         `INSERT INTO accounts (id, name, plan, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)`,
-        ["acc-corp-1", "Acme Corporation", "enterprise", new Date().toISOString(), new Date().toISOString()],
+        [
+          "acc-corp-1",
+          "Acme Corporation",
+          "enterprise",
+          new Date().toISOString(),
+          new Date().toISOString(),
+        ],
       );
 
       // 2. Outbox event
@@ -113,7 +122,10 @@ describe("Database Client, Migrations & Outbox", () => {
     });
 
     // Verify account exists
-    const acc = await pool.query<{ id: string; name: string }>(`SELECT id, name FROM accounts WHERE id = $1`, ["acc-corp-1"]);
+    const acc = await pool.query<{ id: string; name: string }>(
+      `SELECT id, name FROM accounts WHERE id = $1`,
+      ["acc-corp-1"],
+    );
     expect(acc.rows.length).toBe(1);
     expect(acc.rows[0].name).toBe("Acme Corporation");
 

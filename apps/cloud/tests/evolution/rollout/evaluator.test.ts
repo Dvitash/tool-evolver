@@ -5,10 +5,7 @@ import {
   computeLatencyPercentiles,
 } from "../../../src/evolution/rollout/evaluator.js";
 import { DEFAULT_ROLLOUT_POLICIES } from "../../../src/evolution/rollout/policy.js";
-import {
-  type CanaryMetricsWindow,
-  type RolloutEntity,
-} from "../../../src/evolution/rollout/types.js";
+import type { CanaryMetricsWindow, RolloutEntity } from "../../../src/evolution/rollout/types.js";
 import { TEST_WORKSPACE_ID } from "./helpers.js";
 
 describe("RolloutEvaluator - Metrics & Rollback Evaluation", () => {
@@ -41,9 +38,7 @@ describe("RolloutEvaluator - Metrics & Rollback Evaluation", () => {
     };
   }
 
-  function createBaseMetrics(
-    overrides?: Partial<CanaryMetricsWindow>,
-  ): CanaryMetricsWindow {
+  function createBaseMetrics(overrides?: Partial<CanaryMetricsWindow>): CanaryMetricsWindow {
     return {
       windowStart: new Date(Date.now() - 60000).toISOString(),
       windowEnd: new Date().toISOString(),
@@ -262,13 +257,10 @@ describe("RolloutEvaluator - Metrics & Rollback Evaluation", () => {
       },
     ];
 
-    const window = aggregateTelemetryEvents(
-      events,
-      now,
-      now,
-      50,
-      { activeCount: 2, offlineCount: 0 },
-    );
+    const window = aggregateTelemetryEvents(events, now, now, 50, {
+      activeCount: 2,
+      offlineCount: 0,
+    });
 
     expect(window.totalInvocations).toBe(2);
     expect(window.successCount).toBe(1);

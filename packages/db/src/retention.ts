@@ -163,10 +163,7 @@ export class RetentionEngine {
       );
 
       // 8. Prune old audit records
-      const auditRes = tx.run(
-        "DELETE FROM audit_records WHERE timestamp < ?;",
-        [auditCutoff],
-      );
+      const auditRes = tx.run("DELETE FROM audit_records WHERE timestamp < ?;", [auditCutoff]);
 
       // 9. Prune old invocation records for completed sessions
       const invocationRes = tx.run(

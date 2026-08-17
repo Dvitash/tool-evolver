@@ -76,6 +76,51 @@ groups:
 
 ---
 
+## 5. Release Gates, CI/CD Pipeline & Branch Governance
+
+### 5.1 Local Verification Gate (`pnpm run check:all`)
+
+Operators and contributors must run the master check command before merging or promoting any release candidate:
+
+```bash
+pnpm run check:all
+```
+
+This executes the full automated gate sequence:
+1. **ADR Validation:** `pnpm run check:adrs`
+2. **Package Boundaries:** `pnpm run check:boundaries`
+3. **Secret Scanning:** `pnpm run check:secrets` (verifying 0 unencrypted private keys, tokens, credentials, or canary leaks)
+4. **Linting & Formatting:** `pnpm run lint`
+5. **Type Checking:** `pnpm run typecheck`
+6. **Monorepo Build:** `pnpm run build`
+7. **Unit Tests:** `pnpm run test`
+8. **Release Integrity Tests:** `pnpm run release:test` (unit tests for release packaging and signature verification)
+9. **E2E Integration Tests:** `pnpm run test:e2e`
+10. **Binary Smoke Tests:** `pnpm run check:smoke` (verifying all 4 binaries: CLI, Daemon, Gateway MCP Shim, and Conformance Runner)
+11. **Release Verification:** `pnpm run release:verify` (verifying tarballs, SHA-256 digests, Ed25519 signatures, SBOM, and documentation links)
+### 5.2 Branch Protection & Release Gates
+
+The `main` branch enforces strict release and merge gates:
+- **PR-Only Ingestion:** Direct commits and pushes to `main` are disabled. All changes must be proposed via pull requests.
+- **Force Push Protection:** Force-pushing is strictly disabled.
+- **Code Review Governance:** Required approval from code owners (`.github/CODEOWNERS`) for Runtime, brokers, authentication, cryptography, privacy, signing, installer, and release scripts. Authors cannot approve their own pull requests.
+- **Dismissal of Stale Approvals:** Any push of new commits automatically invalidates prior approvals and mandates re-review.
+- **Automated Setup Script:** Execute `./scripts/configure-branch-protection.sh` to configure all rules programmatically via GitHub API / gh CLI.
+- **Required Status Checks:** Merging requires 10 parallel green checks and the `ci-gate` rollup:
+  - `lint`
+  - `typecheck`
+  - `build`
+  - `test-unit`
+  - `test-e2e`
+  - `check-boundaries`
+  - `check-adrs`
+  - `release-verification`
+  - `binary-smoke`
+  - `secret-scan`
+  - `ci-gate`
+
+---
+
 ## Related Documentation
 
 - [Deployment Architecture](deployment.md)

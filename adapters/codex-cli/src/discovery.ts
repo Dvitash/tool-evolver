@@ -3,7 +3,10 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import type { HarnessInstallation, ProbeInstallationOptions } from "@tool-evolver/harness-contracts";
+import type {
+  HarnessInstallation,
+  ProbeInstallationOptions,
+} from "@tool-evolver/harness-contracts";
 
 const execFileAsync = promisify(execFile);
 
@@ -208,7 +211,9 @@ export async function resolveCodexPaths(options?: {
   const home =
     env.CODEX_HOME ||
     options?.homeDir ||
-    (env.HOME || env.USERPROFILE ? path.join(env.HOME || env.USERPROFILE!, ".codex") : os.homedir());
+    (env.HOME || env.USERPROFILE
+      ? path.join(env.HOME || env.USERPROFILE!, ".codex")
+      : os.homedir());
 
   let configPath: string;
   let configFormat: "toml" | "json" = "toml";

@@ -48,7 +48,11 @@ describe("Release Packaging & Verification Suite", () => {
     it("generates identical tar bytes for identical inputs (reproducibility)", () => {
       const entries = [
         { path: "tool-evolver/package.json", content: '{"name":"tool-evolver","version":"1.0.0"}' },
-        { path: "tool-evolver/bin/tool-evolver", content: "#!/usr/bin/env node\nconsole.log(1);", mode: 0o755 },
+        {
+          path: "tool-evolver/bin/tool-evolver",
+          content: "#!/usr/bin/env node\nconsole.log(1);",
+          mode: 0o755,
+        },
         { path: "tool-evolver/README.md", content: "# Release Readme" },
       ];
 
@@ -169,7 +173,10 @@ describe("Release Packaging & Verification Suite", () => {
 
     it("verifies valid channels.json in release directory", () => {
       const channels = generateChannelMetadata("test-manifest-sha256");
-      fs.writeFileSync(path.join(tempReleaseDir, "channels.json"), JSON.stringify(channels, null, 2));
+      fs.writeFileSync(
+        path.join(tempReleaseDir, "channels.json"),
+        JSON.stringify(channels, null, 2),
+      );
 
       const violations = verifyChannelMetadata(tempReleaseDir);
       expect(violations).toHaveLength(0);

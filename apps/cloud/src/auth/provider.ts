@@ -201,7 +201,9 @@ export class OidcIdentityProvider implements IdentityProvider {
     // For standard OIDC, user details are retrieved via token validation or userinfo
     if (this.config.userinfoEndpoint) {
       try {
-        const res = await this.fetch(`${this.config.userinfoEndpoint}?sub=${encodeURIComponent(userId)}`);
+        const res = await this.fetch(
+          `${this.config.userinfoEndpoint}?sub=${encodeURIComponent(userId)}`,
+        );
         if (!res.ok) return null;
         const data = (await res.json()) as Record<string, unknown>;
         return this.mapClaimsToUserIdentity(data);
@@ -250,7 +252,9 @@ export class OidcIdentityProvider implements IdentityProvider {
         ? (claims.workspaceIds as string[])
         : [`ws_${sub}_default`];
     const defaultWorkspaceId =
-      (claims.default_workspace_id as string) || (claims.defaultWorkspaceId as string) || workspaceIds[0];
+      (claims.default_workspace_id as string) ||
+      (claims.defaultWorkspaceId as string) ||
+      workspaceIds[0];
     const roles = Array.isArray(claims.roles) ? (claims.roles as string[]) : ["member"];
 
     return {

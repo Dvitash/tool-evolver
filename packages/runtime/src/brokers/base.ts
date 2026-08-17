@@ -1,9 +1,9 @@
 import { type CapabilityLimits, CapabilityManifestSchema } from "@tool-evolver/contracts";
 import { type InvocationGrant, verifyInvocationGrant } from "../policy/grant.js";
 import {
+  type BrokerAuditEmitter,
   type BrokerAuditEvent,
   type BrokerAuditStatus,
-  type BrokerAuditEmitter,
   defaultBrokerAuditEmitter,
 } from "./audit.js";
 
@@ -126,13 +126,14 @@ export abstract class BaseCapabilityBroker {
    * of the InvocationGrant attached to the execution context.
    */
   protected validateGrant(context: BrokerContext): InvocationGrant {
-    const { grant, invocationId, toolId, toolVersion, workspaceId, envelopeId, currentTimestamp } = context;
+    const { grant, invocationId, toolId, toolVersion, workspaceId, envelopeId, currentTimestamp } =
+      context;
 
     if (!grant) {
       if (this.requireGrant) {
         throw new BrokerSecurityError(
           "GRANT_REQUIRED",
-          `Invocation grant is required for service '${this.serviceName}'`
+          `Invocation grant is required for service '${this.serviceName}'`,
         );
       }
       // If grant is not required by broker config, return a minimal dummy grant
@@ -171,8 +172,13 @@ export abstract class BaseCapabilityBroker {
         WORKSPACE_MISMATCH: "WORKSPACE_MISMATCH",
         ENVELOPE_MISMATCH: "ENVELOPE_MISMATCH",
       };
-      const mappedCode = verification.errorCode ? codeMap[verification.errorCode] ?? "GRANT_INVALID" : "GRANT_INVALID";
-      throw new BrokerSecurityError(mappedCode, verification.message ?? "Grant verification failed");
+      const mappedCode = verification.errorCode
+        ? (codeMap[verification.errorCode] ?? "GRANT_INVALID")
+        : "GRANT_INVALID";
+      throw new BrokerSecurityError(
+        mappedCode,
+        verification.message ?? "Grant verification failed",
+      );
     }
 
     return grant;
@@ -184,7 +190,7 @@ export abstract class BaseCapabilityBroker {
   protected trackOutputBytes(
     invocationId: string,
     additionalBytes: number,
-    limits?: CapabilityLimits
+    limits?: CapabilityLimits,
   ): void {
     const maxBytes = limits?.maxOutputSizeBytes ?? 10485760; // default 10MB
     const usage = this.getOrCreateUsage(invocationId);
@@ -194,7 +200,7 @@ export abstract class BaseCapabilityBroker {
       throw new BrokerSecurityError(
         "BUDGET_EXCEEDED",
         `Output size limit exceeded: consumed ${usage.cumulativeOutputBytes} bytes, max allowed is ${maxBytes} bytes`,
-        { consumedBytes: usage.cumulativeOutputBytes, maxBytes }
+        { consumedBytes: usage.cumulativeOutputBytes, maxBytes },
       );
     }
   }
@@ -210,7 +216,7 @@ export abstract class BaseCapabilityBroker {
       throw new BrokerSecurityError(
         "CONCURRENCY_LIMIT",
         `Concurrent operations limit exceeded: active ${usage.activeConcurrency}, max ${maxConcurrent}`,
-        { active: usage.activeConcurrency, max: maxConcurrent }
+        { active: usage.activeConcurrency, max: maxConcurrent },
       );
     }
 
@@ -236,7 +242,7 @@ export abstract class BaseCapabilityBroker {
     options: {
       error?: { code: string; message: string; details?: unknown };
       durationMs?: number;
-    } = {}
+    } = {},
   ): BrokerAuditEvent {
     return this.auditEmitter.emitAudit({
       service: this.serviceName,

@@ -19,7 +19,7 @@ describe("SecretManager", () => {
 
     // Verify secret was automatically registered in redactor
     expect(manager.redact("Publishing with token npm_secret_1111")).toBe(
-      "Publishing with token [REDACTED:NPM_TOKEN]"
+      "Publishing with token [REDACTED:NPM_TOKEN]",
     );
 
     // Rotate secret
@@ -28,7 +28,7 @@ describe("SecretManager", () => {
 
     // Verify new secret is redacted
     expect(manager.redact("Publishing with token npm_secret_2222")).toBe(
-      "Publishing with token [REDACTED:NPM_TOKEN]"
+      "Publishing with token [REDACTED:NPM_TOKEN]",
     );
 
     // List metadata
@@ -52,23 +52,23 @@ describe("SecretManager", () => {
     const resolvedHeader = await manager.getSecretForMediation(
       "HEADER_KEY",
       "header_template",
-      "ws_main"
+      "ws_main",
     );
     expect(resolvedHeader).toBe("header-secret-val");
 
     // Disallowed mode
     await expect(
-      manager.getSecretForMediation("HEADER_KEY", "command_env", "ws_main")
+      manager.getSecretForMediation("HEADER_KEY", "command_env", "ws_main"),
     ).rejects.toThrow(/Mediation mode 'command_env' is not permitted/);
 
     // Mismatched workspace
     await expect(
-      manager.getSecretForMediation("HEADER_KEY", "header_template", "ws_other")
+      manager.getSecretForMediation("HEADER_KEY", "header_template", "ws_other"),
     ).rejects.toThrow(/belongs to workspace 'ws_main', not 'ws_other'/);
 
     // Undeclared secret
     await expect(
-      manager.getSecretForMediation("UNKNOWN_KEY", "header_template", "ws_main")
+      manager.getSecretForMediation("UNKNOWN_KEY", "header_template", "ws_main"),
     ).rejects.toThrow(/Secret 'UNKNOWN_KEY' not found/);
   });
 

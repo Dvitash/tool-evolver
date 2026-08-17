@@ -125,8 +125,7 @@ export class SystemdUserServiceManager implements UserServiceManager {
     this.homeDir = options.homeDir ?? os.homedir();
     this.toolEvolverHome = options.toolEvolverHome ?? path.join(this.homeDir, ".tool-evolver");
     this.defaultDaemonPath =
-      options.daemonPath ??
-      path.join(this.toolEvolverHome, "bin", "tool-evolver-daemon");
+      options.daemonPath ?? path.join(this.toolEvolverHome, "bin", "tool-evolver-daemon");
     this.nodePath = options.nodePath ?? process.execPath;
     this.fsBridge = options.fsBridge ?? defaultFsBridge;
     this.runner = options.runner ?? defaultServiceCommandRunner;
@@ -324,7 +323,7 @@ WantedBy=default.target
 
     let pid: number | undefined;
     const pidMatch = statusRes.stdout.match(/Main PID:\s*(\d+)/i);
-    if (pidMatch && pidMatch[1]) {
+    if (pidMatch?.[1]) {
       pid = Number.parseInt(pidMatch[1], 10);
     }
 
@@ -362,8 +361,7 @@ export class LaunchdUserServiceManager implements UserServiceManager {
     this.homeDir = options.homeDir ?? os.homedir();
     this.toolEvolverHome = options.toolEvolverHome ?? path.join(this.homeDir, ".tool-evolver");
     this.defaultDaemonPath =
-      options.daemonPath ??
-      path.join(this.toolEvolverHome, "bin", "tool-evolver-daemon");
+      options.daemonPath ?? path.join(this.toolEvolverHome, "bin", "tool-evolver-daemon");
     this.nodePath = options.nodePath ?? process.execPath;
     this.fsBridge = options.fsBridge ?? defaultFsBridge;
     this.runner = options.runner ?? defaultServiceCommandRunner;
@@ -371,12 +369,7 @@ export class LaunchdUserServiceManager implements UserServiceManager {
   }
 
   getUnitPath(): string {
-    return path.join(
-      this.homeDir,
-      "Library",
-      "LaunchAgents",
-      `${this.serviceName}.plist`,
-    );
+    return path.join(this.homeDir, "Library", "LaunchAgents", `${this.serviceName}.plist`);
   }
 
   getUnitDefinition(options: ServiceInstallOptions = {}): string {
@@ -565,8 +558,9 @@ ${envXml}
 
     let pid: number | undefined;
     if (active) {
-      const pidMatch = listRes.stdout.match(/"PID"\s*=\s*(\d+)/i) ?? listRes.stdout.match(/^(\d+)\s+/m);
-      if (pidMatch && pidMatch[1]) {
+      const pidMatch =
+        listRes.stdout.match(/"PID"\s*=\s*(\d+)/i) ?? listRes.stdout.match(/^(\d+)\s+/m);
+      if (pidMatch?.[1]) {
         pid = Number.parseInt(pidMatch[1], 10);
       }
     }
@@ -607,8 +601,7 @@ export class WslUserServiceManager implements UserServiceManager {
     this.homeDir = options.homeDir ?? os.homedir();
     this.toolEvolverHome = options.toolEvolverHome ?? path.join(this.homeDir, ".tool-evolver");
     this.defaultDaemonPath =
-      options.daemonPath ??
-      path.join(this.toolEvolverHome, "bin", "tool-evolver-daemon");
+      options.daemonPath ?? path.join(this.toolEvolverHome, "bin", "tool-evolver-daemon");
     this.nodePath = options.nodePath ?? process.execPath;
     this.fsBridge = options.fsBridge ?? defaultFsBridge;
     this.runner = options.runner ?? defaultServiceCommandRunner;

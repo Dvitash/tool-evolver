@@ -32,7 +32,7 @@ describe("MCP Initialization & Capability Negotiation", () => {
 
     const resp = (await gateway.handleMessage(
       conn.connectionId,
-      initReq
+      initReq,
     )) as JsonRpcSuccessResponse<InitializeResult>;
 
     expect(resp.error).toBeUndefined();
@@ -64,7 +64,7 @@ describe("MCP Initialization & Capability Negotiation", () => {
 
     const resp = (await gateway.handleMessage(
       conn.connectionId,
-      initReq
+      initReq,
     )) as JsonRpcSuccessResponse<InitializeResult>;
 
     expect(resp.error).toBeUndefined();
@@ -95,7 +95,7 @@ describe("MCP Initialization & Capability Negotiation", () => {
 
     const resp = (await gateway.handleMessage(
       conn.connectionId,
-      initReq
+      initReq,
     )) as JsonRpcSuccessResponse<InitializeResult>;
 
     expect(resp.error).toBeUndefined();
@@ -115,10 +115,7 @@ describe("MCP Initialization & Capability Negotiation", () => {
       params: {},
     };
 
-    const resp = (await gateway.handleMessage(
-      conn.connectionId,
-      listReq
-    )) as JsonRpcErrorResponse;
+    const resp = (await gateway.handleMessage(conn.connectionId, listReq)) as JsonRpcErrorResponse;
 
     expect(resp.result).toBeUndefined();
     expect(resp.error).toBeDefined();
@@ -139,7 +136,7 @@ describe("MCP Initialization & Capability Negotiation", () => {
 
     const resp = (await gateway.handleMessage(
       conn.connectionId,
-      pingReq
+      pingReq,
     )) as JsonRpcSuccessResponse<Record<string, unknown>>;
 
     expect(resp.error).toBeUndefined();

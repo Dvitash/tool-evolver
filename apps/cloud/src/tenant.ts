@@ -125,7 +125,7 @@ export class TenantGuard {
     entity: T,
     explicitContext?: TenantContext,
   ): T {
-    this.assertAccess(entity, explicitContext);
+    TenantGuard.assertAccess(entity, explicitContext);
     return entity;
   }
 

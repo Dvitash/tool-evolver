@@ -56,10 +56,7 @@ export class NetworkBroker extends BaseCapabilityBroker {
   /**
    * Validates a target URL against the granted network capability and resolves DNS to detect private IP ranges.
    */
-  private async validateAndAuthorizeUrl(
-    targetUrl: string,
-    netCap: NetCapability
-  ): Promise<URL> {
+  private async validateAndAuthorizeUrl(targetUrl: string, netCap: NetCapability): Promise<URL> {
     let parsed: URL;
     try {
       parsed = new URL(targetUrl);
@@ -74,19 +71,19 @@ export class NetworkBroker extends BaseCapabilityBroker {
       throw new BrokerSecurityError(
         "DISALLOWED_PROTOCOL",
         `Protocol '${protocol}' is not permitted by capability policy (allowed: ${allowedProtocols.join(", ")})`,
-        { url: targetUrl, protocol, allowedProtocols }
+        { url: targetUrl, protocol, allowedProtocols },
       );
     }
 
     // 2. Port check
     const defaultPort = protocol === "https" || protocol === "wss" ? 443 : 80;
-    const port = parsed.port ? parseInt(parsed.port, 10) : defaultPort;
+    const port = parsed.port ? Number.parseInt(parsed.port, 10) : defaultPort;
     const allowedPorts = netCap.allowedPorts ?? [];
     if (allowedPorts.length > 0 && !allowedPorts.includes(port)) {
       throw new BrokerSecurityError(
         "DISALLOWED_PORT",
         `Port ${port} is not permitted by capability policy`,
-        { url: targetUrl, port, allowedPorts }
+        { url: targetUrl, port, allowedPorts },
       );
     }
 
@@ -121,14 +118,14 @@ export class NetworkBroker extends BaseCapabilityBroker {
         throw new BrokerSecurityError(
           "DISALLOWED_HOST",
           `Host '${rawHostname}' is not in allowed domains/hosts list`,
-          { host: rawHostname, allowedDomains, allowedHosts }
+          { host: rawHostname, allowedDomains, allowedHosts },
         );
       }
     } else if (!netCap.allowOutbound) {
       throw new BrokerSecurityError(
         "OUTBOUND_NETWORK_DISABLED",
         "Outbound network access is disabled by capability policy",
-        { url: targetUrl }
+        { url: targetUrl },
       );
     }
 
@@ -152,7 +149,7 @@ export class NetworkBroker extends BaseCapabilityBroker {
         throw new BrokerSecurityError(
           "BLOCKED_IP_RANGE",
           `Access to localhost is denied: ${rawHostname}`,
-          { host: rawHostname }
+          { host: rawHostname },
         );
       }
     }
@@ -172,7 +169,7 @@ export class NetworkBroker extends BaseCapabilityBroker {
         throw new BrokerSecurityError(
           "BLOCKED_IP_RANGE",
           `Access to private, loopback, link-local, or cloud metadata IP is denied: ${rawHostname}`,
-          { host: rawHostname }
+          { host: rawHostname },
         );
       }
 
@@ -184,7 +181,7 @@ export class NetworkBroker extends BaseCapabilityBroker {
             throw new BrokerSecurityError(
               "BLOCKED_IP_RANGE",
               `DNS resolution for host '${rawHostname}' resolved to private/reserved IP '${addr.address}'`,
-              { host: rawHostname, resolvedIp: addr.address }
+              { host: rawHostname, resolvedIp: addr.address },
             );
           }
         }
@@ -194,7 +191,7 @@ export class NetworkBroker extends BaseCapabilityBroker {
         throw new BrokerSecurityError(
           "DNS_RESOLUTION_FAILED",
           `Failed to resolve DNS for host '${rawHostname}': ${(dnsErr as Error).message}`,
-          { host: rawHostname }
+          { host: rawHostname },
         );
       }
     }
@@ -215,7 +212,10 @@ export class NetworkBroker extends BaseCapabilityBroker {
     const redirectMode = params.redirect ?? "follow";
     const maxRedirects = params.maxRedirects ?? 5;
     const maxResponseBytes = limits?.maxOutputSizeBytes ?? 10485760; // 10MB default
-    const timeoutMs = Math.min(params.timeoutMs ?? limits?.maxExecutionTimeMs ?? 30000, limits?.maxExecutionTimeMs ?? 30000);
+    const timeoutMs = Math.min(
+      params.timeoutMs ?? limits?.maxExecutionTimeMs ?? 30000,
+      limits?.maxExecutionTimeMs ?? 30000,
+    );
 
     let currentUrl = params.url;
     let redirectCount = 0;
@@ -239,7 +239,7 @@ export class NetworkBroker extends BaseCapabilityBroker {
 
         // Check for redirects (301, 302, 303, 307, 308)
         const isRedirect = [301, 302, 303, 307, 308].includes(response.status);
-        const locationHeader = response.headers["location"];
+        const locationHeader = response.headers.location;
 
         if (isRedirect && locationHeader && redirectMode === "follow") {
           redirectCount++;
@@ -247,7 +247,7 @@ export class NetworkBroker extends BaseCapabilityBroker {
             throw new BrokerSecurityError(
               "MAX_REDIRECTS_EXCEEDED",
               `Maximum redirect limit of ${maxRedirects} exceeded`,
-              { redirectCount, maxRedirects }
+              { redirectCount, maxRedirects },
             );
           }
 
@@ -260,21 +260,28 @@ export class NetworkBroker extends BaseCapabilityBroker {
           currentUrl = nextUrl;
           redirected = true;
           continue; // Follow redirect
-        } else if (isRedirect && redirectMode === "error") {
+        }
+        if (isRedirect && redirectMode === "error") {
           throw new BrokerSecurityError(
             "DISALLOWED_REDIRECT",
             `Redirect encountered with redirectMode='error': ${locationHeader}`,
-            { status: response.status, location: locationHeader }
+            { status: response.status, location: locationHeader },
           );
         }
 
-        this.recordAudit("request", context, "allowed", {
-          url: currentUrl,
-          method,
-          status: response.status,
-          bytesReceived: response.bytesReceived,
-          redirected,
-        }, { durationMs: Date.now() - startTime });
+        this.recordAudit(
+          "request",
+          context,
+          "allowed",
+          {
+            url: currentUrl,
+            method,
+            status: response.status,
+            bytesReceived: response.bytesReceived,
+            redirected,
+          },
+          { durationMs: Date.now() - startTime },
+        );
 
         return {
           status: response.status,
@@ -286,17 +293,24 @@ export class NetworkBroker extends BaseCapabilityBroker {
           bytesReceived: response.bytesReceived,
         };
       } catch (error) {
-        const err = error instanceof BrokerSecurityError
-          ? error
-          : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
+        const err =
+          error instanceof BrokerSecurityError
+            ? error
+            : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
 
-        this.recordAudit("request", context, "denied", {
-          url: currentUrl,
-          method,
-        }, {
-          error: { code: err.code, message: err.message },
-          durationMs: Date.now() - startTime,
-        });
+        this.recordAudit(
+          "request",
+          context,
+          "denied",
+          {
+            url: currentUrl,
+            method,
+          },
+          {
+            error: { code: err.code, message: err.message },
+            durationMs: Date.now() - startTime,
+          },
+        );
 
         throw err;
       }
@@ -313,7 +327,13 @@ export class NetworkBroker extends BaseCapabilityBroker {
     body?: string;
     timeoutMs: number;
     maxResponseBytes: number;
-  }): Promise<{ status: number; statusText: string; headers: Record<string, string>; body: string; bytesReceived: number }> {
+  }): Promise<{
+    status: number;
+    statusText: string;
+    headers: Record<string, string>;
+    body: string;
+    bytesReceived: number;
+  }> {
     const { promise, resolve, reject } = withResolvers<{
       status: number;
       statusText: string;
@@ -350,8 +370,8 @@ export class NetworkBroker extends BaseCapabilityBroker {
               new BrokerSecurityError(
                 "RESPONSE_TOO_LARGE",
                 `Response payload size ${bytesReceived} bytes exceeded limit ${options.maxResponseBytes} bytes`,
-                { bytesReceived, maxBytes: options.maxResponseBytes }
-              )
+                { bytesReceived, maxBytes: options.maxResponseBytes },
+              ),
             );
             return;
           }
@@ -365,7 +385,9 @@ export class NetworkBroker extends BaseCapabilityBroker {
           const normalizedHeaders: Record<string, string> = {};
           for (const [key, val] of Object.entries(res.headers)) {
             if (val !== undefined) {
-              normalizedHeaders[key.toLowerCase()] = Array.isArray(val) ? val.join(", ") : String(val);
+              normalizedHeaders[key.toLowerCase()] = Array.isArray(val)
+                ? val.join(", ")
+                : String(val);
             }
           }
 
@@ -379,9 +401,14 @@ export class NetworkBroker extends BaseCapabilityBroker {
         });
 
         res.on("error", (err) => {
-          reject(new BrokerSecurityError("OPERATION_NOT_PERMITTED", `Response stream error: ${err.message}`));
+          reject(
+            new BrokerSecurityError(
+              "OPERATION_NOT_PERMITTED",
+              `Response stream error: ${err.message}`,
+            ),
+          );
         });
-      }
+      },
     );
 
     req.on("timeout", () => {
@@ -390,16 +417,22 @@ export class NetworkBroker extends BaseCapabilityBroker {
         new BrokerSecurityError(
           "REQUEST_TIMEOUT",
           `Network request timed out after ${options.timeoutMs}ms`,
-          { timeoutMs: options.timeoutMs }
-        )
+          { timeoutMs: options.timeoutMs },
+        ),
       );
     });
 
     req.on("error", (err) => {
-      if (err.message.includes("CERT_") || err.message.includes("certificate") || err.message.includes("TLS")) {
+      if (
+        err.message.includes("CERT_") ||
+        err.message.includes("certificate") ||
+        err.message.includes("TLS")
+      ) {
         reject(new BrokerSecurityError("TLS_ERROR", `TLS verification failed: ${err.message}`));
       } else {
-        reject(new BrokerSecurityError("OPERATION_NOT_PERMITTED", `Request failed: ${err.message}`));
+        reject(
+          new BrokerSecurityError("OPERATION_NOT_PERMITTED", `Request failed: ${err.message}`),
+        );
       }
     });
 
@@ -414,7 +447,11 @@ export class NetworkBroker extends BaseCapabilityBroker {
   /**
    * Fetch-compatible interface for convenience.
    */
-  async fetch(url: string, init: Partial<NetRequestParams> = {}, context: BrokerContext): Promise<NetResponseResult> {
+  async fetch(
+    url: string,
+    init: Partial<NetRequestParams>,
+    context: BrokerContext,
+  ): Promise<NetResponseResult> {
     return this.request({ ...init, url }, context);
   }
 }

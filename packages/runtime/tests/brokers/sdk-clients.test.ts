@@ -2,11 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { CapabilityBrokerManager, createBrokerClients } from "../../src/brokers/index.js";
 import { createInvocationGrant } from "../../src/policy/grant.js";
-import {
-  CapabilityBrokerManager,
-  createBrokerClients,
-} from "../../src/brokers/index.js";
 import { ToolRuntime } from "../../src/worker/runner.js";
 import { defineTool } from "../../src/worker/sdk.js";
 
@@ -159,11 +156,17 @@ describe("Broker SDK Clients & ToolRuntime Integration", () => {
     };
     const toolHandler = defineTool(async (ctx) => {
       // ctx.broker is wired to the capability brokers
-      await ctx.broker.fs.writeFile("runtime_demo.txt", `Processed for invocation: ${ctx.invocationId}`);
+      await ctx.broker.fs.writeFile(
+        "runtime_demo.txt",
+        `Processed for invocation: ${ctx.invocationId}`,
+      );
       const content = await ctx.broker.fs.readFile("runtime_demo.txt");
       const stat = await ctx.broker.fs.stat("runtime_demo.txt");
 
-      const cmdRes = await ctx.broker.cmd.exec("node", ["-e", "console.log('Running inside tool')"]);
+      const cmdRes = await ctx.broker.cmd.exec("node", [
+        "-e",
+        "console.log('Running inside tool')",
+      ]);
 
       return {
         savedContent: content,
@@ -179,7 +182,7 @@ describe("Broker SDK Clients & ToolRuntime Integration", () => {
       {
         grant,
         workspaceRoot: tempWorkspace,
-      }
+      },
     );
 
     expect(result.status).toBe("success");

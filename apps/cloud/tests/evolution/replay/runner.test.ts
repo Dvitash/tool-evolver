@@ -81,7 +81,8 @@ describe("HistoricalReplayRunner", () => {
         virtualState: {
           fs: {
             files: {
-              "/workspace/src/app.ts": "const target1 = true;\nconst other = false;\nconst target2 = true;\n",
+              "/workspace/src/app.ts":
+                "const target1 = true;\nconst other = false;\nconst target2 = true;\n",
             },
           },
         },
@@ -140,7 +141,7 @@ describe("HistoricalReplayRunner", () => {
             allowLocalhost: true,
             denyPrivateRanges: false,
           },
-        }
+        },
       );
 
       const scenario: ReplayScenario = {
@@ -204,7 +205,7 @@ describe("HistoricalReplayRunner", () => {
             defaultTimeoutMs: 10000,
             maxOutputBytes: 1048576,
           },
-        }
+        },
       );
 
       const scenario: ReplayScenario = {
@@ -303,7 +304,9 @@ describe("HistoricalReplayRunner", () => {
 
       expect(result.status).toBe("terminal_divergence");
       expect(result.passed).toBe(false);
-      expect(result.divergenceFindings.some((f) => f.category === "unauthorized_side_effect")).toBe(true);
+      expect(result.divergenceFindings.some((f) => f.category === "unauthorized_side_effect")).toBe(
+        true,
+      );
     });
   });
 
@@ -352,7 +355,13 @@ describe("HistoricalReplayRunner", () => {
           virtualState: {},
           invariants: [],
           allowedBrokerOperations: [],
-          baselineMetrics: { stepCount: 2, totalTokens: 100, totalDurationMs: 300, toolCallsCount: 2, estimatedCostUsd: 0.0003 },
+          baselineMetrics: {
+            stepCount: 2,
+            totalTokens: 100,
+            totalDurationMs: 300,
+            toolCallsCount: 2,
+            estimatedCostUsd: 0.0003,
+          },
         },
         {
           id: "sc-multi-02",
@@ -364,7 +373,13 @@ describe("HistoricalReplayRunner", () => {
           virtualState: {},
           invariants: [],
           allowedBrokerOperations: [],
-          baselineMetrics: { stepCount: 2, totalTokens: 100, totalDurationMs: 300, toolCallsCount: 2, estimatedCostUsd: 0.0003 },
+          baselineMetrics: {
+            stepCount: 2,
+            totalTokens: 100,
+            totalDurationMs: 300,
+            toolCallsCount: 2,
+            estimatedCostUsd: 0.0003,
+          },
         },
       ];
 

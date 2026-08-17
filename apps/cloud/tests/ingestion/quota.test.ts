@@ -13,23 +13,25 @@ describe("QuotaLimiter", () => {
       maxBatchSizeBytes: 1024 * 1024,
     });
 
-    await expect(limiter.checkBatch(accountId, workspaceId, deviceId, 5, 1000)).resolves.toBeUndefined();
+    await expect(
+      limiter.checkBatch(accountId, workspaceId, deviceId, 5, 1000),
+    ).resolves.toBeUndefined();
   });
 
   it("should reject single batch exceeding maxBatchSizeBytes", async () => {
     const limiter = new QuotaLimiter({ maxBatchSizeBytes: 1000 });
 
-    await expect(
-      limiter.checkBatch(accountId, workspaceId, deviceId, 1, 2000),
-    ).rejects.toThrow(QuotaExceededError);
+    await expect(limiter.checkBatch(accountId, workspaceId, deviceId, 1, 2000)).rejects.toThrow(
+      QuotaExceededError,
+    );
   });
 
   it("should reject single batch exceeding maxEventsPerBatch", async () => {
     const limiter = new QuotaLimiter({ maxEventsPerBatch: 10 });
 
-    await expect(
-      limiter.checkBatch(accountId, workspaceId, deviceId, 15, 500),
-    ).rejects.toThrow(QuotaExceededError);
+    await expect(limiter.checkBatch(accountId, workspaceId, deviceId, 15, 500)).rejects.toThrow(
+      QuotaExceededError,
+    );
   });
 
   it("should enforce request rate limit in sliding window", async () => {
@@ -41,9 +43,9 @@ describe("QuotaLimiter", () => {
     await limiter.checkBatch(accountId, workspaceId, deviceId, 1, 100);
 
     // 4th request in same window exceeds limit
-    await expect(
-      limiter.checkBatch(accountId, workspaceId, deviceId, 1, 100),
-    ).rejects.toThrow(QuotaExceededError);
+    await expect(limiter.checkBatch(accountId, workspaceId, deviceId, 1, 100)).rejects.toThrow(
+      QuotaExceededError,
+    );
   });
 
   it("should enforce event throughput limit in sliding window", async () => {
@@ -53,9 +55,9 @@ describe("QuotaLimiter", () => {
     await limiter.checkBatch(accountId, workspaceId, deviceId, 30, 100);
 
     // 30 more events exceeds 50 limit
-    await expect(
-      limiter.checkBatch(accountId, workspaceId, deviceId, 30, 100),
-    ).rejects.toThrow(QuotaExceededError);
+    await expect(limiter.checkBatch(accountId, workspaceId, deviceId, 30, 100)).rejects.toThrow(
+      QuotaExceededError,
+    );
   });
 
   it("should enforce bandwidth bytes quota in sliding window", async () => {
@@ -65,8 +67,8 @@ describe("QuotaLimiter", () => {
     await limiter.checkBatch(accountId, workspaceId, deviceId, 1, 3000);
 
     // 3000 more bytes exceeds 5000 limit
-    await expect(
-      limiter.checkBatch(accountId, workspaceId, deviceId, 1, 3000),
-    ).rejects.toThrow(QuotaExceededError);
+    await expect(limiter.checkBatch(accountId, workspaceId, deviceId, 1, 3000)).rejects.toThrow(
+      QuotaExceededError,
+    );
   });
 });

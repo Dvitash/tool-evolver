@@ -1,16 +1,16 @@
+import type { NormalizedSessionEvent } from "@tool-evolver/contracts";
 import { describe, expect, it } from "vitest";
-import { NormalizedSessionEvent } from "@tool-evolver/contracts";
 import { MemoryDatabasePool } from "../../src/db/client.js";
 import { runMigrations } from "../../src/db/migrations.js";
 import { OutboxRepository } from "../../src/db/outbox.js";
 import { createJobEnvelope } from "../../src/queue/envelope.js";
 import {
   StoreObservationBatchConsumer,
-  StoreObservationBatchPayload,
+  type StoreObservationBatchPayload,
 } from "../../src/storage/consumer.js";
 import { ObservationRepository } from "../../src/storage/repositories/observation-repository.js";
 import { SessionRepository } from "../../src/storage/repositories/session-repository.js";
-import { TenantContext } from "../../src/tenant.js";
+import type { TenantContext } from "../../src/tenant.js";
 
 describe("StoreObservationBatchConsumer", () => {
   const setup = async () => {
@@ -26,10 +26,10 @@ describe("StoreObservationBatchConsumer", () => {
       deviceId: "dev-consumer",
     };
 
-    await pool.query(
-      `INSERT INTO accounts (id, name) VALUES ($1, $2)`,
-      ["acc-consumer", "Consumer Corp"],
-    );
+    await pool.query(`INSERT INTO accounts (id, name) VALUES ($1, $2)`, [
+      "acc-consumer",
+      "Consumer Corp",
+    ]);
     await pool.query(
       `INSERT INTO workspaces (id, account_id, name, slug) VALUES ($1, $2, $3, $4)`,
       ["ws-consumer", "acc-consumer", "Consumer Workspace", "consumer"],

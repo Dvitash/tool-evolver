@@ -1,20 +1,20 @@
 import { randomUUID } from "node:crypto";
 import type { DatabasePool, Queryable } from "../../db/client.js";
-import {
-  type AnomalyAlertRecord,
-  type AnomalyQueryFilter,
-  type AnomalySeverity,
-  type AnomalyType,
-  type BucketQueryFilter,
-  type CalibrationQueryFilter,
-  type CalibrationRecord,
-  type DecisionOutcome,
-  type EfficiencyMetricRecord,
-  type EfficiencyQueryFilter,
-  type RolloutMetricWindowRecord,
-  type RolloutWindowQueryFilter,
-  type TelemetryBucketRecord,
-  type TelemetryReceiptEntity,
+import type {
+  AnomalyAlertRecord,
+  AnomalyQueryFilter,
+  AnomalySeverity,
+  AnomalyType,
+  BucketQueryFilter,
+  CalibrationQueryFilter,
+  CalibrationRecord,
+  DecisionOutcome,
+  EfficiencyMetricRecord,
+  EfficiencyQueryFilter,
+  RolloutMetricWindowRecord,
+  RolloutWindowQueryFilter,
+  TelemetryBucketRecord,
+  TelemetryReceiptEntity,
 } from "../types.js";
 
 /**
@@ -25,7 +25,11 @@ export interface IMetricsRepository {
   getBucket(workspaceId: string, bucketId: string): Promise<TelemetryBucketRecord | null>;
   queryBuckets(filter: BucketQueryFilter): Promise<TelemetryBucketRecord[]>;
   saveRolloutMetricWindow(window: RolloutMetricWindowRecord): Promise<void>;
-  getLatestRolloutMetricWindow(workspaceId: string, toolId: string, version: string): Promise<RolloutMetricWindowRecord | null>;
+  getLatestRolloutMetricWindow(
+    workspaceId: string,
+    toolId: string,
+    version: string,
+  ): Promise<RolloutMetricWindowRecord | null>;
   queryRolloutMetricWindows(filter: RolloutWindowQueryFilter): Promise<RolloutMetricWindowRecord[]>;
   saveEfficiencyMetric(metric: EfficiencyMetricRecord): Promise<void>;
   queryEfficiencyMetrics(filter: EfficiencyQueryFilter): Promise<EfficiencyMetricRecord[]>;
@@ -34,7 +38,10 @@ export interface IMetricsRepository {
   saveAnomalyAlert(alert: AnomalyAlertRecord): Promise<void>;
   queryAnomalyAlerts(filter: AnomalyQueryFilter): Promise<AnomalyAlertRecord[]>;
   resolveAnomalyAlert(workspaceId: string, alertId: string, resolvedAt?: string): Promise<boolean>;
-  deleteTenantAnalytics(accountId: string, workspaceId: string): Promise<{
+  deleteTenantAnalytics(
+    accountId: string,
+    workspaceId: string,
+  ): Promise<{
     deletedBuckets: number;
     deletedWindows: number;
     deletedEfficiency: number;
@@ -42,7 +49,10 @@ export interface IMetricsRepository {
     deletedAnomalies: number;
     deletedReceipts: number;
   }>;
-  exportTenantAnalytics(accountId: string, workspaceId: string): Promise<{
+  exportTenantAnalytics(
+    accountId: string,
+    workspaceId: string,
+  ): Promise<{
     buckets: TelemetryBucketRecord[];
     windows: RolloutMetricWindowRecord[];
     efficiency: EfficiencyMetricRecord[];
@@ -230,7 +240,9 @@ export class MetricsRepository implements IMetricsRepository {
     return this.mapRowToRolloutWindow(res.rows[0]);
   }
 
-  async queryRolloutMetricWindows(filter: RolloutWindowQueryFilter): Promise<RolloutMetricWindowRecord[]> {
+  async queryRolloutMetricWindows(
+    filter: RolloutWindowQueryFilter,
+  ): Promise<RolloutMetricWindowRecord[]> {
     let sql = `SELECT * FROM rollout_metric_windows WHERE workspace_id = $1`;
     const params: unknown[] = [filter.workspaceId];
     let paramIndex = 2;
@@ -481,7 +493,11 @@ export class MetricsRepository implements IMetricsRepository {
     return res.rows.map((row) => this.mapRowToAnomalyAlert(row));
   }
 
-  async resolveAnomalyAlert(workspaceId: string, alertId: string, resolvedAt?: string): Promise<boolean> {
+  async resolveAnomalyAlert(
+    workspaceId: string,
+    alertId: string,
+    resolvedAt?: string,
+  ): Promise<boolean> {
     const now = resolvedAt ?? new Date().toISOString();
     const res = await this.pool.query(
       `UPDATE anomaly_alerts
@@ -507,12 +523,30 @@ export class MetricsRepository implements IMetricsRepository {
     deletedAnomalies: number;
     deletedReceipts: number;
   }> {
-    const bRes = await this.pool.query(`DELETE FROM telemetry_buckets WHERE account_id = $1 AND workspace_id = $2`, [accountId, workspaceId]);
-    const wRes = await this.pool.query(`DELETE FROM rollout_metric_windows WHERE account_id = $1 AND workspace_id = $2`, [accountId, workspaceId]);
-    const eRes = await this.pool.query(`DELETE FROM efficiency_metrics WHERE account_id = $1 AND workspace_id = $2`, [accountId, workspaceId]);
-    const cRes = await this.pool.query(`DELETE FROM evaluation_calibrations WHERE account_id = $1 AND workspace_id = $2`, [accountId, workspaceId]);
-    const aRes = await this.pool.query(`DELETE FROM anomaly_alerts WHERE account_id = $1 AND workspace_id = $2`, [accountId, workspaceId]);
-    const rRes = await this.pool.query(`DELETE FROM telemetry_receipts WHERE account_id = $1 AND workspace_id = $2`, [accountId, workspaceId]);
+    const bRes = await this.pool.query(
+      `DELETE FROM telemetry_buckets WHERE account_id = $1 AND workspace_id = $2`,
+      [accountId, workspaceId],
+    );
+    const wRes = await this.pool.query(
+      `DELETE FROM rollout_metric_windows WHERE account_id = $1 AND workspace_id = $2`,
+      [accountId, workspaceId],
+    );
+    const eRes = await this.pool.query(
+      `DELETE FROM efficiency_metrics WHERE account_id = $1 AND workspace_id = $2`,
+      [accountId, workspaceId],
+    );
+    const cRes = await this.pool.query(
+      `DELETE FROM evaluation_calibrations WHERE account_id = $1 AND workspace_id = $2`,
+      [accountId, workspaceId],
+    );
+    const aRes = await this.pool.query(
+      `DELETE FROM anomaly_alerts WHERE account_id = $1 AND workspace_id = $2`,
+      [accountId, workspaceId],
+    );
+    const rRes = await this.pool.query(
+      `DELETE FROM telemetry_receipts WHERE account_id = $1 AND workspace_id = $2`,
+      [accountId, workspaceId],
+    );
 
     return {
       deletedBuckets: bRes.rowCount ?? 0,
@@ -611,19 +645,30 @@ export class MetricsRepository implements IMetricsRepository {
       p50LatencyMs: Number(row.p50_latency_ms ?? 0),
       p95LatencyMs: Number(row.p95_latency_ms ?? 0),
       p99LatencyMs: Number(row.p99_latency_ms ?? 0),
-      baselineP95LatencyMs: row.baseline_p95_latency_ms !== null && row.baseline_p95_latency_ms !== undefined ? Number(row.baseline_p95_latency_ms) : undefined,
-      latencyRegressionPercent: row.latency_regression_percent !== null && row.latency_regression_percent !== undefined ? Number(row.latency_regression_percent) : undefined,
+      baselineP95LatencyMs:
+        row.baseline_p95_latency_ms !== null && row.baseline_p95_latency_ms !== undefined
+          ? Number(row.baseline_p95_latency_ms)
+          : undefined,
+      latencyRegressionPercent:
+        row.latency_regression_percent !== null && row.latency_regression_percent !== undefined
+          ? Number(row.latency_regression_percent)
+          : undefined,
       policyViolations: Number(row.policy_violations ?? 0),
       securityViolations: Number(row.security_violations ?? 0),
       quarantineSignals: Number(row.quarantine_signals ?? 0),
       capabilityBreaches: Number(row.capability_breaches ?? 0),
       schemaMismatches: Number(row.schema_mismatches ?? 0),
-      signatureValid: row.signature_valid === undefined || row.signature_valid === null ? true : Boolean(row.signature_valid),
+      signatureValid:
+        row.signature_valid === undefined || row.signature_valid === null
+          ? true
+          : Boolean(row.signature_valid),
       activeDevicesCount: Number(row.active_devices_count ?? 0),
       offlineDevicesCount: Number(row.offline_devices_count ?? 0),
       deviceReportingRate: Number(row.device_reporting_rate ?? 1.0),
       quarantineReasons: this.parseJson<string[]>(row.quarantine_reasons, []),
-      securityViolationDetails: this.parseJson<Array<{ type: string; reason: string; timestamp: string }>>(row.security_violation_details, []),
+      securityViolationDetails: this.parseJson<
+        Array<{ type: string; reason: string; timestamp: string }>
+      >(row.security_violation_details, []),
       confidence: Number(row.confidence ?? 0),
       materializedAt: String(row.materialized_at),
     };

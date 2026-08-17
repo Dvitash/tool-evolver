@@ -1,17 +1,8 @@
-import type {
-  CapabilityEnvelope,
-  CapabilityManifest,
-  ToolManifest,
-} from "@tool-evolver/contracts";
-import type { CandidateValidationResult, StaticAnalysisFinding } from "../testing/types.js";
+import type { CapabilityEnvelope, CapabilityManifest, ToolManifest } from "@tool-evolver/contracts";
 import type { HistoricalReplayResult } from "../replay/types.js";
-import type {
-  EvaluationPolicy,
-  GateCheckResult,
-  HardGateResult,
-  RiskTier,
-} from "./types.js";
+import type { CandidateValidationResult, StaticAnalysisFinding } from "../testing/types.js";
 import { classifyRiskTier } from "./policy.js";
+import type { EvaluationPolicy, GateCheckResult, HardGateResult, RiskTier } from "./types.js";
 
 /**
  * Parameter bundle for hard gate evaluation.
@@ -35,7 +26,15 @@ export class HardGateEvaluator {
    * Evaluates all hard gates and returns an aggregated HardGateResult.
    */
   evaluate(context: HardGateEvaluationContext): HardGateResult {
-    const { policy, manifest, sourceCode, requiredCapabilities, validationResult, replayResult, envelope } = context;
+    const {
+      policy,
+      manifest,
+      sourceCode,
+      requiredCapabilities,
+      validationResult,
+      replayResult,
+      envelope,
+    } = context;
     const riskTier = context.riskTier ?? classifyRiskTier(manifest, requiredCapabilities);
     const tierThresholds = policy.riskTierThresholds[riskTier];
 
@@ -53,7 +52,13 @@ export class HardGateEvaluator {
 
     // 3. Manifest Capability Parity Gate
     if (policy.hardGates.requireManifestParity) {
-      gateResults.push(this.evaluateManifestParityGate(manifest, requiredCapabilities, validationResult.staticFindings));
+      gateResults.push(
+        this.evaluateManifestParityGate(
+          manifest,
+          requiredCapabilities,
+          validationResult.staticFindings,
+        ),
+      );
     }
 
     // 4. Envelope Bounds Gate
@@ -63,7 +68,13 @@ export class HardGateEvaluator {
 
     // 5. Critical Security Findings Gate
     if (policy.hardGates.forbidCriticalSecurityFindings) {
-      gateResults.push(this.evaluateSecurityFindingsGate(validationResult.staticFindings, policy, tierThresholds.maxAllowedStaticWarnings));
+      gateResults.push(
+        this.evaluateSecurityFindingsGate(
+          validationResult.staticFindings,
+          policy,
+          tierThresholds.maxAllowedStaticWarnings,
+        ),
+      );
     }
 
     // 6. Generated Tests Passing Gate
@@ -73,12 +84,24 @@ export class HardGateEvaluator {
 
     // 7. Replay Divergence Gate
     if (policy.hardGates.forbidReplayDivergence) {
-      gateResults.push(this.evaluateReplayDivergenceGate(replayResult, tierThresholds.minReplayPassRate, tierThresholds.minReplayScenarioCount));
+      gateResults.push(
+        this.evaluateReplayDivergenceGate(
+          replayResult,
+          tierThresholds.minReplayPassRate,
+          tierThresholds.minReplayScenarioCount,
+        ),
+      );
     }
 
     // 8. Evidence Completeness Gate
     if (policy.hardGates.requireEvidenceCompleteness) {
-      gateResults.push(this.evaluateEvidenceCompletenessGate(validationResult, replayResult, tierThresholds.minReplayScenarioCount));
+      gateResults.push(
+        this.evaluateEvidenceCompletenessGate(
+          validationResult,
+          replayResult,
+          tierThresholds.minReplayScenarioCount,
+        ),
+      );
     }
 
     const failedGates = gateResults.filter((g) => !g.passed).map((g) => g.gate);
@@ -122,7 +145,7 @@ export class HardGateEvaluator {
   private evaluateCompileSchemaGate(
     manifest: ToolManifest,
     sourceCode: string,
-    validationResult: CandidateValidationResult
+    validationResult: CandidateValidationResult,
   ): GateCheckResult {
     if (!sourceCode || sourceCode.trim().length === 0) {
       return {
@@ -147,7 +170,8 @@ export class HardGateEvaluator {
     }
 
     if (validationResult.typecheckPassed === false) {
-      const errorMsg = validationResult.typecheckErrors?.join("; ") ?? "TypeScript compilation failed.";
+      const errorMsg =
+        validationResult.typecheckErrors?.join("; ") ?? "TypeScript compilation failed.";
       return {
         gate: "compile_schema_pass",
         passed: false,
@@ -183,7 +207,9 @@ export class HardGateEvaluator {
    */
   private evaluateForbiddenImportsGate(findings: StaticAnalysisFinding[]): GateCheckResult {
     const forbidden = findings.filter(
-      (f) => (f.category === "forbidden_import" || f.category === "forbidden_api") && f.severity === "error"
+      (f) =>
+        (f.category === "forbidden_import" || f.category === "forbidden_api") &&
+        f.severity === "error",
     );
 
     if (forbidden.length > 0) {
@@ -195,7 +221,8 @@ export class HardGateEvaluator {
         message: `Forbidden module import or unauthorized API detected: ${msgs}`,
         details: { forbiddenFindings: forbidden },
         canRepair: true,
-        repairHint: "Remove forbidden module imports and unauthorized node APIs; use platform SDK / broker APIs instead.",
+        repairHint:
+          "Remove forbidden module imports and unauthorized node APIs; use platform SDK / broker APIs instead.",
       };
     }
 
@@ -213,12 +240,12 @@ export class HardGateEvaluator {
   private evaluateManifestParityGate(
     manifest: ToolManifest,
     requiredCapabilities: CapabilityManifest | undefined,
-    findings: StaticAnalysisFinding[]
+    findings: StaticAnalysisFinding[],
   ): GateCheckResult {
     const parityFindings = findings.filter(
       (f) =>
         (f.category === "undeclared_capability" || f.category === "broker_manifest_mismatch") &&
-        f.severity === "error"
+        f.severity === "error",
     );
 
     if (parityFindings.length > 0) {
@@ -230,7 +257,8 @@ export class HardGateEvaluator {
         message: `Capabilities used in code do not match manifest declarations: ${msgs}`,
         details: { parityFindings },
         canRepair: true,
-        repairHint: "Declare all required capabilities in manifest or remove undeclared broker API calls from source code.",
+        repairHint:
+          "Declare all required capabilities in manifest or remove undeclared broker API calls from source code.",
       };
     }
 
@@ -248,7 +276,7 @@ export class HardGateEvaluator {
   private evaluateEnvelopeBoundsGate(
     manifest: ToolManifest,
     requiredCapabilities: CapabilityManifest | undefined,
-    envelope: CapabilityEnvelope
+    envelope: CapabilityEnvelope,
   ): GateCheckResult {
     const cap = requiredCapabilities ?? manifest.capabilities;
     const violations: string[] = [];
@@ -280,14 +308,16 @@ export class HardGateEvaluator {
         if (envelope.net.allowedDomains.length > 0 && cap.net.allowedDomains) {
           for (const dom of cap.net.allowedDomains) {
             if (!envelope.net.allowedDomains.includes(dom)) {
-              violations.push(`Candidate requests access to domain '${dom}' not permitted by envelope.`);
+              violations.push(
+                `Candidate requests access to domain '${dom}' not permitted by envelope.`,
+              );
             }
           }
         }
       }
 
       // Check commands
-      if (cap.command && cap.command.allowedCommands && cap.command.allowedCommands.length > 0) {
+      if (cap.command?.allowedCommands && cap.command.allowedCommands.length > 0) {
         if (envelope.command.allowedCommands.length === 0) {
           violations.push("Candidate requests command execution prohibited by workspace envelope.");
         } else {
@@ -300,7 +330,7 @@ export class HardGateEvaluator {
       }
 
       // Check secrets
-      if (cap.secrets && cap.secrets.allowedSecretNames && cap.secrets.allowedSecretNames.length > 0) {
+      if (cap.secrets?.allowedSecretNames && cap.secrets.allowedSecretNames.length > 0) {
         if (envelope.secrets.allowedSecretNames.length === 0) {
           violations.push("Candidate requests secret access prohibited by workspace envelope.");
         } else {
@@ -339,7 +369,7 @@ export class HardGateEvaluator {
   private evaluateSecurityFindingsGate(
     findings: StaticAnalysisFinding[],
     policy: EvaluationPolicy,
-    maxAllowedWarnings = 5
+    maxAllowedWarnings = 5,
   ): GateCheckResult {
     const errorFindings = findings.filter((f) => f.severity === "error");
     if (errorFindings.length > 0) {
@@ -400,7 +430,11 @@ export class HardGateEvaluator {
       };
     }
 
-    const { failed: failedCount, totalTests: totalCount, passed: passedCount } = validationResult.testReport;
+    const {
+      failed: failedCount,
+      totalTests: totalCount,
+      passed: passedCount,
+    } = validationResult.testReport;
     if (failedCount > 0) {
       const failedTests = validationResult.testReport.results
         .filter((r) => r.status === "fail" || r.status === "error" || r.status === "timeout")
@@ -441,7 +475,7 @@ export class HardGateEvaluator {
   private evaluateReplayDivergenceGate(
     replayResult: HistoricalReplayResult | undefined,
     minPassRate: number,
-    minScenarioCount: number
+    minScenarioCount: number,
   ): GateCheckResult {
     if (!replayResult) {
       // Replay not executed; if required, will be caught by evidence completeness
@@ -475,14 +509,15 @@ export class HardGateEvaluator {
         message: `Repairable divergence in historical replay: ${findings || "Replay invariant mismatch"}`,
         details: { divergenceFindings: replayResult.divergenceFindings },
         canRepair: true,
-        repairHint: "Adjust tool output format or parameter mapping to preserve historical invariant behavior.",
+        repairHint:
+          "Adjust tool output format or parameter mapping to preserve historical invariant behavior.",
       };
     }
 
     // Check critical invariant evaluations across scenarios
     for (const sc of replayResult.scenarioResults) {
       const criticalFailures = sc.invariantEvaluations.filter(
-        (inv) => !inv.passed && inv.severity === "critical"
+        (inv) => !inv.passed && inv.severity === "critical",
       );
       if (criticalFailures.length > 0) {
         const msgs = criticalFailures.map((i) => i.invariantName).join(", ");
@@ -506,7 +541,12 @@ export class HardGateEvaluator {
           passed: false,
           category: "replay",
           message: `Replay pass rate ${(passRate * 100).toFixed(1)}% is below required minimum ${(minPassRate * 100).toFixed(1)}% (${replayResult.passedScenarioCount}/${replayResult.totalScenarioCount} scenarios passed).`,
-          details: { passRate, minPassRate, passed: replayResult.passedScenarioCount, total: replayResult.totalScenarioCount },
+          details: {
+            passRate,
+            minPassRate,
+            passed: replayResult.passedScenarioCount,
+            total: replayResult.totalScenarioCount,
+          },
           canRepair: true,
           repairHint: "Fix edge case regressions in failing historical replay scenarios.",
         };
@@ -527,7 +567,7 @@ export class HardGateEvaluator {
   private evaluateEvidenceCompletenessGate(
     validationResult: CandidateValidationResult,
     replayResult: HistoricalReplayResult | undefined,
-    minReplayScenarioCount: number
+    minReplayScenarioCount: number,
   ): GateCheckResult {
     if (validationResult.status === "infrastructure_fail") {
       return {
@@ -551,7 +591,10 @@ export class HardGateEvaluator {
       };
     }
 
-    if (minReplayScenarioCount > 0 && (!replayResult || replayResult.totalScenarioCount < minReplayScenarioCount)) {
+    if (
+      minReplayScenarioCount > 0 &&
+      (!replayResult || replayResult.totalScenarioCount < minReplayScenarioCount)
+    ) {
       const current = replayResult?.totalScenarioCount ?? 0;
       return {
         gate: "evidence_completeness",

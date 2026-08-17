@@ -1,8 +1,6 @@
-import nodePath from "node:path";
 import { Buffer } from "node:buffer";
-import type {
-  NormalizedSessionEvent,
-} from "@tool-evolver/contracts";
+import nodePath from "node:path";
+import type { NormalizedSessionEvent } from "@tool-evolver/contracts";
 import type {
   BrokeredFetchResponse,
   CmdBrokerClient,
@@ -11,13 +9,9 @@ import type {
   SecretBrokerClient,
   ToolBrokerClient,
 } from "@tool-evolver/runtime";
-import type {
-  EvidenceSource,
-  ExecutedBrokerOperation,
-  VirtualBrokerState,
-} from "./types.js";
-import type { Episode } from "../opportunity/types.js";
 import type { ResolvedEvidenceSet } from "../../storage/models/evidence.js";
+import type { Episode } from "../opportunity/types.js";
+import type { EvidenceSource, ExecutedBrokerOperation, VirtualBrokerState } from "./types.js";
 
 /**
  * Deterministic pseudo-random number generator using Mulberry32 algorithm.
@@ -33,7 +27,7 @@ export class DeterministicRandom {
       }
       this.state = h;
     } else {
-      this.state = (seed >>> 0) || 1;
+      this.state = seed >>> 0 || 1;
     }
   }
 
@@ -85,10 +79,7 @@ export class VirtualFsBroker implements FsBrokerClient {
   private readonly modifiedFiles = new Map<string, string>();
   private readonly trace: ExecutedBrokerOperation[];
 
-  constructor(
-    options: VirtualBrokerState["fs"] = {},
-    trace: ExecutedBrokerOperation[] = []
-  ) {
+  constructor(options: VirtualBrokerState["fs"] = {}, trace: ExecutedBrokerOperation[] = []) {
     this.simulateErrors = options.simulateErrors ?? {};
     this.readOnly = options.readOnly ?? false;
     this.trace = trace;
@@ -115,7 +106,7 @@ export class VirtualFsBroker implements FsBrokerClient {
     args: unknown[],
     result?: unknown,
     error?: string,
-    durationMs = 1
+    durationMs = 1,
   ): void {
     this.trace.push({
       service: "fs",
@@ -130,17 +121,23 @@ export class VirtualFsBroker implements FsBrokerClient {
 
   async readFile(
     filePath: string,
-    encoding: "utf-8" | "base64" | "buffer" = "utf-8"
+    encoding: "utf-8" | "base64" | "buffer" = "utf-8",
   ): Promise<string | Uint8Array> {
     const start = Date.now();
     const normalized = this.normalizePath(filePath);
 
-    if (this.simulateErrors[normalized] === "ENOENT" || this.simulateErrors[filePath] === "ENOENT") {
+    if (
+      this.simulateErrors[normalized] === "ENOENT" ||
+      this.simulateErrors[filePath] === "ENOENT"
+    ) {
       const err = `ENOENT: no such file or directory, open '${filePath}'`;
       this.recordOp("readFile", [filePath, encoding], undefined, err, Date.now() - start);
       throw new Error(err);
     }
-    if (this.simulateErrors[normalized] === "EACCES" || this.simulateErrors[filePath] === "EACCES") {
+    if (
+      this.simulateErrors[normalized] === "EACCES" ||
+      this.simulateErrors[filePath] === "EACCES"
+    ) {
       const err = `EACCES: permission denied, open '${filePath}'`;
       this.recordOp("readFile", [filePath, encoding], undefined, err, Date.now() - start);
       throw new Error(err);
@@ -157,9 +154,10 @@ export class VirtualFsBroker implements FsBrokerClient {
     if (encoding === "buffer") {
       result = typeof content === "string" ? Buffer.from(content, "utf-8") : content;
     } else if (encoding === "base64") {
-      result = typeof content === "string"
-        ? Buffer.from(content, "utf-8").toString("base64")
-        : Buffer.from(content).toString("base64");
+      result =
+        typeof content === "string"
+          ? Buffer.from(content, "utf-8").toString("base64")
+          : Buffer.from(content).toString("base64");
     } else {
       result = typeof content === "string" ? content : Buffer.from(content).toString("utf-8");
     }
@@ -174,26 +172,51 @@ export class VirtualFsBroker implements FsBrokerClient {
 
     if (this.readOnly) {
       const err = `EROFS: read-only file system, open '${filePath}'`;
-      this.recordOp("writeFile", [filePath, typeof content === "string" ? content.slice(0, 100) : "[binary]"], undefined, err, Date.now() - start);
+      this.recordOp(
+        "writeFile",
+        [filePath, typeof content === "string" ? content.slice(0, 100) : "[binary]"],
+        undefined,
+        err,
+        Date.now() - start,
+      );
       throw new Error(err);
     }
-    if (this.simulateErrors[normalized] === "EACCES" || this.simulateErrors[filePath] === "EACCES") {
+    if (
+      this.simulateErrors[normalized] === "EACCES" ||
+      this.simulateErrors[filePath] === "EACCES"
+    ) {
       const err = `EACCES: permission denied, open '${filePath}'`;
-      this.recordOp("writeFile", [filePath, typeof content === "string" ? content.slice(0, 100) : "[binary]"], undefined, err, Date.now() - start);
+      this.recordOp(
+        "writeFile",
+        [filePath, typeof content === "string" ? content.slice(0, 100) : "[binary]"],
+        undefined,
+        err,
+        Date.now() - start,
+      );
       throw new Error(err);
     }
 
-    const stringContent = typeof content === "string" ? content : Buffer.from(content).toString("utf-8");
+    const stringContent =
+      typeof content === "string" ? content : Buffer.from(content).toString("utf-8");
     this.files.set(normalized, content);
     this.modifiedFiles.set(normalized, stringContent);
 
-    this.recordOp("writeFile", [filePath, typeof content === "string" ? content.slice(0, 100) : "[binary]"], { written: true }, undefined, Date.now() - start);
+    this.recordOp(
+      "writeFile",
+      [filePath, typeof content === "string" ? content.slice(0, 100) : "[binary]"],
+      { written: true },
+      undefined,
+      Date.now() - start,
+    );
   }
 
   async exists(filePath: string): Promise<boolean> {
     const start = Date.now();
     const normalized = this.normalizePath(filePath);
-    if (this.simulateErrors[normalized] === "ENOENT" || this.simulateErrors[filePath] === "ENOENT") {
+    if (
+      this.simulateErrors[normalized] === "ENOENT" ||
+      this.simulateErrors[filePath] === "ENOENT"
+    ) {
       this.recordOp("exists", [filePath], false, undefined, Date.now() - start);
       return false;
     }
@@ -202,7 +225,7 @@ export class VirtualFsBroker implements FsBrokerClient {
     return res;
   }
 
-  async listDir(dirPath: string = "/workspace"): Promise<string[]> {
+  async listDir(dirPath = "/workspace"): Promise<string[]> {
     const start = Date.now();
     const normalized = this.normalizePath(dirPath);
     const prefix = normalized.endsWith("/") ? normalized : `${normalized}/`;
@@ -221,7 +244,9 @@ export class VirtualFsBroker implements FsBrokerClient {
     return result;
   }
 
-  async stat(targetPath: string): Promise<{ size: number; isFile: boolean; isDirectory: boolean; mtime: string }> {
+  async stat(
+    targetPath: string,
+  ): Promise<{ size: number; isFile: boolean; isDirectory: boolean; mtime: string }> {
     const start = Date.now();
     const normalized = this.normalizePath(targetPath);
 
@@ -290,16 +315,16 @@ export class VirtualFsBroker implements FsBrokerClient {
  * In-memory deterministic Network broker client with operation recording.
  */
 export class VirtualNetBroker implements NetBrokerClient {
-  private readonly routes: Record<string, { status: number; body: unknown; headers?: Record<string, string> }>;
+  private readonly routes: Record<
+    string,
+    { status: number; body: unknown; headers?: Record<string, string> }
+  >;
   private readonly simulateTimeout: boolean;
   private readonly simulateNetworkError: boolean;
   private readonly networkRequests: Array<{ url: string; method: string }> = [];
   private readonly trace: ExecutedBrokerOperation[];
 
-  constructor(
-    options: VirtualBrokerState["net"] = {},
-    trace: ExecutedBrokerOperation[] = []
-  ) {
+  constructor(options: VirtualBrokerState["net"] = {}, trace: ExecutedBrokerOperation[] = []) {
     this.routes = options.routes ?? {};
     this.simulateTimeout = options.simulateTimeout ?? false;
     this.simulateNetworkError = options.simulateNetworkError ?? false;
@@ -311,7 +336,7 @@ export class VirtualNetBroker implements NetBrokerClient {
     args: unknown[],
     result?: unknown,
     error?: string,
-    durationMs = 1
+    durationMs = 1,
   ): void {
     this.trace.push({
       service: "net",
@@ -330,7 +355,7 @@ export class VirtualNetBroker implements NetBrokerClient {
       method?: string;
       headers?: Record<string, string>;
       body?: string;
-    }
+    },
   ): Promise<BrokeredFetchResponse> {
     const start = Date.now();
     const method = init?.method?.toUpperCase() ?? "GET";
@@ -400,7 +425,13 @@ export class VirtualNetBroker implements NetBrokerClient {
       bytes: async () => new Uint8Array(Buffer.from(bodyStr)),
     };
 
-    this.recordOp("fetch", [url, init], { status, ok: brokeredResponse.ok }, undefined, Date.now() - start);
+    this.recordOp(
+      "fetch",
+      [url, init],
+      { status, ok: brokeredResponse.ok },
+      undefined,
+      Date.now() - start,
+    );
     return brokeredResponse;
   }
 
@@ -413,15 +444,15 @@ export class VirtualNetBroker implements NetBrokerClient {
  * In-memory deterministic Command execution broker client with operation recording.
  */
 export class VirtualCmdBroker implements CmdBrokerClient {
-  private readonly commands: Record<string, { stdout?: string; stderr?: string; exitCode?: number }>;
+  private readonly commands: Record<
+    string,
+    { stdout?: string; stderr?: string; exitCode?: number }
+  >;
   private readonly simulateFailure: boolean;
   private readonly executedCommands: string[] = [];
   private readonly trace: ExecutedBrokerOperation[];
 
-  constructor(
-    options: VirtualBrokerState["cmd"] = {},
-    trace: ExecutedBrokerOperation[] = []
-  ) {
+  constructor(options: VirtualBrokerState["cmd"] = {}, trace: ExecutedBrokerOperation[] = []) {
     this.commands = options.commands ?? {};
     this.simulateFailure = options.simulateFailure ?? false;
     this.trace = trace;
@@ -432,7 +463,7 @@ export class VirtualCmdBroker implements CmdBrokerClient {
     args: unknown[],
     result?: unknown,
     error?: string,
-    durationMs = 1
+    durationMs = 1,
   ): void {
     this.trace.push({
       service: "cmd",
@@ -448,7 +479,7 @@ export class VirtualCmdBroker implements CmdBrokerClient {
   async exec(
     command: string,
     args: string[] = [],
-    options: { cwd?: string; env?: Record<string, string>; timeoutMs?: number } = {}
+    options: { cwd?: string; env?: Record<string, string>; timeoutMs?: number } = {},
   ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     const start = Date.now();
     const fullCmd = [command, ...args].join(" ").trim();
@@ -497,10 +528,7 @@ export class VirtualSecretBroker implements SecretBrokerClient {
   private readonly denyAccess: boolean;
   private readonly trace: ExecutedBrokerOperation[];
 
-  constructor(
-    options: VirtualBrokerState["secrets"] = {},
-    trace: ExecutedBrokerOperation[] = []
-  ) {
+  constructor(options: VirtualBrokerState["secrets"] = {}, trace: ExecutedBrokerOperation[] = []) {
     this.secrets = options.values ?? {};
     this.denyAccess = options.denyAccess ?? false;
     this.trace = trace;
@@ -511,7 +539,7 @@ export class VirtualSecretBroker implements SecretBrokerClient {
     args: unknown[],
     result?: unknown,
     error?: string,
-    durationMs = 1
+    durationMs = 1,
   ): void {
     this.trace.push({
       service: "secret",
@@ -556,7 +584,7 @@ export class VirtualToolBrokerClient implements ToolBrokerClient {
   async request<T = unknown>(
     service: "fs" | "net" | "cmd" | "secret",
     operation: string,
-    params: Record<string, unknown> = {}
+    params: Record<string, unknown> = {},
   ): Promise<T> {
     switch (service) {
       case "fs": {
@@ -582,7 +610,10 @@ export class VirtualToolBrokerClient implements ToolBrokerClient {
       }
       case "net": {
         if (operation === "fetch") {
-          return (await this.net.fetch(String(params.url), params.init as Record<string, unknown>)) as T;
+          return (await this.net.fetch(
+            String(params.url),
+            params.init as Record<string, unknown>,
+          )) as T;
         }
         throw new Error(`Unsupported net operation '${operation}' in virtual broker`);
       }
@@ -591,7 +622,7 @@ export class VirtualToolBrokerClient implements ToolBrokerClient {
           return (await this.cmd.exec(
             String(params.command),
             params.args as string[],
-            params.options as Record<string, unknown>
+            params.options as Record<string, unknown>,
           )) as T;
         }
         throw new Error(`Unsupported cmd operation '${operation}' in virtual broker`);
@@ -642,7 +673,17 @@ export class VirtualBrokerReconstructor {
       if (!first) return [];
       if ("payload" in first && "eventType" in first) {
         // NormalizedEventEntity[] -> reconstruct NormalizedSessionEvent[]
-        return (evidence.events as unknown as Array<{ id: string; sessionId: string; eventType: string; timestamp: string; schemaVersion: string; payload: Record<string, unknown>; causalSequence?: number }>).map((ent) => {
+        return (
+          evidence.events as unknown as Array<{
+            id: string;
+            sessionId: string;
+            eventType: string;
+            timestamp: string;
+            schemaVersion: string;
+            payload: Record<string, unknown>;
+            causalSequence?: number;
+          }>
+        ).map((ent) => {
           if (ent.payload && typeof ent.payload === "object" && "type" in ent.payload) {
             return ent.payload as unknown as NormalizedSessionEvent;
           }
@@ -669,7 +710,10 @@ export class VirtualBrokerReconstructor {
    */
   static buildFromEvents(events: NormalizedSessionEvent[]): VirtualBrokerState {
     const files: Record<string, string> = {};
-    const routes: Record<string, { status: number; body: unknown; headers?: Record<string, string> }> = {};
+    const routes: Record<
+      string,
+      { status: number; body: unknown; headers?: Record<string, string> }
+    > = {};
     const commands: Record<string, { stdout?: string; stderr?: string; exitCode?: number }> = {};
     const secrets: Record<string, string> = {};
 
@@ -713,7 +757,10 @@ export class VirtualBrokerReconstructor {
         const pathVal = params.path ?? params.filePath ?? params.file ?? params.targetPath;
         if (typeof pathVal === "string" && pathVal.length > 0) {
           if (!files[pathVal]) {
-            const initialContent = typeof params.content === "string" ? params.content : `// File content for ${pathVal}\n`;
+            const initialContent =
+              typeof params.content === "string"
+                ? params.content
+                : `// File content for ${pathVal}\n`;
             files[pathVal] = initialContent;
           }
         }
@@ -747,7 +794,10 @@ export class VirtualBrokerReconstructor {
         const tr = ev as unknown as { toolName?: string; result?: unknown; isError?: boolean };
         const toolName = tr.toolName?.toLowerCase() ?? "";
         // If it was a read tool and result is a string, update file content
-        if ((toolName.includes("read") || toolName.includes("cat")) && typeof tr.result === "string") {
+        if (
+          (toolName.includes("read") || toolName.includes("cat")) &&
+          typeof tr.result === "string"
+        ) {
           // Keep existing content
         }
       }
@@ -788,9 +838,7 @@ export class VirtualBrokerReconstructor {
   /**
    * Factory creating a VirtualToolBrokerClient for execution.
    */
-  static createClient(
-    state: VirtualBrokerState = {}
-  ): VirtualToolBrokerClient {
+  static createClient(state: VirtualBrokerState = {}): VirtualToolBrokerClient {
     return new VirtualToolBrokerClient(state);
   }
 }

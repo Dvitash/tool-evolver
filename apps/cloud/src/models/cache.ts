@@ -1,5 +1,5 @@
 import { hashCanonical } from "@tool-evolver/contracts";
-import { InferenceProvenance } from "./types.js";
+import type { InferenceProvenance } from "./types.js";
 
 /**
  * Cached inference entry payload.
@@ -59,14 +59,16 @@ export class InferenceCache {
   private entries: Map<string, CachedInferenceEntry<unknown>> = new Map();
   private maxEntries: number;
   private defaultTtlSeconds: number;
-  private hits: number = 0;
-  private misses: number = 0;
-  private evictions: number = 0;
+  private hits = 0;
+  private misses = 0;
+  private evictions = 0;
 
-  constructor(options: {
-    maxEntries?: number;
-    defaultTtlSeconds?: number;
-  } = {}) {
+  constructor(
+    options: {
+      maxEntries?: number;
+      defaultTtlSeconds?: number;
+    } = {},
+  ) {
     this.maxEntries = options.maxEntries ?? 5000;
     this.defaultTtlSeconds = options.defaultTtlSeconds ?? 3600;
   }

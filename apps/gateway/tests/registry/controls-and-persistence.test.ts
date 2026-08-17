@@ -23,11 +23,43 @@ function makeManifest(overrides?: Partial<ToolManifest>): ToolManifest {
       maxOutputSizeBytes: 1048576,
     },
     capabilities: overrides?.capabilities ?? {
-      fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
-      net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https" as const], allowLocalhost: false, denyPrivateRanges: true },
-      command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-      secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-      limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+      fs: {
+        readPaths: [],
+        writePaths: [],
+        allowWorkspaceRoot: true,
+        allowTemp: true,
+        denyPaths: [],
+        maxFileSizeBytes: 10485760,
+      },
+      net: {
+        allowOutbound: false,
+        allowedDomains: [],
+        allowedHosts: [],
+        allowedPorts: [],
+        allowedProtocols: ["https" as const],
+        allowLocalhost: false,
+        denyPrivateRanges: true,
+      },
+      command: {
+        allowShellExecution: false,
+        allowedCommands: [],
+        allowedBinaries: [],
+        forbiddenPatterns: [],
+        allowEnvPassthrough: [],
+      },
+      secrets: {
+        allowedSecretNames: [],
+        allowedPrefixes: [],
+        denyDirectRead: true,
+        injectAsEnv: true,
+      },
+      limits: {
+        maxConcurrentExecutions: 4,
+        maxCpuUsagePercent: 100,
+        maxMemoryMb: 128,
+        maxExecutionTimeMs: 30000,
+        maxOutputSizeBytes: 1048576,
+      },
     },
     limits: overrides?.limits ?? {
       timeoutMs: 30000,
@@ -60,10 +92,10 @@ describe("ToolRegistry - User Pin, Disable & SQLite Persistence", () => {
     await registry.pinToolVersion("tool_pinned", "1.0.0", "ws-pin");
 
     const controls = await registry.controls.getControls("ws-pin");
-    expect(controls.pinnedVersions["tool_pinned"]).toBe("1.0.0");
+    expect(controls.pinnedVersions.tool_pinned).toBe("1.0.0");
 
     const catalog = await registry.resolveCatalog("ws-pin");
-    expect(catalog.tools["tool_pinned"].version).toBe("1.0.0");
+    expect(catalog.tools.tool_pinned.version).toBe("1.0.0");
   });
 
   it("omits disabled tools from resolved catalog and restores on enable", async () => {
@@ -74,17 +106,17 @@ describe("ToolRegistry - User Pin, Disable & SQLite Persistence", () => {
     await registry.activateToolVersion("tool_toggle", "1.0.0", "ws-disable");
 
     const before = await registry.resolveCatalog("ws-disable");
-    expect(before.tools["tool_toggle"]).toBeDefined();
+    expect(before.tools.tool_toggle).toBeDefined();
 
     // Disable tool
     await registry.disableTool("tool_toggle", "ws-disable");
     const disabledCatalog = await registry.resolveCatalog("ws-disable");
-    expect(disabledCatalog.tools["tool_toggle"]).toBeUndefined();
+    expect(disabledCatalog.tools.tool_toggle).toBeUndefined();
 
     // Enable tool
     await registry.enableTool("tool_toggle", "ws-disable");
     const enabledCatalog = await registry.resolveCatalog("ws-disable");
-    expect(enabledCatalog.tools["tool_toggle"]).toBeDefined();
+    expect(enabledCatalog.tools.tool_toggle).toBeDefined();
   });
 
   it("persists user pin and disable controls across gateway restart using @tool-evolver/db", async () => {
@@ -105,10 +137,10 @@ describe("ToolRegistry - User Pin, Disable & SQLite Persistence", () => {
     await registry2.activateToolVersion("tool_persist", "1.0.0", "ws-db");
 
     const reloadedControls = await registry2.controls.getControls("ws-db");
-    expect(reloadedControls.pinnedVersions["tool_persist"]).toBe("1.0.0");
+    expect(reloadedControls.pinnedVersions.tool_persist).toBe("1.0.0");
     expect(reloadedControls.disabledTools).toContain("tool_other");
 
     const reloadedCatalog = await registry2.resolveCatalog("ws-db");
-    expect(reloadedCatalog.tools["tool_persist"].version).toBe("1.0.0");
+    expect(reloadedCatalog.tools.tool_persist.version).toBe("1.0.0");
   });
 });

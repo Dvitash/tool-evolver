@@ -109,15 +109,15 @@ describe("Protocol Framing & Decoding", () => {
   it("throws INVALID_REQUEST on non-object or invalid jsonrpc version", () => {
     const decoder = new McpFrameDecoder();
     expect(() => {
-      decoder.push("[\"not an object\"]\n");
+      decoder.push('["not an object"]\n');
     }).toThrowError(McpProtocolError);
 
     expect(() => {
-      decoder.push("{\"jsonrpc\": \"1.0\", \"id\": 1, \"method\": \"ping\"}\n");
+      decoder.push('{"jsonrpc": "1.0", "id": 1, "method": "ping"}\n');
     }).toThrowError(McpProtocolError);
 
     expect(() => {
-      decoder.push("{\"jsonrpc\": \"2.0\"}\n");
+      decoder.push('{"jsonrpc": "2.0"}\n');
     }).toThrowError(McpProtocolError);
   });
 

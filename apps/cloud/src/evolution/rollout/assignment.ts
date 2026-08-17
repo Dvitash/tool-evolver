@@ -31,14 +31,8 @@ export interface AssignmentStore {
     sessionId: string,
     toolId: string,
   ): Promise<RolloutSessionAssignment | null>;
-  saveSessionAssignment(
-    assignment: RolloutSessionAssignment,
-  ): Promise<RolloutSessionAssignment>;
-  clearSessionAssignment(
-    workspaceId: string,
-    sessionId: string,
-    toolId?: string,
-  ): Promise<void>;
+  saveSessionAssignment(assignment: RolloutSessionAssignment): Promise<RolloutSessionAssignment>;
+  clearSessionAssignment(workspaceId: string, sessionId: string, toolId?: string): Promise<void>;
 }
 
 /**
@@ -47,11 +41,7 @@ export interface AssignmentStore {
 export class MemoryAssignmentStore implements AssignmentStore {
   private assignments = new Map<string, RolloutSessionAssignment>();
 
-  private makeKey(
-    workspaceId: string,
-    sessionId: string,
-    toolId: string,
-  ): string {
+  private makeKey(workspaceId: string, sessionId: string, toolId: string): string {
     return `${workspaceId}:${sessionId}:${toolId}`;
   }
 
@@ -74,11 +64,7 @@ export class MemoryAssignmentStore implements AssignmentStore {
   async saveSessionAssignment(
     assignment: RolloutSessionAssignment,
   ): Promise<RolloutSessionAssignment> {
-    const key = this.makeKey(
-      assignment.workspaceId,
-      assignment.sessionId,
-      assignment.toolId,
-    );
+    const key = this.makeKey(assignment.workspaceId, assignment.sessionId, assignment.toolId);
     this.assignments.set(key, assignment);
     return assignment;
   }
@@ -134,9 +120,7 @@ export class RolloutAssignmentRouter {
   /**
    * Resolves or assigns the appropriate tool version for a session invocation.
    */
-  async resolveAssignment(
-    context: AssignmentResolutionContext,
-  ): Promise<RolloutSessionAssignment> {
+  async resolveAssignment(context: AssignmentResolutionContext): Promise<RolloutSessionAssignment> {
     const now = new Date().toISOString();
     const expiresAt = context.ttlMs
       ? new Date(Date.now() + context.ttlMs).toISOString()
@@ -146,16 +130,10 @@ export class RolloutAssignmentRouter {
     // 1. Check user pin/disable override first (highest priority)
     if (context.userOverride) {
       if (context.userOverride.overrideType === "disabled") {
-        throw new RolloutToolDisabledError(
-          context.toolId,
-          context.workspaceId,
-        );
+        throw new RolloutToolDisabledError(context.toolId, context.workspaceId);
       }
 
-      if (
-        context.userOverride.overrideType === "pinned" &&
-        context.userOverride.pinnedVersion
-      ) {
+      if (context.userOverride.overrideType === "pinned" && context.userOverride.pinnedVersion) {
         const pinnedAssignment: RolloutSessionAssignment = {
           id: randomUUID(),
           workspaceId: context.workspaceId,
@@ -193,8 +171,7 @@ export class RolloutAssignmentRouter {
           workspaceId: context.workspaceId,
           sessionId: context.sessionId,
           toolId: context.toolId,
-          assignedVersion:
-            context.activeRollout.previousVersion ?? baseline,
+          assignedVersion: context.activeRollout.previousVersion ?? baseline,
           rolloutId: context.activeRollout.id,
           isCanary: false,
           isBreakingSchemaIsolated: false,

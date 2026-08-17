@@ -17,10 +17,7 @@ import type {
   SessionEventSource,
   SourceCursor,
 } from "@tool-evolver/harness-contracts";
-import {
-  createObservationFidelity,
-  defaultFsBridge,
-} from "@tool-evolver/harness-contracts";
+import { createObservationFidelity, defaultFsBridge } from "@tool-evolver/harness-contracts";
 import {
   DEFAULT_GATEWAY_SERVER_NAME,
   applyCodexMcpConfig,
@@ -35,10 +32,7 @@ import {
   probeCodexInstallation,
   resolveCodexPaths,
 } from "./discovery.js";
-import {
-  CODEX_DEFAULT_REFRESH_CAPABILITY,
-  handleCodexCatalogRefresh,
-} from "./refresh.js";
+import { CODEX_DEFAULT_REFRESH_CAPABILITY, handleCodexCatalogRefresh } from "./refresh.js";
 import { CodexSessionEventSource } from "./source.js";
 
 /**
@@ -53,7 +47,8 @@ export const CODEX_OBSERVATION_FIDELITY: ObservationFidelity = Object.freeze(
     subagentVisibility: "shallow",
     mcpListChange: "requires_restart",
     contextNudge: "unsupported",
-    notes: "File-tailing of JSONL rollouts with full tool call and result visibility; session restart required for MCP catalog updates.",
+    notes:
+      "File-tailing of JSONL rollouts with full tool call and result visibility; session restart required for MCP catalog updates.",
   }),
 );
 
@@ -168,8 +163,9 @@ export class CodexHarnessAdapter implements HarnessAdapter {
   async listSessions(workspace: HarnessWorkspace): Promise<HarnessSession[]> {
     const sessions: HarnessSession[] = [];
     const sessionDir =
-      (typeof workspace.metadata?.sessionRoot === "string" ? workspace.metadata.sessionRoot : null) ??
-      path.join(workspace.rootPath, "sessions");
+      (typeof workspace.metadata?.sessionRoot === "string"
+        ? workspace.metadata.sessionRoot
+        : null) ?? path.join(workspace.rootPath, "sessions");
 
     try {
       const entries = await fs.readdir(sessionDir, { withFileTypes: true });
@@ -205,7 +201,9 @@ export class CodexHarnessAdapter implements HarnessAdapter {
       return [];
     }
 
-    return sessions.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    return sessions.sort(
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    );
   }
 
   /**

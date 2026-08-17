@@ -513,7 +513,7 @@ export class CloudMcpServer {
   ): CloudMcpInvocationContext {
     const traceId =
       (req.headers["x-trace-id"] as string | undefined) ||
-      (req.headers["traceparent"] as string | undefined) ||
+      (req.headers.traceparent as string | undefined) ||
       randomUUID();
 
     return {

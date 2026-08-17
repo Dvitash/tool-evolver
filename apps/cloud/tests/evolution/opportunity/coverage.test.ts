@@ -1,4 +1,4 @@
-import { ToolManifest } from "@tool-evolver/contracts";
+import type { ToolManifest } from "@tool-evolver/contracts";
 import { describe, expect, it } from "vitest";
 import { StructuralClusterer } from "../../../src/evolution/opportunity/clustering.js";
 import { CoverageEngine } from "../../../src/evolution/opportunity/coverage.js";
@@ -29,11 +29,42 @@ const mockToolManifest: ToolManifest = {
     timeoutMs: 30000,
   },
   capabilities: {
-    fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
-    net: { allowOutbound: false, allowedHosts: [], denyHosts: [], allowLoopback: true, allowedPorts: [] },
-    command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-    secrets: { requiredKeys: [], optionalKeys: [], allowEnvSecrets: false, allowVaultSecrets: false, denySecrets: [] },
-    limits: { maxMemoryMb: 512, maxCpuPercent: 100, maxDurationMs: 60000, maxConcurrentInvocations: 1, maxLogSizeBytes: 1048576 },
+    fs: {
+      readPaths: [],
+      writePaths: [],
+      allowWorkspaceRoot: true,
+      allowTemp: true,
+      denyPaths: [],
+      maxFileSizeBytes: 10485760,
+    },
+    net: {
+      allowOutbound: false,
+      allowedHosts: [],
+      denyHosts: [],
+      allowLoopback: true,
+      allowedPorts: [],
+    },
+    command: {
+      allowShellExecution: false,
+      allowedCommands: [],
+      allowedBinaries: [],
+      forbiddenPatterns: [],
+      allowEnvPassthrough: [],
+    },
+    secrets: {
+      requiredKeys: [],
+      optionalKeys: [],
+      allowEnvSecrets: false,
+      allowVaultSecrets: false,
+      denySecrets: [],
+    },
+    limits: {
+      maxMemoryMb: 512,
+      maxCpuPercent: 100,
+      maxDurationMs: 60000,
+      maxConcurrentInvocations: 1,
+      maxLogSizeBytes: 1048576,
+    },
   },
   limits: {},
   scope: "workspace",
@@ -49,7 +80,12 @@ describe("CoverageEngine", () => {
     const engine = new CoverageEngine();
 
     const events = [
-      createToolCallEvent({ eventId: "e1", sessionId: "sess-1", toolName: "special_compiler", parameters: { src: "foo.rs" } }),
+      createToolCallEvent({
+        eventId: "e1",
+        sessionId: "sess-1",
+        toolName: "special_compiler",
+        parameters: { src: "foo.rs" },
+      }),
       createToolResultEvent({ eventId: "e2", sessionId: "sess-1", toolCallId: "e1", result: "ok" }),
     ];
 
@@ -67,8 +103,18 @@ describe("CoverageEngine", () => {
     const engine = new CoverageEngine();
 
     const events = [
-      createToolCallEvent({ eventId: "e1", sessionId: "sess-1", toolName: "run_test_suite", parameters: { testFilter: "auth" } }),
-      createToolResultEvent({ eventId: "e2", sessionId: "sess-1", toolCallId: "e1", result: "all passed" }),
+      createToolCallEvent({
+        eventId: "e1",
+        sessionId: "sess-1",
+        toolName: "run_test_suite",
+        parameters: { testFilter: "auth" },
+      }),
+      createToolResultEvent({
+        eventId: "e2",
+        sessionId: "sess-1",
+        toolCallId: "e1",
+        result: "all passed",
+      }),
     ];
 
     const episodes = segmenter.segmentEvents(events);
@@ -87,7 +133,11 @@ describe("CoverageEngine", () => {
 
     // Partial match: uses test runner plus extra custom steps
     const events = [
-      createCommandExecEvent({ eventId: "e1", sessionId: "sess-1", command: "run_test_suite --watch" }),
+      createCommandExecEvent({
+        eventId: "e1",
+        sessionId: "sess-1",
+        command: "run_test_suite --watch",
+      }),
       createFileEditEvent({ eventId: "e2", sessionId: "sess-1", filePath: "coverage/report.json" }),
     ];
 

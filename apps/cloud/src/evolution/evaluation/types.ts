@@ -1,19 +1,23 @@
 import type {
   CapabilityEnvelope,
   CapabilityManifest,
-  EvolutionCandidate,
-  NormalizedSessionEvent,
-  ToolManifest,
   EvaluationDecision as ContractEvaluationDecision,
   EvaluationDimension as ContractEvaluationDimension,
   EvaluationDimensionName as ContractEvaluationDimensionName,
   EvaluationResult as ContractEvaluationResult,
   EvaluationVerdict,
+  EvolutionCandidate,
+  NormalizedSessionEvent,
+  ToolManifest,
 } from "@tool-evolver/contracts";
 import type { CandidateRevision, GeneratedArtifactSet } from "../generator/types.js";
-import type { CandidateValidationResult, StaticAnalysisFinding } from "../testing/types.js";
-import type { HistoricalReplayResult, DivergenceFinding, ReplayMetricsComparison } from "../replay/types.js";
 import type { OpportunityDetection } from "../opportunity/types.js";
+import type {
+  DivergenceFinding,
+  HistoricalReplayResult,
+  ReplayMetricsComparison,
+} from "../replay/types.js";
+import type { CandidateValidationResult, StaticAnalysisFinding } from "../testing/types.js";
 
 /**
  * Risk tier categorization for candidate tools based on requested capabilities and potential blast radius.
@@ -271,15 +275,18 @@ export interface EvaluationDecisionRecord {
  * Candidate evaluation input parameter bundle.
  */
 export interface CandidateEvaluationInput {
-  candidate: EvolutionCandidate | CandidateRevision | {
-    id?: string;
-    candidateId?: string;
-    revisionId?: string;
-    manifest: ToolManifest;
-    sourceCode: string;
-    requiredCapabilities?: CapabilityManifest;
-    workflowDefinition?: Record<string, unknown>;
-  };
+  candidate:
+    | EvolutionCandidate
+    | CandidateRevision
+    | {
+        id?: string;
+        candidateId?: string;
+        revisionId?: string;
+        manifest: ToolManifest;
+        sourceCode: string;
+        requiredCapabilities?: CapabilityManifest;
+        workflowDefinition?: Record<string, unknown>;
+      };
   validationResult: CandidateValidationResult;
   replayResult?: HistoricalReplayResult;
   opportunity?: OpportunityDetection;

@@ -5,11 +5,7 @@ export type { JsonRpcErrorObject };
 /**
  * Standard MCP Protocol Versions.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = [
-  "2024-11-05",
-  "2024-10-07",
-  "0.1.0",
-] as const;
+export const SUPPORTED_PROTOCOL_VERSIONS = ["2024-11-05", "2024-10-07", "0.1.0"] as const;
 
 export const LATEST_PROTOCOL_VERSION = "2024-11-05";
 
@@ -72,10 +68,7 @@ export type JsonRpcResponse<TResult = unknown> =
   | JsonRpcSuccessResponse<TResult>
   | JsonRpcErrorResponse;
 
-export type JsonRpcMessage =
-  | JsonRpcRequest
-  | JsonRpcNotification
-  | JsonRpcResponse;
+export type JsonRpcMessage = JsonRpcRequest | JsonRpcNotification | JsonRpcResponse;
 
 /**
  * Client and Server Info.
@@ -146,7 +139,7 @@ export const InitializeParamsSchema = z.object({
       z.object({
         uri: z.string(),
         name: z.string().optional(),
-      })
+      }),
     )
     .optional(),
 });

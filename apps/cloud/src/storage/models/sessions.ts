@@ -1,8 +1,5 @@
+import { ISOTimestampSchema, IdentifierSchema } from "@tool-evolver/contracts";
 import { z } from "zod";
-import {
-  ISOTimestampSchema,
-  IdentifierSchema,
-} from "@tool-evolver/contracts";
 
 /**
  * Session status enum schema.
@@ -21,12 +18,7 @@ export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 /**
  * Session fidelity level.
  */
-export const SessionFidelitySchema = z.enum([
-  "full",
-  "compact",
-  "summary",
-  "lossless",
-]);
+export const SessionFidelitySchema = z.enum(["full", "compact", "summary", "lossless"]);
 
 export type SessionFidelity = z.infer<typeof SessionFidelitySchema>;
 

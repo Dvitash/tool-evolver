@@ -1,8 +1,5 @@
 import type { InvocationRecord } from "@tool-evolver/contracts";
-import type {
-  TelemetryBatchRequest,
-  TelemetryMetric,
-} from "@tool-evolver/protocol";
+import type { TelemetryBatchRequest, TelemetryMetric } from "@tool-evolver/protocol";
 
 /**
  * Custom error thrown when telemetry dimensions or metrics violate privacy-safe allowlists.
@@ -75,27 +72,49 @@ export const ALLOWED_TAG_KEYS: Record<string, true> = {
  */
 const SENSITIVE_PATTERNS: Array<{ regex: RegExp; reason: string }> = [
   // Shell / CLI commands
-  { regex: /\b(?:rm\s+-rf|sudo|chmod|chown|curl|wget|bash\s+-c|sh\s+-c|eval|exec)\b/i, reason: "Shell command or execution keyword detected" },
-  { regex: /\b(?:git\s+commit|git\s+push|git\s+checkout|npm\s+install|pnpm\s+install|cargo\s+build)\b/i, reason: "Tool/CLI execution pattern detected" },
+  {
+    regex: /\b(?:rm\s+-rf|sudo|chmod|chown|curl|wget|bash\s+-c|sh\s+-c|eval|exec)\b/i,
+    reason: "Shell command or execution keyword detected",
+  },
+  {
+    regex:
+      /\b(?:git\s+commit|git\s+push|git\s+checkout|npm\s+install|pnpm\s+install|cargo\s+build)\b/i,
+    reason: "Tool/CLI execution pattern detected",
+  },
 
   // Secrets / API keys / Bearer tokens
   { regex: /bearer\s+[a-zA-Z0-9._~+/-]+=*/i, reason: "Bearer token detected" },
   { regex: /sk-(?:proj-)?[a-zA-Z0-9_-]{20,}/i, reason: "OpenAI-style API key detected" },
   { regex: /ghp_[a-zA-Z0-9]{20,}/i, reason: "GitHub personal access token detected" },
   { regex: /AKIA[0-9A-Z]{16}/, reason: "AWS Access Key ID detected" },
-  { regex: /-----BEGIN (?:RSA |OPENSSH |PGP |EC )?PRIVATE KEY-----/i, reason: "Private key detected" },
+  {
+    regex: /-----BEGIN (?:RSA |OPENSSH |PGP |EC )?PRIVATE KEY-----/i,
+    reason: "Private key detected",
+  },
   { regex: /eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}/, reason: "JWT format detected" },
-  { regex: /(?:api[_-]?key|secret|password|passwd|auth[_-]?token)\s*[:=]\s*[^\s]+/i, reason: "Credential assignment detected" },
+  {
+    regex: /(?:api[_-]?key|secret|password|passwd|auth[_-]?token)\s*[:=]\s*[^\s]+/i,
+    reason: "Credential assignment detected",
+  },
 
   // Absolute / relative filesystem paths
-  { regex: /(?:\/home\/|\/Users\/|\/var\/|\/tmp\/|\/etc\/|\/usr\/|\/bin\/|\/opt\/)/i, reason: "Filesystem path detected" },
+  {
+    regex: /(?:\/home\/|\/Users\/|\/var\/|\/tmp\/|\/etc\/|\/usr\/|\/bin\/|\/opt\/)/i,
+    reason: "Filesystem path detected",
+  },
   { regex: /[a-zA-Z]:\\[a-zA-Z0-9_.\\]+/i, reason: "Windows filesystem path detected" },
   { regex: /file:\/\/[^\s]+/i, reason: "File URI detected" },
   { regex: /(?:\.\.\/|\.\.\\)/, reason: "Path traversal pattern detected" },
 
   // Code / SQL injection keywords
-  { regex: /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/i, reason: "HTML/Script tag detected" },
-  { regex: /\b(?:SELECT\s+.*\s+FROM|DROP\s+TABLE|INSERT\s+INTO|DELETE\s+FROM|UNION\s+ALL)\b/i, reason: "SQL statement detected" },
+  {
+    regex: /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/i,
+    reason: "HTML/Script tag detected",
+  },
+  {
+    regex: /\b(?:SELECT\s+.*\s+FROM|DROP\s+TABLE|INSERT\s+INTO|DELETE\s+FROM|UNION\s+ALL)\b/i,
+    reason: "SQL statement detected",
+  },
 ];
 /**
  * Maximum string length for dimension/tag values (to prevent free-form log leaks).
@@ -177,7 +196,7 @@ export class SchemaGuard {
         };
       }
 
-      const sensitiveCheck = this.detectSensitiveContent(value);
+      const sensitiveCheck = SchemaGuard.detectSensitiveContent(value);
       if (sensitiveCheck.isSensitive) {
         return {
           allowed: false,
@@ -209,12 +228,16 @@ export class SchemaGuard {
       violations.push("Metric must have a valid metricName string");
     } else {
       if (metric.metricName.length > 64) {
-        violations.push(`metricName '${metric.metricName}' exceeds maximum length of 64 characters`);
+        violations.push(
+          `metricName '${metric.metricName}' exceeds maximum length of 64 characters`,
+        );
       }
       if (!/^[a-zA-Z0-9_.-]+$/.test(metric.metricName)) {
-        violations.push(`metricName '${metric.metricName}' contains invalid characters. Only alphanumeric, '.', '_', and '-' are allowed`);
+        violations.push(
+          `metricName '${metric.metricName}' contains invalid characters. Only alphanumeric, '.', '_', and '-' are allowed`,
+        );
       }
-      const sensitiveCheck = this.detectSensitiveContent(metric.metricName);
+      const sensitiveCheck = SchemaGuard.detectSensitiveContent(metric.metricName);
       if (sensitiveCheck.isSensitive) {
         violations.push(`metricName contains prohibited content: ${sensitiveCheck.reason}`);
       }
@@ -227,11 +250,13 @@ export class SchemaGuard {
     if (metric.tags && typeof metric.tags === "object") {
       const tagKeys = Object.keys(metric.tags);
       if (tagKeys.length > MAX_TAGS_PER_METRIC) {
-        violations.push(`Metric tags count (${tagKeys.length}) exceeds maximum limit of ${MAX_TAGS_PER_METRIC}`);
+        violations.push(
+          `Metric tags count (${tagKeys.length}) exceeds maximum limit of ${MAX_TAGS_PER_METRIC}`,
+        );
       }
 
       for (const [key, val] of Object.entries(metric.tags)) {
-        const check = this.isAllowedDimension(key, val);
+        const check = SchemaGuard.isAllowedDimension(key, val);
         if (!check.allowed) {
           violations.push(check.reason ?? `Dimension '${key}' is disallowed`);
         }
@@ -257,24 +282,34 @@ export class SchemaGuard {
         if (invocation.errorDetails.errorType.length > 64) {
           violations.push("errorDetails.errorType exceeds maximum length of 64 characters");
         }
-        const sensitiveCheck = this.detectSensitiveContent(invocation.errorDetails.errorType);
+        const sensitiveCheck = SchemaGuard.detectSensitiveContent(
+          invocation.errorDetails.errorType,
+        );
         if (sensitiveCheck.isSensitive) {
-          violations.push(`errorDetails.errorType contains prohibited content: ${sensitiveCheck.reason}`);
+          violations.push(
+            `errorDetails.errorType contains prohibited content: ${sensitiveCheck.reason}`,
+          );
         }
       }
 
       if (invocation.errorDetails.message) {
         if (invocation.errorDetails.message.length > MAX_DIMENSION_VALUE_LENGTH) {
-          violations.push(`errorDetails.message exceeds maximum length of ${MAX_DIMENSION_VALUE_LENGTH} characters`);
+          violations.push(
+            `errorDetails.message exceeds maximum length of ${MAX_DIMENSION_VALUE_LENGTH} characters`,
+          );
         }
-        const sensitiveCheck = this.detectSensitiveContent(invocation.errorDetails.message);
+        const sensitiveCheck = SchemaGuard.detectSensitiveContent(invocation.errorDetails.message);
         if (sensitiveCheck.isSensitive) {
-          violations.push(`errorDetails.message contains prohibited content: ${sensitiveCheck.reason}`);
+          violations.push(
+            `errorDetails.message contains prohibited content: ${sensitiveCheck.reason}`,
+          );
         }
       }
 
       if (invocation.errorDetails.stack) {
-        violations.push("errorDetails.stack is prohibited in privacy-safe telemetry to prevent code/path leaks");
+        violations.push(
+          "errorDetails.stack is prohibited in privacy-safe telemetry to prevent code/path leaks",
+        );
       }
     }
 
@@ -288,16 +323,20 @@ export class SchemaGuard {
     const violations: string[] = [];
 
     if (!request || typeof request !== "object") {
-      throw new SchemaGuardValidationError("Invalid telemetry batch payload", ["Batch payload must be a non-null object"]);
+      throw new SchemaGuardValidationError("Invalid telemetry batch payload", [
+        "Batch payload must be a non-null object",
+      ]);
     }
 
     if (request.metrics && Array.isArray(request.metrics)) {
       if (request.metrics.length > MAX_METRICS_PER_BATCH) {
-        violations.push(`Batch metrics count (${request.metrics.length}) exceeds maximum limit of ${MAX_METRICS_PER_BATCH}`);
+        violations.push(
+          `Batch metrics count (${request.metrics.length}) exceeds maximum limit of ${MAX_METRICS_PER_BATCH}`,
+        );
       }
 
       for (let i = 0; i < request.metrics.length; i++) {
-        const metricViolations = this.validateMetric(request.metrics[i]);
+        const metricViolations = SchemaGuard.validateMetric(request.metrics[i]);
         for (const v of metricViolations) {
           violations.push(`metrics[${i}]: ${v}`);
         }
@@ -306,11 +345,13 @@ export class SchemaGuard {
 
     if (request.invocations && Array.isArray(request.invocations)) {
       if (request.invocations.length > MAX_INVOCATIONS_PER_BATCH) {
-        violations.push(`Batch invocations count (${request.invocations.length}) exceeds maximum limit of ${MAX_INVOCATIONS_PER_BATCH}`);
+        violations.push(
+          `Batch invocations count (${request.invocations.length}) exceeds maximum limit of ${MAX_INVOCATIONS_PER_BATCH}`,
+        );
       }
 
       for (let i = 0; i < request.invocations.length; i++) {
-        const invocationViolations = this.validateInvocation(request.invocations[i]);
+        const invocationViolations = SchemaGuard.validateInvocation(request.invocations[i]);
         for (const v of invocationViolations) {
           violations.push(`invocations[${i}]: ${v}`);
         }

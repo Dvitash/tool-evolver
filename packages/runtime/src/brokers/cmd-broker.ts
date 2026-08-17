@@ -3,10 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { CommandCapability } from "@tool-evolver/contracts";
-import {
-  isPathInsideRoot,
-  normalizeSlashes,
-} from "../policy/canonicalizers.js";
+import { isPathInsideRoot, normalizeSlashes } from "../policy/canonicalizers.js";
 import { withResolvers } from "../worker/protocol.js";
 import {
   BaseCapabilityBroker,
@@ -82,7 +79,7 @@ export class CommandBroker extends BaseCapabilityBroker {
   private authorizeExecution(
     params: CommandExecuteParams,
     context: BrokerContext,
-    cmdCap: CommandCapability
+    cmdCap: CommandCapability,
   ): {
     resolvedExecutable: string;
     resolvedArgs: string[];
@@ -105,7 +102,7 @@ export class CommandBroker extends BaseCapabilityBroker {
         throw new BrokerSecurityError(
           "SHELL_EXECUTION_DENIED",
           `Direct execution of shell binary '${rawExe}' is denied when allowShellExecution is false`,
-          { executable: rawExe }
+          { executable: rawExe },
         );
       }
 
@@ -113,7 +110,7 @@ export class CommandBroker extends BaseCapabilityBroker {
         throw new BrokerSecurityError(
           "SHELL_EXECUTION_DENIED",
           `Shell metacharacters in executable name are forbidden: ${rawExe}`,
-          { executable: rawExe }
+          { executable: rawExe },
         );
       }
 
@@ -122,7 +119,7 @@ export class CommandBroker extends BaseCapabilityBroker {
           throw new BrokerSecurityError(
             "SHELL_EXECUTION_DENIED",
             `Shell metacharacters in argument are forbidden: ${arg}`,
-            { argument: arg }
+            { argument: arg },
           );
         }
       }
@@ -137,7 +134,7 @@ export class CommandBroker extends BaseCapabilityBroker {
       throw new BrokerSecurityError(
         "COMMAND_EXECUTION_DISABLED",
         "Command execution is disabled: no binaries or commands are authorized by capability policy",
-        { executable: rawExe }
+        { executable: rawExe },
       );
     }
 
@@ -160,7 +157,7 @@ export class CommandBroker extends BaseCapabilityBroker {
       throw new BrokerSecurityError(
         "UNAUTHORIZED_BINARY",
         `Executable '${rawExe}' is not permitted by command capability allowlist`,
-        { executable: rawExe, allowedBinaries, allowedCommands }
+        { executable: rawExe, allowedBinaries, allowedCommands },
       );
     }
 
@@ -171,7 +168,7 @@ export class CommandBroker extends BaseCapabilityBroker {
         throw new BrokerSecurityError(
           "UNAUTHORIZED_BINARY",
           `Relative path executable is not permitted: ${rawExe}`,
-          { executable: rawExe }
+          { executable: rawExe },
         );
       }
     }
@@ -186,7 +183,7 @@ export class CommandBroker extends BaseCapabilityBroker {
         throw new BrokerSecurityError(
           "FORBIDDEN_PATTERN",
           `Command line matches forbidden pattern '${pattern}'`,
-          { commandLine: fullCommandLine, pattern }
+          { commandLine: fullCommandLine, pattern },
         );
       }
     }
@@ -203,14 +200,11 @@ export class CommandBroker extends BaseCapabilityBroker {
         ? normalizeSlashes(path.resolve(params.cwd))
         : normalizeSlashes(path.resolve(workspaceRoot, params.cwd));
 
-      if (
-        !isPathInsideRoot(targetCwd, workspaceRoot) &&
-        !isPathInsideRoot(targetCwd, scratchDir)
-      ) {
+      if (!isPathInsideRoot(targetCwd, workspaceRoot) && !isPathInsideRoot(targetCwd, scratchDir)) {
         throw new BrokerSecurityError(
           "WORKING_DIRECTORY_DENIED",
           `Working directory '${params.cwd}' is outside authorized roots`,
-          { cwd: params.cwd, resolvedCwd: targetCwd }
+          { cwd: params.cwd, resolvedCwd: targetCwd },
         );
       }
 
@@ -218,7 +212,7 @@ export class CommandBroker extends BaseCapabilityBroker {
         throw new BrokerSecurityError(
           "WORKING_DIRECTORY_DENIED",
           `Working directory does not exist: ${params.cwd}`,
-          { cwd: params.cwd }
+          { cwd: params.cwd },
         );
       }
 
@@ -246,7 +240,11 @@ export class CommandBroker extends BaseCapabilityBroker {
     if (params.env) {
       for (const [key, val] of Object.entries(params.env)) {
         const upper = key.toUpperCase();
-        if (upper === "LD_PRELOAD" || upper === "LD_LIBRARY_PATH" || upper === "DYLD_INSERT_LIBRARIES") {
+        if (
+          upper === "LD_PRELOAD" ||
+          upper === "LD_LIBRARY_PATH" ||
+          upper === "DYLD_INSERT_LIBRARIES"
+        ) {
           continue; // Block dynamic linker hijacking
         }
         childEnv[key] = val;
@@ -264,20 +262,26 @@ export class CommandBroker extends BaseCapabilityBroker {
   /**
    * Executes a command within the authorized capability boundaries.
    */
-  async execute(params: CommandExecuteParams, context: BrokerContext): Promise<CommandExecuteResult> {
+  async execute(
+    params: CommandExecuteParams,
+    context: BrokerContext,
+  ): Promise<CommandExecuteResult> {
     const startTime = Date.now();
     const grant = this.validateGrant(context);
     const cmdCap = grant.capabilities.command ?? {};
     const limits = grant.capabilities.limits;
 
     const maxOutputBytes = params.maxOutputSizeBytes ?? limits?.maxOutputSizeBytes ?? 1048576; // 1MB default
-    const timeoutMs = Math.min(params.timeoutMs ?? limits?.maxExecutionTimeMs ?? 30000, limits?.maxExecutionTimeMs ?? 30000);
+    const timeoutMs = Math.min(
+      params.timeoutMs ?? limits?.maxExecutionTimeMs ?? 30000,
+      limits?.maxExecutionTimeMs ?? 30000,
+    );
 
     try {
       const { resolvedExecutable, resolvedArgs, resolvedCwd, childEnv } = this.authorizeExecution(
         params,
         context,
-        cmdCap
+        cmdCap,
       );
 
       const result = await this.spawnSubprocess({
@@ -293,24 +297,37 @@ export class CommandBroker extends BaseCapabilityBroker {
       const totalOutputBytes = Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr);
       this.trackOutputBytes(context.invocationId, totalOutputBytes, limits);
 
-      this.recordAudit("execute", context, "allowed", {
-        executable: resolvedExecutable,
-        argCount: resolvedArgs.length,
-        exitCode: result.exitCode,
-        durationMs: result.durationMs,
-        outputBytes: totalOutputBytes,
-      }, { durationMs: Date.now() - startTime });
+      this.recordAudit(
+        "execute",
+        context,
+        "allowed",
+        {
+          executable: resolvedExecutable,
+          argCount: resolvedArgs.length,
+          exitCode: result.exitCode,
+          durationMs: result.durationMs,
+          outputBytes: totalOutputBytes,
+        },
+        { durationMs: Date.now() - startTime },
+      );
 
       return result;
     } catch (error) {
-      const err = error instanceof BrokerSecurityError
-        ? error
-        : new BrokerSecurityError("PROCESS_SPAWN_FAILED", (error as Error).message);
+      const err =
+        error instanceof BrokerSecurityError
+          ? error
+          : new BrokerSecurityError("PROCESS_SPAWN_FAILED", (error as Error).message);
 
-      this.recordAudit("execute", context, "error", {
-        command: params.command ?? params.executable,
-        error: err.message,
-      }, { durationMs: Date.now() - startTime, error: { code: err.code, message: err.message } });
+      this.recordAudit(
+        "execute",
+        context,
+        "error",
+        {
+          command: params.command ?? params.executable,
+          error: err.message,
+        },
+        { durationMs: Date.now() - startTime, error: { code: err.code, message: err.message } },
+      );
 
       throw err;
     }
@@ -341,7 +358,12 @@ export class CommandBroker extends BaseCapabilityBroker {
         detached: isPosix, // Enable process group on POSIX for clean termination
       });
     } catch (spawnErr) {
-      reject(new BrokerSecurityError("PROCESS_SPAWN_FAILED", `Failed to spawn executable: ${(spawnErr as Error).message}`));
+      reject(
+        new BrokerSecurityError(
+          "PROCESS_SPAWN_FAILED",
+          `Failed to spawn executable: ${(spawnErr as Error).message}`,
+        ),
+      );
       return promise;
     }
     let stdoutData = "";
@@ -372,8 +394,8 @@ export class CommandBroker extends BaseCapabilityBroker {
         new BrokerSecurityError(
           "COMMAND_TIMEOUT",
           `Command execution timed out after ${options.timeoutMs}ms`,
-          { timeoutMs: options.timeoutMs }
-        )
+          { timeoutMs: options.timeoutMs },
+        ),
       );
     }, options.timeoutMs);
 
@@ -387,8 +409,8 @@ export class CommandBroker extends BaseCapabilityBroker {
           new BrokerSecurityError(
             "MAX_OUTPUT_EXCEEDED",
             `Command output size ${totalBytes} bytes exceeded maximum limit ${options.maxOutputBytes} bytes`,
-            { totalBytes, maxBytes: options.maxOutputBytes }
-          )
+            { totalBytes, maxBytes: options.maxOutputBytes },
+          ),
         );
         return;
       }
@@ -405,8 +427,8 @@ export class CommandBroker extends BaseCapabilityBroker {
           new BrokerSecurityError(
             "MAX_OUTPUT_EXCEEDED",
             `Command output size ${totalBytes} bytes exceeded maximum limit ${options.maxOutputBytes} bytes`,
-            { totalBytes, maxBytes: options.maxOutputBytes }
-          )
+            { totalBytes, maxBytes: options.maxOutputBytes },
+          ),
         );
         return;
       }
@@ -416,7 +438,9 @@ export class CommandBroker extends BaseCapabilityBroker {
     child.on("error", (err) => {
       clearTimeout(timer);
       if (!timedOut && !killedForSize) {
-        reject(new BrokerSecurityError("PROCESS_SPAWN_FAILED", `Child process error: ${err.message}`));
+        reject(
+          new BrokerSecurityError("PROCESS_SPAWN_FAILED", `Child process error: ${err.message}`),
+        );
       }
     });
 
@@ -439,7 +463,12 @@ export class CommandBroker extends BaseCapabilityBroker {
   /**
    * Alias for execute.
    */
-  async exec(command: string, args: string[] = [], options: Omit<CommandExecuteParams, "command" | "args"> = {}, context: BrokerContext): Promise<CommandExecuteResult> {
+  async exec(
+    command: string,
+    args: string[],
+    options: Omit<CommandExecuteParams, "command" | "args">,
+    context: BrokerContext,
+  ): Promise<CommandExecuteResult> {
     return this.execute({ ...options, command, args }, context);
   }
 }

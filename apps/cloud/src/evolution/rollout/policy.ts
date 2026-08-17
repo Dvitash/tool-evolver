@@ -1,8 +1,4 @@
-import {
-  type RolloutPolicy,
-  RolloutPolicySchema,
-  type RolloutRiskTier,
-} from "./types.js";
+import { type RolloutPolicy, RolloutPolicySchema, type RolloutRiskTier } from "./types.js";
 
 /**
  * Built-in default rollout policies indexed by risk tier.
@@ -12,8 +8,7 @@ export const DEFAULT_ROLLOUT_POLICIES: Record<RolloutRiskTier, RolloutPolicy> = 
     policyId: "policy_tier1_low_v1",
     version: 1,
     name: "Low Risk Tier Policy",
-    description:
-      "Default policy for low-risk, internal, or pure read-only tool updates",
+    description: "Default policy for low-risk, internal, or pure read-only tool updates",
     riskTier: "tier1_low",
     canaryExposureRatio: 0.1, // 10% canary traffic
     minInvocations: 10,
@@ -36,8 +31,7 @@ export const DEFAULT_ROLLOUT_POLICIES: Record<RolloutRiskTier, RolloutPolicy> = 
     policyId: "policy_tier2_medium_v1",
     version: 1,
     name: "Medium Risk Tier Policy",
-    description:
-      "Policy for standard mutations and medium complexity updates",
+    description: "Policy for standard mutations and medium complexity updates",
     riskTier: "tier2_medium",
     canaryExposureRatio: 0.05, // 5% canary traffic
     minInvocations: 20,
@@ -60,8 +54,7 @@ export const DEFAULT_ROLLOUT_POLICIES: Record<RolloutRiskTier, RolloutPolicy> = 
     policyId: "policy_tier3_high_v1",
     version: 1,
     name: "High Risk Tier Policy",
-    description:
-      "Policy for broad system access, high-traffic or high-impact updates",
+    description: "Policy for broad system access, high-traffic or high-impact updates",
     riskTier: "tier3_high",
     canaryExposureRatio: 0.02, // 2% canary traffic
     minInvocations: 30,
@@ -84,8 +77,7 @@ export const DEFAULT_ROLLOUT_POLICIES: Record<RolloutRiskTier, RolloutPolicy> = 
     policyId: "policy_critical_v1",
     version: 1,
     name: "Critical Risk Tier Policy",
-    description:
-      "Policy for security-critical, sensitive credentials or critical infrastructure",
+    description: "Policy for security-critical, sensitive credentials or critical infrastructure",
     riskTier: "critical",
     canaryExposureRatio: 0.01, // 1% canary traffic
     minInvocations: 50,
@@ -213,7 +205,7 @@ export class RolloutPolicyRegistry {
       ...base,
       ...overrides,
       riskTier: overrides.riskTier ?? base.riskTier,
-      version: overrides.version ?? (base.version + 1),
+      version: overrides.version ?? base.version + 1,
       name: overrides.name ?? `${base.name} (Custom)`,
     };
     this.registerPolicy(policy);

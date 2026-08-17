@@ -105,7 +105,9 @@ describe("SemanticVersionClassifier - SemVer Classification & Manifest Diff Engi
 
     const report2 = versioning.diffManifests(candidateRequiredChange, priorManifest);
     expect(report2.increment).toBe("major");
-    expect(report2.breakingChanges.some((c) => c.includes("changed from optional to required"))).toBe(true);
+    expect(
+      report2.breakingChanges.some((c) => c.includes("changed from optional to required")),
+    ).toBe(true);
   });
 
   it("should classify major increment when an existing capability is removed", () => {
@@ -113,10 +115,30 @@ describe("SemanticVersionClassifier - SemVer Classification & Manifest Diff Engi
       version: "1.0.0",
       capabilities: {
         fs: { readPaths: ["/data/input"], writePaths: [] },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: ["api.example.com"], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: ["api.example.com"],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
         secrets: { allowedSecretNames: [] },
-        limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        limits: {
+          maxConcurrentExecutions: 4,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       },
     });
 
@@ -124,10 +146,30 @@ describe("SemanticVersionClassifier - SemVer Classification & Manifest Diff Engi
       version: "1.0.0",
       capabilities: {
         fs: { readPaths: [], writePaths: [] }, // Removed /data/input
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true }, // Removed api.example.com
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        }, // Removed api.example.com
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
         secrets: { allowedSecretNames: [] },
-        limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        limits: {
+          maxConcurrentExecutions: 4,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       },
     });
 
@@ -164,7 +206,10 @@ describe("SemanticVersionClassifier - SemVer Classification & Manifest Diff Engi
   });
 
   it("should classify patch increment for description updates and non-breaking bug fixes", () => {
-    const priorManifest = createMockToolManifest({ version: "1.2.3", description: "Old description" });
+    const priorManifest = createMockToolManifest({
+      version: "1.2.3",
+      description: "Old description",
+    });
     const candidateManifest = createMockToolManifest({
       version: "1.2.3",
       description: "Updated description with more details.",

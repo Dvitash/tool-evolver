@@ -50,7 +50,9 @@ describe("Deterministic Fake Environment", () => {
 
       expect(uuid1).toBe(uuid2);
       expect(ulid1).toBe(ulid2);
-      expect(uuid1).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      expect(uuid1).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
       expect(ulid1.length).toBe(26);
     });
   });

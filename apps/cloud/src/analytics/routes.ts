@@ -1,16 +1,19 @@
-import { IncomingMessage, ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { gunzipSync, inflateSync } from "node:zlib";
-import { hasRequiredScope, TelemetryBatchRequestSchema } from "@tool-evolver/protocol";
+import { TelemetryBatchRequestSchema, hasRequiredScope } from "@tool-evolver/protocol";
 import { ZodError } from "zod";
-import { AuthContext } from "../auth/middleware.js";
+import type { AuthContext } from "../auth/middleware.js";
 import { TelemetryBatchConflictError } from "./deduplicator.js";
 import { SchemaGuardValidationError } from "./schema-guard.js";
-import { AnalyticsService, AnalyticsTenantMismatchError } from "./service.js";
+import { type AnalyticsService, AnalyticsTenantMismatchError } from "./service.js";
 
 /**
  * Read request body buffer with size limits.
  */
-async function readBodyBuffer(req: IncomingMessage, limitBytes = 10 * 1024 * 1024): Promise<Buffer> {
+async function readBodyBuffer(
+  req: IncomingMessage,
+  limitBytes = 10 * 1024 * 1024,
+): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
     let bytesRead = 0;
@@ -43,7 +46,12 @@ export async function handleTelemetryBatchRoute(
   res: ServerResponse,
   authContext: AuthContext,
   analyticsService: AnalyticsService,
-  sendJson: (res: ServerResponse, status: number, data: unknown, headers?: Record<string, string>) => void,
+  sendJson: (
+    res: ServerResponse,
+    status: number,
+    data: unknown,
+    headers?: Record<string, string>,
+  ) => void,
   headers: Record<string, string> = {},
 ): Promise<void> {
   // 1. Check Scope: telemetry:write or admin:all

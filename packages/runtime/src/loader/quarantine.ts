@@ -111,7 +111,7 @@ export class QuarantineManager {
     const quarantineId = `quarantine_${Date.now()}_${cleanDigest}_${crypto.randomUUID().slice(0, 8)}`;
     const targetDir = path.join(this.quarantineDir, quarantineId);
 
-    let totalSize = 0;
+    const totalSize = 0;
     try {
       if (fs.existsSync(sourceDir)) {
         await fs.promises.rename(sourceDir, targetDir);
@@ -183,7 +183,9 @@ export class QuarantineManager {
   /**
    * Purges old quarantined artifacts.
    */
-  async purgeQuarantine(maxAgeMs = 7 * 24 * 60 * 60 * 1000): Promise<{ purgedCount: number; freedBytes: number }> {
+  async purgeQuarantine(
+    maxAgeMs = 7 * 24 * 60 * 60 * 1000,
+  ): Promise<{ purgedCount: number; freedBytes: number }> {
     if (!fs.existsSync(this.quarantineDir)) {
       return { purgedCount: 0, freedBytes: 0 };
     }

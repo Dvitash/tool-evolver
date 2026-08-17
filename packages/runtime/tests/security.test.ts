@@ -60,11 +60,7 @@ describe("loader security checks", () => {
   });
 
   it("rejects invalid path characters and null bytes", () => {
-    const invalidPaths = [
-      "src/index.ts\0.exe",
-      "manifest.json\r",
-      "test\nfile.txt",
-    ];
+    const invalidPaths = ["src/index.ts\0.exe", "manifest.json\r", "test\nfile.txt"];
 
     for (const invPath of invalidPaths) {
       expect(() => validateBundleEntryPath(invPath)).toThrowError(BundleSecurityError);
@@ -82,15 +78,7 @@ describe("loader security checks", () => {
   });
 
   it("rejects Windows reserved device file names", () => {
-    const reserved = [
-      "CON",
-      "prn.txt",
-      "AUX",
-      "NUL",
-      "com1",
-      "lpt3.dat",
-      "nested/CON/file.txt",
-    ];
+    const reserved = ["CON", "prn.txt", "AUX", "NUL", "com1", "lpt3.dat", "nested/CON/file.txt"];
 
     for (const name of reserved) {
       expect(() => validateBundleEntryPath(name)).toThrowError(BundleSecurityError);
@@ -108,11 +96,7 @@ describe("loader security checks", () => {
   });
 
   it("rejects .git directory tampering", () => {
-    const gitPaths = [
-      ".git/config",
-      ".git/HEAD",
-      "src/.git/hooks/pre-commit",
-    ];
+    const gitPaths = [".git/config", ".git/HEAD", "src/.git/hooks/pre-commit"];
 
     for (const gitPath of gitPaths) {
       expect(() => validateBundleEntryPath(gitPath)).toThrowError(BundleSecurityError);
@@ -135,7 +119,9 @@ describe("loader security checks", () => {
     const safeResolved = resolveSafeTargetPath(targetRoot, "src/index.ts");
     expect(safeResolved).toBe(path.resolve(targetRoot, "src/index.ts"));
 
-    expect(() => resolveSafeTargetPath(targetRoot, "../escape.txt")).toThrowError(BundleSecurityError);
+    expect(() => resolveSafeTargetPath(targetRoot, "../escape.txt")).toThrowError(
+      BundleSecurityError,
+    );
   });
 
   it("detects symlink escapes pointing outside target root", () => {
@@ -152,7 +138,9 @@ describe("loader security checks", () => {
       const linkFile = path.join(insideDir, "link.txt");
       try {
         fs.symlinkSync(secretFile, linkFile);
-        expect(() => validateNoSymlinkEscapes(insideDir, linkFile)).toThrowError(BundleSecurityError);
+        expect(() => validateNoSymlinkEscapes(insideDir, linkFile)).toThrowError(
+          BundleSecurityError,
+        );
       } catch (symlinkErr) {
         // On systems without symlink permission, test graceful handling
         if (

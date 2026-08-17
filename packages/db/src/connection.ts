@@ -226,10 +226,7 @@ export class LocalDatabaseConnection {
   /**
    * Executes query and returns all matching rows.
    */
-  all<T = Record<string, unknown>>(
-    sql: string,
-    params?: unknown[] | Record<string, unknown>,
-  ): T[] {
+  all<T = Record<string, unknown>>(sql: string, params?: unknown[] | Record<string, unknown>): T[] {
     const stmt = this.prepare(sql);
     return this.bindAndAll(stmt, params) as T[];
   }

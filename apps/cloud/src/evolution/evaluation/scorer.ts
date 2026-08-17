@@ -1,17 +1,18 @@
-import type {
-  CapabilityManifest,
-  ToolManifest,
-} from "@tool-evolver/contracts";
-import type { CandidateValidationResult, CoverageReport, StaticAnalysisFinding } from "../testing/types.js";
-import type { HistoricalReplayResult } from "../replay/types.js";
+import type { CapabilityManifest, ToolManifest } from "@tool-evolver/contracts";
 import type { OpportunityDetection } from "../opportunity/types.js";
+import type { HistoricalReplayResult } from "../replay/types.js";
+import type {
+  CandidateValidationResult,
+  CoverageReport,
+  StaticAnalysisFinding,
+} from "../testing/types.js";
+import { classifyRiskTier } from "./policy.js";
 import type {
   DimensionScore,
   EvaluationDimensionKey,
   EvaluationPolicy,
   RiskTier,
 } from "./types.js";
-import { classifyRiskTier } from "./policy.js";
 
 /**
  * Parameter bundle for candidate scoring.
@@ -55,15 +56,31 @@ export class CandidateScorer {
     const weights = policy.weights;
 
     // 1. Compute scores for each dimension
-    const correctness = this.scoreCorrectness(context, weights.correctness, tierThresholds.minTestPassRate);
-    const replayCoverage = this.scoreReplayCoverage(context, weights.replayCoverage, tierThresholds.minReplayPassRate);
-    const securityPolicyFit = this.scoreSecurityPolicyFit(context, weights.securityPolicyFit, riskTier);
+    const correctness = this.scoreCorrectness(
+      context,
+      weights.correctness,
+      tierThresholds.minTestPassRate,
+    );
+    const replayCoverage = this.scoreReplayCoverage(
+      context,
+      weights.replayCoverage,
+      tierThresholds.minReplayPassRate,
+    );
+    const securityPolicyFit = this.scoreSecurityPolicyFit(
+      context,
+      weights.securityPolicyFit,
+      riskTier,
+    );
     const reliability = this.scoreReliability(context, weights.reliability);
     const latencyResources = this.scoreLatencyResources(context, weights.latencyResources);
     const tokenSavings = this.scoreTokenSavings(context, weights.tokenSavings);
     const timeSavings = this.scoreTimeSavings(context, weights.timeSavings);
     const utilityRecurrence = this.scoreUtilityRecurrence(context, weights.utilityRecurrence);
-    const maintainability = this.scoreMaintainability(context, weights.maintainability, tierThresholds.minCoveragePercent);
+    const maintainability = this.scoreMaintainability(
+      context,
+      weights.maintainability,
+      tierThresholds.minCoveragePercent,
+    );
 
     const dimensionScores: DimensionScore[] = [
       correctness,
@@ -89,7 +106,8 @@ export class CandidateScorer {
     }
 
     const compositeScore = totalWeight > 0 ? Number((weightedSum / totalWeight).toFixed(4)) : 0;
-    const confidenceScore = totalWeight > 0 ? Number((weightedConfidence / totalWeight).toFixed(4)) : 0;
+    const confidenceScore =
+      totalWeight > 0 ? Number((weightedConfidence / totalWeight).toFixed(4)) : 0;
     const thresholdScore = tierThresholds.minCompositeScore;
     const minRequiredConfidence = tierThresholds.minConfidence;
 
@@ -117,7 +135,7 @@ export class CandidateScorer {
   private scoreCorrectness(
     context: CandidateScoringContext,
     weight: number,
-    minPassRate: number
+    minPassRate: number,
   ): DimensionScore {
     const { validationResult } = context;
     const report = validationResult.testReport;
@@ -151,7 +169,9 @@ export class CandidateScorer {
     }
 
     // Static error deduction
-    const staticErrors = validationResult.staticFindings.filter((f) => f.severity === "error").length;
+    const staticErrors = validationResult.staticFindings.filter(
+      (f) => f.severity === "error",
+    ).length;
     if (staticErrors > 0) {
       rawScore = Math.max(0, rawScore - staticErrors * 0.25);
     }
@@ -178,7 +198,7 @@ export class CandidateScorer {
   private scoreReplayCoverage(
     context: CandidateScoringContext,
     weight: number,
-    minPassRate: number
+    minPassRate: number,
   ): DimensionScore {
     const { replayResult, policy } = context;
     const uncertainty = policy.uncertaintyConfig;
@@ -214,7 +234,8 @@ export class CandidateScorer {
     // Uncertainty penalty for small scenario count
     let confidence = 1.0;
     if (replayResult.totalScenarioCount < uncertainty.minReplayScenariosForFullConfidence) {
-      const missing = uncertainty.minReplayScenariosForFullConfidence - replayResult.totalScenarioCount;
+      const missing =
+        uncertainty.minReplayScenariosForFullConfidence - replayResult.totalScenarioCount;
       confidence = Math.max(0.2, 1.0 - missing * uncertainty.penaltyPerMissingScenario);
     }
 
@@ -247,13 +268,15 @@ export class CandidateScorer {
   private scoreSecurityPolicyFit(
     context: CandidateScoringContext,
     weight: number,
-    riskTier: RiskTier
+    riskTier: RiskTier,
   ): DimensionScore {
     const { validationResult, policy } = context;
     const tierThresholds = policy.riskTierThresholds[riskTier];
 
     const errorCount = validationResult.staticFindings.filter((f) => f.severity === "error").length;
-    const warningCount = validationResult.staticFindings.filter((f) => f.severity === "warning").length;
+    const warningCount = validationResult.staticFindings.filter(
+      (f) => f.severity === "warning",
+    ).length;
 
     let rawScore = 1.0;
     if (errorCount > 0) {
@@ -269,7 +292,7 @@ export class CandidateScorer {
     } else if (riskTier === "command_exec" && warningCount > 0) {
       tierPenalty = 0.15;
     } else if (riskTier === "network_client" && warningCount > 1) {
-      tierPenalty = 0.10;
+      tierPenalty = 0.1;
     }
 
     const adjustedScore = Math.max(0, Number((rawScore - tierPenalty).toFixed(4)));
@@ -297,10 +320,7 @@ export class CandidateScorer {
   /**
    * Dimension 4: Reliability (Seed reproducibility, error handling, timeout resilience).
    */
-  private scoreReliability(
-    context: CandidateScoringContext,
-    weight: number
-  ): DimensionScore {
+  private scoreReliability(context: CandidateScoringContext, weight: number): DimensionScore {
     const { validationResult, replayResult } = context;
 
     let score = 0.95;
@@ -308,13 +328,17 @@ export class CandidateScorer {
     let errorHandlingPassRate = 1.0;
 
     if (validationResult.testReport) {
-      const timeouts = validationResult.testReport.results.filter((r) => r.status === "timeout").length;
+      const timeouts = validationResult.testReport.results.filter(
+        (r) => r.status === "timeout",
+      ).length;
       timeoutCount = timeouts;
       if (timeouts > 0) {
         score -= timeouts * 0.15;
       }
 
-      const edgeCases = validationResult.testReport.results.filter((r) => r.testType === "edge_case" || r.testType === "error_mode");
+      const edgeCases = validationResult.testReport.results.filter(
+        (r) => r.testType === "edge_case" || r.testType === "error_mode",
+      );
       if (edgeCases.length > 0) {
         const passedEdge = edgeCases.filter((r) => r.passed).length;
         errorHandlingPassRate = passedEdge / edgeCases.length;
@@ -322,13 +346,13 @@ export class CandidateScorer {
       }
     }
 
-    if (replayResult && replayResult.reproducibilitySeed) {
+    if (replayResult?.reproducibilitySeed) {
       score += 0.05;
     }
 
     score = Math.min(1.0, Math.max(0.0, score));
     const adjustedScore = Number(score.toFixed(4));
-    const threshold = 0.70;
+    const threshold = 0.7;
 
     return {
       dimension: "reliability",
@@ -350,10 +374,7 @@ export class CandidateScorer {
   /**
    * Dimension 5: Latency & Resources (Execution duration vs multi-step trace).
    */
-  private scoreLatencyResources(
-    context: CandidateScoringContext,
-    weight: number
-  ): DimensionScore {
+  private scoreLatencyResources(context: CandidateScoringContext, weight: number): DimensionScore {
     const { validationResult, replayResult, opportunity } = context;
 
     let durationMs = 0;
@@ -383,7 +404,7 @@ export class CandidateScorer {
     const stepBonus = Math.min(0.2, stepReduction * 0.05);
     const rawScore = Math.min(1.0, durationScore + stepBonus);
     const adjustedScore = Number(rawScore.toFixed(4));
-    const threshold = 0.60;
+    const threshold = 0.6;
 
     return {
       dimension: "latency_resources",
@@ -392,7 +413,7 @@ export class CandidateScorer {
       weight,
       threshold,
       passed: adjustedScore >= threshold,
-      confidence: 0.80,
+      confidence: 0.8,
       metrics: {
         durationMs,
         stepReductionCount: stepReduction,
@@ -404,19 +425,22 @@ export class CandidateScorer {
   /**
    * Dimension 6: Token Savings (Multi-turn conversational prompt tokens saved).
    */
-  private scoreTokenSavings(
-    context: CandidateScoringContext,
-    weight: number
-  ): DimensionScore {
+  private scoreTokenSavings(context: CandidateScoringContext, weight: number): DimensionScore {
     const { replayResult, opportunity } = context;
 
     let tokenSavingsPercent = 75;
     let estimatedTokensSaved = 1000;
 
-    if (replayResult && replayResult.overallMetrics) {
+    if (replayResult?.overallMetrics) {
       const { baselineStepCount, candidateStepCount } = replayResult.overallMetrics;
       if (baselineStepCount > 0) {
-        tokenSavingsPercent = Math.max(0, Math.min(100, Math.round(((baselineStepCount - candidateStepCount) / baselineStepCount) * 100)));
+        tokenSavingsPercent = Math.max(
+          0,
+          Math.min(
+            100,
+            Math.round(((baselineStepCount - candidateStepCount) / baselineStepCount) * 100),
+          ),
+        );
       }
     } else if (opportunity && opportunity.metrics.totalTokens > 0) {
       estimatedTokensSaved = Math.round(opportunity.metrics.totalTokens * 0.7);
@@ -424,7 +448,7 @@ export class CandidateScorer {
 
     const rawScore = Math.min(1.0, Math.max(0.0, tokenSavingsPercent / 100));
     const adjustedScore = Number(rawScore.toFixed(4));
-    const threshold = 0.50;
+    const threshold = 0.5;
 
     return {
       dimension: "token_savings",
@@ -445,20 +469,26 @@ export class CandidateScorer {
   /**
    * Dimension 7: Time Savings (Wall-clock agent session time reduction).
    */
-  private scoreTimeSavings(
-    context: CandidateScoringContext,
-    weight: number
-  ): DimensionScore {
+  private scoreTimeSavings(context: CandidateScoringContext, weight: number): DimensionScore {
     const { opportunity } = context;
 
     let timeSavingsPercent = 60;
     if (opportunity && opportunity.metrics.totalDurationMs > 0) {
-      timeSavingsPercent = Math.min(95, Math.max(20, Math.round((opportunity.metrics.totalDurationMs / (opportunity.metrics.totalDurationMs + 2000)) * 100)));
+      timeSavingsPercent = Math.min(
+        95,
+        Math.max(
+          20,
+          Math.round(
+            (opportunity.metrics.totalDurationMs / (opportunity.metrics.totalDurationMs + 2000)) *
+              100,
+          ),
+        ),
+      );
     }
 
     const rawScore = Math.min(1.0, Math.max(0.0, timeSavingsPercent / 100));
     const adjustedScore = Number(rawScore.toFixed(4));
-    const threshold = 0.40;
+    const threshold = 0.4;
 
     return {
       dimension: "time_savings",
@@ -467,7 +497,7 @@ export class CandidateScorer {
       weight,
       threshold,
       passed: adjustedScore >= threshold,
-      confidence: 0.70,
+      confidence: 0.7,
       metrics: {
         timeSavingsPercent,
       },
@@ -478,22 +508,19 @@ export class CandidateScorer {
   /**
    * Dimension 8: Utility & Recurrence (Opportunity frequency, recurrence count, trigger priority).
    */
-  private scoreUtilityRecurrence(
-    context: CandidateScoringContext,
-    weight: number
-  ): DimensionScore {
+  private scoreUtilityRecurrence(context: CandidateScoringContext, weight: number): DimensionScore {
     const { opportunity, policy } = context;
     const uncertainty = policy.uncertaintyConfig;
 
     if (!opportunity) {
       return {
         dimension: "utility_recurrence",
-        rawScore: 0.70,
+        rawScore: 0.7,
         adjustedScore: 0.65,
         weight,
-        threshold: 0.50,
+        threshold: 0.5,
         passed: true,
-        confidence: 0.60,
+        confidence: 0.6,
         metrics: { occurrenceCount: 1, distinctSessionCount: 1 },
         details: "Single opportunity detection context.",
       };
@@ -509,7 +536,7 @@ export class CandidateScorer {
     } else if (occurrenceCount >= 2) {
       freqScore = 0.75;
     } else {
-      freqScore = 0.60;
+      freqScore = 0.6;
     }
 
     // Trigger bonus
@@ -530,7 +557,7 @@ export class CandidateScorer {
     }
 
     const adjustedScore = Number((rawScore * confidence).toFixed(4));
-    const threshold = 0.50;
+    const threshold = 0.5;
 
     return {
       dimension: "utility_recurrence",
@@ -556,7 +583,7 @@ export class CandidateScorer {
   private scoreMaintainability(
     context: CandidateScoringContext,
     weight: number,
-    minCoveragePercent: number
+    minCoveragePercent: number,
   ): DimensionScore {
     const { validationResult, sourceCode, selfReviewIssuesCount = 0 } = context;
     const coverage = validationResult.coverage;
@@ -599,7 +626,7 @@ export class CandidateScorer {
       weight,
       threshold,
       passed,
-      confidence: coverage ? 0.90 : 0.60,
+      confidence: coverage ? 0.9 : 0.6,
       metrics: {
         statementCoverage: statementCov,
         branchCoverage: branchCov,

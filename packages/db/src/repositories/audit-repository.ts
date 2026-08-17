@@ -209,7 +209,15 @@ export class AuditRepository {
       event_type: string;
       actor_json: string;
       workspace_id: string | null;
-      resource_type: "tool" | "deployment" | "candidate" | "workspace" | "capability" | "session" | "device" | "config";
+      resource_type:
+        | "tool"
+        | "deployment"
+        | "candidate"
+        | "workspace"
+        | "capability"
+        | "session"
+        | "device"
+        | "config";
       resource_id: string;
       action: string;
       status: "success" | "failure" | "denied";
@@ -284,7 +292,15 @@ export class AuditRepository {
       event_type: string;
       actor_json: string;
       workspace_id: string | null;
-      resource_type: "tool" | "deployment" | "candidate" | "workspace" | "capability" | "session" | "device" | "config";
+      resource_type:
+        | "tool"
+        | "deployment"
+        | "candidate"
+        | "workspace"
+        | "capability"
+        | "session"
+        | "device"
+        | "config";
       resource_id: string;
       action: string;
       status: "success" | "failure" | "denied";

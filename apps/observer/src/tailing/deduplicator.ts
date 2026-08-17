@@ -45,9 +45,7 @@ export class RecordDeduplicator {
    */
   computePayloadHash(record: RawHarnessRecord): string {
     const raw =
-      typeof record.rawPayload === "string"
-        ? record.rawPayload
-        : canonicalJson(record.rawPayload);
+      typeof record.rawPayload === "string" ? record.rawPayload : canonicalJson(record.rawPayload);
     return createHash("sha256").update(raw).digest("hex");
   }
 
@@ -169,9 +167,7 @@ export class RecordDeduplicator {
       seenCount: this.seenCount,
       duplicateCount: this.duplicateCount,
       cacheSize:
-        this.seenRecordIds.size +
-        this.seenPayloadHashes.size +
-        this.seenSessionOffsets.size,
+        this.seenRecordIds.size + this.seenPayloadHashes.size + this.seenSessionOffsets.size,
     };
   }
 }

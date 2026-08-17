@@ -107,7 +107,9 @@ export function exportDatabaseDiagnostics(
   }
 
   // PRAGMA checks
-  const sqliteVerRow = conn.get<{ sqlite_version: string }>("SELECT sqlite_version() AS sqlite_version;");
+  const sqliteVerRow = conn.get<{ sqlite_version: string }>(
+    "SELECT sqlite_version() AS sqlite_version;",
+  );
   const journalRow = conn.get<{ journal_mode: string }>("PRAGMA journal_mode;");
   const fkRow = conn.get<{ foreign_keys: number }>("PRAGMA foreign_keys;");
   const timeoutRow = conn.get<{ timeout: number }>("PRAGMA busy_timeout;");

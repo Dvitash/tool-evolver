@@ -262,11 +262,43 @@ export function createMockManifest(overrides: Partial<ToolManifest> = {}): ToolM
       target: "es2022",
     },
     capabilities: overrides.capabilities ?? {
-      fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-      net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-      command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-      secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-      limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+      fs: {
+        readPaths: [],
+        writePaths: [],
+        allowWorkspaceRoot: false,
+        allowTemp: false,
+        denyPaths: [],
+        maxFileSizeBytes: 10485760,
+      },
+      net: {
+        allowOutbound: false,
+        allowedDomains: [],
+        allowedHosts: [],
+        allowedPorts: [],
+        allowedProtocols: ["https"],
+        allowLocalhost: false,
+        denyPrivateRanges: true,
+      },
+      command: {
+        allowShellExecution: false,
+        allowedCommands: [],
+        allowedBinaries: [],
+        forbiddenPatterns: [],
+        allowEnvPassthrough: [],
+      },
+      secrets: {
+        allowedSecretNames: [],
+        allowedPrefixes: [],
+        denyDirectRead: true,
+        injectAsEnv: true,
+      },
+      limits: {
+        maxConcurrentExecutions: 4,
+        maxCpuUsagePercent: 100,
+        maxMemoryMb: 128,
+        maxExecutionTimeMs: 30000,
+        maxOutputSizeBytes: 1048576,
+      },
     },
     limits: overrides.limits ?? {
       timeoutMs: 30000,
@@ -320,11 +352,43 @@ export function createMockPlan(overrides: Partial<ToolPlan> = {}): ToolPlan {
       },
     ],
     requiredCapabilities: overrides.requiredCapabilities ?? {
-      fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-      net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-      command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-      secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-      limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+      fs: {
+        readPaths: [],
+        writePaths: [],
+        allowWorkspaceRoot: false,
+        allowTemp: false,
+        denyPaths: [],
+        maxFileSizeBytes: 10485760,
+      },
+      net: {
+        allowOutbound: false,
+        allowedDomains: [],
+        allowedHosts: [],
+        allowedPorts: [],
+        allowedProtocols: ["https"],
+        allowLocalhost: false,
+        denyPrivateRanges: true,
+      },
+      command: {
+        allowShellExecution: false,
+        allowedCommands: [],
+        allowedBinaries: [],
+        forbiddenPatterns: [],
+        allowEnvPassthrough: [],
+      },
+      secrets: {
+        allowedSecretNames: [],
+        allowedPrefixes: [],
+        denyDirectRead: true,
+        injectAsEnv: true,
+      },
+      limits: {
+        maxConcurrentExecutions: 4,
+        maxCpuUsagePercent: 100,
+        maxMemoryMb: 128,
+        maxExecutionTimeMs: 30000,
+        maxOutputSizeBytes: 1048576,
+      },
     },
     resourceRequirements: overrides.resourceRequirements ?? {
       maxExecutionTimeMs: 5000,
@@ -343,7 +407,9 @@ export function createMockPlan(overrides: Partial<ToolPlan> = {}): ToolPlan {
 /**
  * Creates a mock CandidateRevision.
  */
-export function createMockCandidateRevision(overrides: Partial<CandidateRevision> = {}): CandidateRevision {
+export function createMockCandidateRevision(
+  overrides: Partial<CandidateRevision> = {},
+): CandidateRevision {
   const plan = createMockPlan();
   const manifest = createMockManifest();
   return {

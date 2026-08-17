@@ -1,8 +1,4 @@
-import type {
-  CapabilityEnvelope,
-  CapabilityManifest,
-  ToolManifest,
-} from "@tool-evolver/contracts";
+import type { CapabilityEnvelope, CapabilityManifest, ToolManifest } from "@tool-evolver/contracts";
 import { describe, expect, it } from "vitest";
 import {
   CapabilityPolicyEngine,
@@ -136,11 +132,43 @@ describe("CapabilityPolicyEngine", () => {
       version: "2.1.0",
       description: "Fetches git branches safely",
       capabilities: {
-        fs: { readPaths: ["src/**"], writePaths: [], allowWorkspaceRoot: true, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: true, allowedDomains: ["api.github.com"], allowedHosts: [], allowedPorts: [443], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: ["git"], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: ["GITHUB_TOKEN"], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        fs: {
+          readPaths: ["src/**"],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: false,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: true,
+          allowedDomains: ["api.github.com"],
+          allowedHosts: [],
+          allowedPorts: [443],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: ["git"],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: ["GITHUB_TOKEN"],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       },
       runtime: { type: "deno_worker" },
       parameters: { type: "object", properties: {} },
@@ -170,10 +198,35 @@ describe("CapabilityPolicyEngine", () => {
           denyPaths: [],
           maxFileSizeBytes: 10485760,
         },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const result = engine.evaluateInvocation(manifest, testEnvelope, validContext);
@@ -199,10 +252,35 @@ describe("CapabilityPolicyEngine", () => {
           denyPaths: [],
           maxFileSizeBytes: 10485760,
         },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const result = engine.evaluateInvocation(manifest, testEnvelope, validContext);
@@ -220,7 +298,14 @@ describe("CapabilityPolicyEngine", () => {
       });
 
       const manifest: CapabilityManifest = {
-        fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
+        fs: {
+          readPaths: [],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: false,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
         net: {
           allowOutbound: true,
           allowedDomains: ["unauthorized-data-sink.com"],
@@ -230,9 +315,26 @@ describe("CapabilityPolicyEngine", () => {
           allowLocalhost: false,
           denyPrivateRanges: true,
         },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const result = engine.evaluateInvocation(manifest, testEnvelope, validContext);
@@ -249,8 +351,23 @@ describe("CapabilityPolicyEngine", () => {
       });
 
       const manifest: CapabilityManifest = {
-        fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
+        fs: {
+          readPaths: [],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: false,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
         command: {
           allowShellExecution: true, // Forbidden by envelope
           allowedCommands: ["bash"],
@@ -258,8 +375,19 @@ describe("CapabilityPolicyEngine", () => {
           forbiddenPatterns: [],
           allowEnvPassthrough: [],
         },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const result = engine.evaluateInvocation(manifest, testEnvelope, validContext);
@@ -278,11 +406,43 @@ describe("CapabilityPolicyEngine", () => {
       });
 
       const manifestWithUnknown = {
-        fs: { readPaths: ["src/**"], writePaths: [], allowWorkspaceRoot: true, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        fs: {
+          readPaths: ["src/**"],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: false,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
         rawDiskAccess: true, // Unknown capability type
         bluetooth: { enabled: true }, // Unknown capability type
       };
@@ -311,10 +471,35 @@ describe("CapabilityPolicyEngine", () => {
           maxFileSizeBytes: 10485760,
           rawInodeAccess: true, // Unknown sub-key
         },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const result = engine.evaluateInvocation(manifestWithUnknownSub, testEnvelope, validContext);
@@ -338,11 +523,43 @@ describe("CapabilityPolicyEngine", () => {
       };
 
       const expandingManifest: CapabilityManifest = {
-        fs: { readPaths: ["extra/path/**"], writePaths: [], allowWorkspaceRoot: true, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        fs: {
+          readPaths: ["extra/path/**"],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: false,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const result = engine.evaluateInvocation(expandingManifest, frozenEnvelope, validContext);
@@ -364,11 +581,43 @@ describe("CapabilityPolicyEngine", () => {
       };
 
       const manifest: CapabilityManifest = {
-        fs: { readPaths: ["src/**"], writePaths: [], allowWorkspaceRoot: true, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        fs: {
+          readPaths: ["src/**"],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: false,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const result = engine.evaluateInvocation(manifest, testEnvelope, mismatchedContext);
@@ -388,11 +637,43 @@ describe("CapabilityPolicyEngine", () => {
       engine.setEnvelope(testEnvelope);
 
       const manifest: CapabilityManifest = {
-        fs: { readPaths: ["src/index.ts"], writePaths: [], allowWorkspaceRoot: true, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: true, allowedDomains: ["api.github.com"], allowedHosts: [], allowedPorts: [443], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        fs: {
+          readPaths: ["src/index.ts"],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: false,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: true,
+          allowedDomains: ["api.github.com"],
+          allowedHosts: [],
+          allowedPorts: [443],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       // First evaluation (not cached)

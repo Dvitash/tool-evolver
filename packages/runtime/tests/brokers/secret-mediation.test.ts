@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { createInvocationGrant } from "../../src/policy/grant.js";
 import {
   BrokerAuditEmitter,
   BrokerSecurityError,
   CapabilityBrokerManager,
   SecretBroker,
 } from "../../src/brokers/index.js";
+import { createInvocationGrant } from "../../src/policy/grant.js";
 
 describe("Secret Mediation Broker Security & Isolation", () => {
   let auditEmitter: BrokerAuditEmitter;
@@ -101,7 +101,7 @@ describe("Secret Mediation Broker Security & Isolation", () => {
       const rotated = await secretBroker.rotateSecret(
         "GITHUB_TOKEN",
         "ghp_newrotatedtoken98765432109876543210",
-        "ws_main"
+        "ws_main",
       );
       expect(rotated.version).toBe(2);
 
@@ -115,7 +115,7 @@ describe("Secret Mediation Broker Security & Isolation", () => {
 
       // Subsequent mediation should fail
       await expect(secretBroker.mediateBearerToken("GITHUB_TOKEN", ctx)).rejects.toThrow(
-        BrokerSecurityError
+        BrokerSecurityError,
       );
     });
   });
@@ -141,7 +141,7 @@ describe("Secret Mediation Broker Security & Isolation", () => {
       };
 
       await expect(secretBroker.getSecret("API_KEY", ctx)).rejects.toThrow(
-        /Direct read of secret 'API_KEY' is denied by policy/
+        /Direct read of secret 'API_KEY' is denied by policy/,
       );
 
       // Verify audit event was recorded as denied
@@ -175,9 +175,7 @@ describe("Secret Mediation Broker Security & Isolation", () => {
       expect(res.secret).toBe("sk-proj-super-secret-key-12345");
 
       // Unauthorized secret read
-      await expect(secretBroker.getSecret("DB_PASS", ctx)).rejects.toThrow(
-        BrokerSecurityError
-      );
+      await expect(secretBroker.getSecret("DB_PASS", ctx)).rejects.toThrow(BrokerSecurityError);
     });
 
     it("denies access when invocation grant is missing", async () => {
@@ -187,7 +185,7 @@ describe("Secret Mediation Broker Security & Isolation", () => {
       };
 
       await expect(
-        secretBroker.mediateHeaders({ Authorization: "Bearer {{secret:GITHUB_TOKEN}}" }, ctx)
+        secretBroker.mediateHeaders({ Authorization: "Bearer {{secret:GITHUB_TOKEN}}" }, ctx),
       ).rejects.toThrow(/Invocation grant is required/);
     });
   });
@@ -278,7 +276,7 @@ describe("Secret Mediation Broker Security & Isolation", () => {
 
       // GITHUB_TOKEN is not in allowedSecretNames
       await expect(
-        secretBroker.mediateHeaders({ Authorization: "Bearer {{secret:GITHUB_TOKEN}}" }, ctx)
+        secretBroker.mediateHeaders({ Authorization: "Bearer {{secret:GITHUB_TOKEN}}" }, ctx),
       ).rejects.toThrow(/Secret 'GITHUB_TOKEN' is not authorized by capability grant/);
     });
 
@@ -302,7 +300,7 @@ describe("Secret Mediation Broker Security & Isolation", () => {
       };
 
       await expect(
-        secretBroker.mediateHeaders({ "X-Key": "{{secret:ISOLATED_SECRET}}" }, ctx)
+        secretBroker.mediateHeaders({ "X-Key": "{{secret:ISOLATED_SECRET}}" }, ctx),
       ).rejects.toThrow(/belongs to workspace 'ws_isolated', not 'ws_main'/);
     });
   });
@@ -327,11 +325,12 @@ describe("Secret Mediation Broker Security & Isolation", () => {
         workspaceId: "ws_main",
       };
 
-      const rawUrl = "https://api.example.com/v1/search?query=test&api_key={{secret:API_KEY}}&format=json";
+      const rawUrl =
+        "https://api.example.com/v1/search?query=test&api_key={{secret:API_KEY}}&format=json";
       const mediatedUrl = await secretBroker.mediateUrl(rawUrl, ctx);
 
       expect(mediatedUrl).toBe(
-        "https://api.example.com/v1/search?query=test&api_key=sk-proj-super-secret-key-12345&format=json"
+        "https://api.example.com/v1/search?query=test&api_key=sk-proj-super-secret-key-12345&format=json",
       );
     });
   });
@@ -422,14 +421,14 @@ describe("Secret Mediation Broker Security & Isolation", () => {
             Authorization: "Bearer {{secret:GITHUB_TOKEN}}",
           },
         },
-        ctx
+        ctx,
       )) as Record<string, string>;
 
       expect(res.Authorization).toBe("Bearer ghp_123456789012345678901234567890123456");
 
       // Dispatched direct read fails
       await expect(
-        brokerManager.handleRequest("secret", "getSecret", { name: "GITHUB_TOKEN" }, ctx)
+        brokerManager.handleRequest("secret", "getSecret", { name: "GITHUB_TOKEN" }, ctx),
       ).rejects.toThrow(BrokerSecurityError);
     });
   });
@@ -438,7 +437,8 @@ describe("Secret Mediation Broker Security & Isolation", () => {
     it("redacts all registered secrets in logs and diagnostic outputs", () => {
       const redactor = secretBroker.getRedactor();
 
-      const logMessage = "Request failed with Authorization: Bearer ghp_123456789012345678901234567890123456 and token sk-proj-super-secret-key-12345";
+      const logMessage =
+        "Request failed with Authorization: Bearer ghp_123456789012345678901234567890123456 and token sk-proj-super-secret-key-12345";
       const sanitizedLog = redactor.redact(logMessage);
 
       expect(sanitizedLog).not.toContain("ghp_123456789012345678901234567890123456");
@@ -456,7 +456,9 @@ describe("Secret Mediation Broker Security & Isolation", () => {
       };
 
       const sanitizedDiag = redactor.redactObject(diagnosticPayload);
-      expect(sanitizedDiag.error.message).toBe("Failed connecting with password [REDACTED:DB_PASS]");
+      expect(sanitizedDiag.error.message).toBe(
+        "Failed connecting with password [REDACTED:DB_PASS]",
+      );
       expect(sanitizedDiag.metadata.rawHeader).toBe("Bearer [REDACTED:GITHUB_TOKEN]");
     });
   });

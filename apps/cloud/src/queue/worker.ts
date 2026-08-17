@@ -1,13 +1,10 @@
-import { JobEnvelope } from "./envelope.js";
-import { DurableQueue } from "./queue.js";
+import type { JobEnvelope } from "./envelope.js";
+import type { DurableQueue } from "./queue.js";
 
 /**
  * Handler function signature for processing a job.
  */
-export type JobHandler<T = unknown> = (
-  job: JobEnvelope<T>,
-  signal: AbortSignal,
-) => Promise<void>;
+export type JobHandler<T = unknown> = (job: JobEnvelope<T>, signal: AbortSignal) => Promise<void>;
 
 /**
  * Options for configuring the WorkerRuntime.
@@ -94,7 +91,9 @@ export class WorkerRuntime {
     this.activeControllers.set(job.jobId, controller);
 
     const timeoutTimer = setTimeout(() => {
-      controller.abort(new Error(`Job '${job.jobId}' (${job.jobType}) timed out after ${this.jobTimeoutMs}ms`));
+      controller.abort(
+        new Error(`Job '${job.jobId}' (${job.jobType}) timed out after ${this.jobTimeoutMs}ms`),
+      );
     }, this.jobTimeoutMs);
 
     try {

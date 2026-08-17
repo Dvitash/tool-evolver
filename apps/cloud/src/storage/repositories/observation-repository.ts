@@ -1,12 +1,12 @@
 import {
-  NormalizedSessionEvent,
+  type NormalizedSessionEvent,
   NormalizedSessionEventSchema,
   canonicalJsonStringify,
   hashCanonicalContent,
 } from "@tool-evolver/contracts";
-import { DatabasePool, Queryable } from "../../db/client.js";
-import { TenantContext } from "../../tenant.js";
-import {
+import type { DatabasePool, Queryable } from "../../db/client.js";
+import type { TenantContext } from "../../tenant.js";
+import type {
   EventQueryFilter,
   NormalizedEventEntity,
   PaginatedEventsResult,
@@ -29,20 +29,25 @@ export class ObservationRepository {
     const eventId = "id" in event && event.id ? event.id : (event as { eventId: string }).eventId;
     const sessionId = "sessionId" in event ? event.sessionId : "";
     const branchId = "branchId" in event && event.branchId ? event.branchId : "main";
-    const eventType = "type" in event ? (event as { type: string }).type : (event as { eventType: string }).eventType;
-    const schemaVersion = "schemaVersion" in event && event.schemaVersion ? event.schemaVersion : "1.0.0";
+    const eventType =
+      "type" in event
+        ? (event as { type: string }).type
+        : (event as { eventType: string }).eventType;
+    const schemaVersion =
+      "schemaVersion" in event && event.schemaVersion ? event.schemaVersion : "1.0.0";
     const timestamp = "timestamp" in event ? event.timestamp : new Date().toISOString();
 
     const causalRef = "causalRef" in event ? event.causalRef : undefined;
     const causalSequence =
       "causalSequence" in event && event.causalSequence !== undefined
         ? Number(event.causalSequence)
-        : causalRef?.causalSequence ?? 0;
+        : (causalRef?.causalSequence ?? 0);
     const parentId = "parentId" in event ? event.parentId : (causalRef?.parentId ?? null);
     const rootId = "rootId" in event ? event.rootId : (causalRef?.rootId ?? null);
     const turnIndex = "turnIndex" in event ? event.turnIndex : (causalRef?.turnIndex ?? null);
     const stepIndex = "stepIndex" in event ? event.stepIndex : (causalRef?.stepIndex ?? null);
-    const traceId = "traceId" in event ? event.traceId : (causalRef?.traceId ?? tenant.traceId ?? null);
+    const traceId =
+      "traceId" in event ? event.traceId : (causalRef?.traceId ?? tenant.traceId ?? null);
     const spanId = "spanId" in event ? event.spanId : (causalRef?.spanId ?? null);
 
     const redaction = "redaction" in event ? event.redaction : null;
@@ -59,7 +64,8 @@ export class ObservationRepository {
         ? event.contentHash
         : hashCanonicalContent(event, { prefix: false });
 
-    const createdAt = "createdAt" in event && event.createdAt ? event.createdAt : new Date().toISOString();
+    const createdAt =
+      "createdAt" in event && event.createdAt ? event.createdAt : new Date().toISOString();
 
     // Check if event already exists for idempotency
     const existing = await this.getEventById(tenant, eventId, client);
@@ -146,8 +152,14 @@ export class ObservationRepository {
 
     // Sort batch by timestamp and causal sequence to preserve causal lineage
     const sorted = [...events].sort((a, b) => {
-      const seqA = "causalSequence" in a && a.causalSequence !== undefined ? Number(a.causalSequence) : (a as NormalizedSessionEvent).causalRef?.causalSequence ?? 0;
-      const seqB = "causalSequence" in b && b.causalSequence !== undefined ? Number(b.causalSequence) : (b as NormalizedSessionEvent).causalRef?.causalSequence ?? 0;
+      const seqA =
+        "causalSequence" in a && a.causalSequence !== undefined
+          ? Number(a.causalSequence)
+          : ((a as NormalizedSessionEvent).causalRef?.causalSequence ?? 0);
+      const seqB =
+        "causalSequence" in b && b.causalSequence !== undefined
+          ? Number(b.causalSequence)
+          : ((b as NormalizedSessionEvent).causalRef?.causalSequence ?? 0);
       if (seqA !== seqB) return seqA - seqB;
       const timeA = new Date(a.timestamp).getTime();
       const timeB = new Date(b.timestamp).getTime();
@@ -193,15 +205,9 @@ export class ObservationRepository {
   /**
    * Query normalized events with filtering, causal ordering, and deterministic pagination.
    */
-  async queryEvents(
-    filter: EventQueryFilter,
-    db?: Queryable,
-  ): Promise<PaginatedEventsResult> {
+  async queryEvents(filter: EventQueryFilter, db?: Queryable): Promise<PaginatedEventsResult> {
     const client = db ?? this.pool;
-    const conditions: string[] = [
-      "account_id = $1",
-      "workspace_id = $2",
-    ];
+    const conditions: string[] = ["account_id = $1", "workspace_id = $2"];
     const params: unknown[] = [filter.accountId, filter.workspaceId];
     let paramIdx = 3;
 
@@ -304,9 +310,8 @@ export class ObservationRepository {
     const result = await client.query<Record<string, unknown>>(querySql, queryParams);
     const events = result.rows.map((row) => this.mapRowToEntity(row));
     const hasMore = offset + events.length < totalCount;
-    const nextCursor = hasMore && events.length > 0
-      ? String(events[events.length - 1].causalSequence)
-      : null;
+    const nextCursor =
+      hasMore && events.length > 0 ? String(events[events.length - 1].causalSequence) : null;
 
     return {
       events,
@@ -389,12 +394,19 @@ export class ObservationRepository {
       causalSequence: Number(row.causal_sequence ?? 0),
       parentId: row.parent_id ? String(row.parent_id) : null,
       rootId: row.root_id ? String(row.root_id) : null,
-      turnIndex: row.turn_index !== undefined && row.turn_index !== null ? Number(row.turn_index) : null,
-      stepIndex: row.step_index !== undefined && row.step_index !== null ? Number(row.step_index) : null,
+      turnIndex:
+        row.turn_index !== undefined && row.turn_index !== null ? Number(row.turn_index) : null,
+      stepIndex:
+        row.step_index !== undefined && row.step_index !== null ? Number(row.step_index) : null,
       traceId: row.trace_id ? String(row.trace_id) : null,
       spanId: row.span_id ? String(row.span_id) : null,
-      payload: (typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload) as Record<string, unknown>,
-      redaction: (typeof row.redaction === "string" ? JSON.parse(row.redaction) : row.redaction) as NormalizedEventEntity["redaction"],
+      payload: (typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload) as Record<
+        string,
+        unknown
+      >,
+      redaction: (typeof row.redaction === "string"
+        ? JSON.parse(row.redaction)
+        : row.redaction) as NormalizedEventEntity["redaction"],
       contentHash: String(row.content_hash),
       createdAt: String(row.created_at),
     };

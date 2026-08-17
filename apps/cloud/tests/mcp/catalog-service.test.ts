@@ -2,13 +2,10 @@
  * @tool-evolver/cloud - Cloud Catalog Service Tests
  */
 
-import { describe, expect, it } from "vitest";
-import {
-  CloudCatalogService,
-  createCloudCatalogService,
-} from "../../src/mcp/index.js";
-import { MemoryDatabasePool, OutboxRepository } from "../../src/db/index.js";
 import type { StreamCatalogInvalidation } from "@tool-evolver/protocol";
+import { describe, expect, it } from "vitest";
+import { MemoryDatabasePool, OutboxRepository } from "../../src/db/index.js";
+import { CloudCatalogService, createCloudCatalogService } from "../../src/mcp/index.js";
 
 describe("CloudCatalogService - Snapshots, Revisions & Invalidation", () => {
   const tenant = {

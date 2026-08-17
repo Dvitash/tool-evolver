@@ -259,7 +259,8 @@ export function intersectCapabilities(
     violations.push({
       code: "NET_OUTBOUND_FORBIDDEN",
       subsystem: "net",
-      message: "Tool requested outbound network access, but workspace envelope forbids all outbound network",
+      message:
+        "Tool requested outbound network access, but workspace envelope forbids all outbound network",
       requestedValue: true,
       allowedValue: false,
     });
@@ -277,7 +278,8 @@ export function intersectCapabilities(
   }
 
   // Deny private ranges is more restrictive (true if either is true)
-  const denyPrivateRanges = reqNet.denyPrivateRanges !== false || envNet.denyPrivateRanges !== false;
+  const denyPrivateRanges =
+    reqNet.denyPrivateRanges !== false || envNet.denyPrivateRanges !== false;
 
   // Allowed Domains intersection
   const grantDomains: string[] = [];
@@ -428,9 +430,7 @@ export function intersectCapabilities(
   const reqCmd: CommandCapability = requested.command ?? {};
   const envCmd: CommandCapability = envelope.command ?? {};
 
-  const allowShellExecution = Boolean(
-    reqCmd.allowShellExecution && envCmd.allowShellExecution,
-  );
+  const allowShellExecution = Boolean(reqCmd.allowShellExecution && envCmd.allowShellExecution);
   if (reqCmd.allowShellExecution && !envCmd.allowShellExecution) {
     violations.push({
       code: "CMD_SHELL_FORBIDDEN",
@@ -694,10 +694,7 @@ export function intersectCapabilities(
       reqLim.maxCpuUsagePercent ?? 100,
       envLim.maxCpuUsagePercent ?? 100,
     ),
-    maxMemoryMb: Math.min(
-      reqLim.maxMemoryMb ?? 128,
-      envLim.maxMemoryMb ?? 128,
-    ),
+    maxMemoryMb: Math.min(reqLim.maxMemoryMb ?? 128, envLim.maxMemoryMb ?? 128),
     maxExecutionTimeMs: Math.min(
       reqLim.maxExecutionTimeMs ?? 30000,
       envLim.maxExecutionTimeMs ?? 30000,

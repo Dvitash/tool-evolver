@@ -83,8 +83,6 @@ export class FakeRefreshAdapter implements RefreshAdapterHandler {
           requiresSessionRestart: false,
           description: "Fake failing adapter",
         };
-      case "meta_tools_only":
-      case "unsupported":
       default:
         return {
           supportsNativeListChange: false,
@@ -137,9 +135,6 @@ export class FakeRefreshAdapter implements RefreshAdapterHandler {
           affectedToolCount,
           requiresRestart: true,
         });
-
-      case "meta_tools_only":
-      case "unsupported":
       default:
         return createRefreshResult("unsupported", {
           message: "Catalog refresh unsupported on this harness",

@@ -8,10 +8,7 @@ import { z } from "zod";
  * and constraint tightening.
  */
 
-export type SchemaChangeCategory =
-  | "additive"
-  | "conditionally_compatible"
-  | "breaking";
+export type SchemaChangeCategory = "additive" | "conditionally_compatible" | "breaking";
 
 export type SchemaChangeKind =
   | "field_added"
@@ -653,7 +650,9 @@ export function diffJsonSchemas(
     for (const r of requiredList) requiredSet[r] = true;
 
     if (json.properties && typeof json.properties === "object") {
-      for (const [k, v] of Object.entries(json.properties as Record<string, Record<string, unknown>>)) {
+      for (const [k, v] of Object.entries(
+        json.properties as Record<string, Record<string, unknown>>,
+      )) {
         const desc = jsonToDescriptor(v);
         desc.isOptional = !requiredSet[k];
         properties[k] = desc;
@@ -674,8 +673,18 @@ export function diffJsonSchemas(
       required: requiredList,
       enumValues,
       arrayItem,
-      min: typeof json.minimum === "number" ? json.minimum : typeof json.minLength === "number" ? json.minLength : undefined,
-      max: typeof json.maximum === "number" ? json.maximum : typeof json.maxLength === "number" ? json.maxLength : undefined,
+      min:
+        typeof json.minimum === "number"
+          ? json.minimum
+          : typeof json.minLength === "number"
+            ? json.minLength
+            : undefined,
+      max:
+        typeof json.maximum === "number"
+          ? json.maximum
+          : typeof json.maxLength === "number"
+            ? json.maxLength
+            : undefined,
       pattern: typeof json.pattern === "string" ? json.pattern : undefined,
     };
   }

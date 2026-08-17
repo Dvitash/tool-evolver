@@ -10,7 +10,7 @@ import { EvidenceRepository } from "../../src/storage/repositories/evidence-repo
 import { ObservationRepository } from "../../src/storage/repositories/observation-repository.js";
 import { RetentionRepository } from "../../src/storage/repositories/retention-repository.js";
 import { SessionRepository } from "../../src/storage/repositories/session-repository.js";
-import { TenantContext } from "../../src/tenant.js";
+import type { TenantContext } from "../../src/tenant.js";
 
 describe("ExportService & Cascading Deletion", () => {
   const setup = async () => {
@@ -33,20 +33,27 @@ describe("ExportService & Cascading Deletion", () => {
       workspaceId: "ws-exp",
     };
 
-    await pool.query(
-      `INSERT INTO accounts (id, name) VALUES ($1, $2)`,
-      ["acc-exp", "Export Corp"],
-    );
+    await pool.query(`INSERT INTO accounts (id, name) VALUES ($1, $2)`, ["acc-exp", "Export Corp"]);
     await pool.query(
       `INSERT INTO workspaces (id, account_id, name, slug) VALUES ($1, $2, $3, $4)`,
       ["ws-exp", "acc-exp", "Export Workspace", "exp"],
     );
 
-    return { pool, objectStore, obsRepo, sessionRepo, evidenceRepo, retentionRepo, exportService, tenant };
+    return {
+      pool,
+      objectStore,
+      obsRepo,
+      sessionRepo,
+      evidenceRepo,
+      retentionRepo,
+      exportService,
+      tenant,
+    };
   };
 
   it("should export session observations and evidence into object storage", async () => {
-    const { sessionRepo, obsRepo, evidenceRepo, exportService, objectStore, tenant } = await setup();
+    const { sessionRepo, obsRepo, evidenceRepo, exportService, objectStore, tenant } =
+      await setup();
 
     await sessionRepo.createSession(tenant, { id: "sess-export-1" });
     await sessionRepo.createBranch(tenant, {

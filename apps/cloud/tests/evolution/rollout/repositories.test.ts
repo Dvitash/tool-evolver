@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
+import type {
+  RolloutDecision,
+  RolloutEntity,
+  RolloutIncidentRecord,
+  RolloutOverrideRecord,
+  RolloutSessionAssignment,
+} from "../../../src/evolution/rollout/types.js";
 import {
-  createMockRolloutParams,
-  createTestRolloutEnvironment,
   TEST_TENANT,
   TEST_WORKSPACE_ID,
+  createMockRolloutParams,
+  createTestRolloutEnvironment,
 } from "./helpers.js";
-import {
-  type RolloutDecision,
-  type RolloutEntity,
-  type RolloutIncidentRecord,
-  type RolloutOverrideRecord,
-  type RolloutSessionAssignment,
-} from "../../../src/evolution/rollout/types.js";
 
 describe("RolloutRepository - Database Persistence & Lineage Operations", () => {
   it("should persist, query, and update rollout entities", async () => {
@@ -52,10 +52,7 @@ describe("RolloutRepository - Database Persistence & Lineage Operations", () => 
     expect(retrieved?.state).toBe("canary");
 
     // 3. Query active rollout for tool
-    const active = await env.rolloutRepo.getActiveRolloutForTool(
-      TEST_WORKSPACE_ID,
-      "log_parser",
-    );
+    const active = await env.rolloutRepo.getActiveRolloutForTool(TEST_WORKSPACE_ID, "log_parser");
     expect(active?.id).toBe(rolloutId);
 
     // 4. Update rollout state to promoted
@@ -109,10 +106,7 @@ describe("RolloutRepository - Database Persistence & Lineage Operations", () => 
     await env.rolloutRepo.createRollout(TEST_TENANT, rollout);
 
     // Check cooldown -> should be in cooldown
-    const check1 = await env.rolloutRepo.isArtifactInCooldown(
-      TEST_WORKSPACE_ID,
-      digest,
-    );
+    const check1 = await env.rolloutRepo.isArtifactInCooldown(TEST_WORKSPACE_ID, digest);
     expect(check1.inCooldown).toBe(true);
     expect(check1.cooldownUntil).toBe(futureDate);
     expect(check1.reason).toBe("Security boundary violation");
@@ -127,10 +121,7 @@ describe("RolloutRepository - Database Persistence & Lineage Operations", () => 
       cooldownUntil: pastDate,
     });
 
-    const check2 = await env.rolloutRepo.isArtifactInCooldown(
-      TEST_WORKSPACE_ID,
-      pastDigest,
-    );
+    const check2 = await env.rolloutRepo.isArtifactInCooldown(TEST_WORKSPACE_ID, pastDigest);
     expect(check2.inCooldown).toBe(false);
   });
 
@@ -271,19 +262,13 @@ describe("RolloutRepository - Database Persistence & Lineage Operations", () => 
 
     await env.rolloutRepo.saveOverride(override);
 
-    const retrieved = await env.rolloutRepo.getOverride(
-      TEST_WORKSPACE_ID,
-      "legacy_tool",
-    );
+    const retrieved = await env.rolloutRepo.getOverride(TEST_WORKSPACE_ID, "legacy_tool");
     expect(retrieved).toBeDefined();
     expect(retrieved?.overrideType).toBe("pinned");
     expect(retrieved?.pinnedVersion).toBe("0.9.0");
 
     await env.rolloutRepo.removeOverride(TEST_WORKSPACE_ID, "legacy_tool");
-    const removed = await env.rolloutRepo.getOverride(
-      TEST_WORKSPACE_ID,
-      "legacy_tool",
-    );
+    const removed = await env.rolloutRepo.getOverride(TEST_WORKSPACE_ID, "legacy_tool");
     expect(removed).toBeNull();
   });
 

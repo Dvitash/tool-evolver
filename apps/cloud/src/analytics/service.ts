@@ -6,24 +6,24 @@ import { EvaluationCalibrator } from "./calibration.js";
 import { TelemetryDeduplicator } from "./deduplicator.js";
 import { EfficiencyCalculator } from "./efficiency.js";
 import { RolloutWindowMaterializer } from "./materializer.js";
-import { MetricsRepository, type IMetricsRepository } from "./repositories/metrics-repository.js";
+import { type IMetricsRepository, MetricsRepository } from "./repositories/metrics-repository.js";
 import { SchemaGuard } from "./schema-guard.js";
-import {
-  type AnomalyAlertRecord,
-  type AnomalyQueryFilter,
-  type BucketQueryFilter,
-  type CalculateEfficiencyParams,
-  type CalibrateEvaluationParams,
-  type CalibrationQueryFilter,
-  type CalibrationRecord,
-  type EfficiencyMetricRecord,
-  type EfficiencyQueryFilter,
-  type MaterializeRolloutWindowParams,
-  type RolloutMetricWindowRecord,
-  type RolloutWindowQueryFilter,
-  type TelemetryBatchRequest,
-  type TelemetryBatchResponse,
-  type TelemetryBucketRecord,
+import type {
+  AnomalyAlertRecord,
+  AnomalyQueryFilter,
+  BucketQueryFilter,
+  CalculateEfficiencyParams,
+  CalibrateEvaluationParams,
+  CalibrationQueryFilter,
+  CalibrationRecord,
+  EfficiencyMetricRecord,
+  EfficiencyQueryFilter,
+  MaterializeRolloutWindowParams,
+  RolloutMetricWindowRecord,
+  RolloutWindowQueryFilter,
+  TelemetryBatchRequest,
+  TelemetryBatchResponse,
+  TelemetryBucketRecord,
 } from "./types.js";
 
 export interface AnalyticsServiceOptions {
@@ -41,7 +41,9 @@ export interface AnalyticsServiceOptions {
  */
 export class AnalyticsTenantMismatchError extends Error {
   constructor(expectedWorkspace: string, actualWorkspace: string) {
-    super(`Tenant mismatch: authenticated for workspace '${expectedWorkspace}' but received request for '${actualWorkspace}'`);
+    super(
+      `Tenant mismatch: authenticated for workspace '${expectedWorkspace}' but received request for '${actualWorkspace}'`,
+    );
     this.name = "AnalyticsTenantMismatchError";
   }
 }
@@ -80,10 +82,13 @@ export class AnalyticsService {
   ) {
     this.repository = options.repository ?? new MetricsRepository(this.pool);
     this.deduplicator = options.deduplicator ?? new TelemetryDeduplicator(this.pool);
-    this.materializer = options.materializer ?? new RolloutWindowMaterializer(this.pool, this.repository);
-    this.efficiencyCalculator = options.efficiencyCalculator ?? new EfficiencyCalculator(this.pool, this.repository);
+    this.materializer =
+      options.materializer ?? new RolloutWindowMaterializer(this.pool, this.repository);
+    this.efficiencyCalculator =
+      options.efficiencyCalculator ?? new EfficiencyCalculator(this.pool, this.repository);
     this.calibrator = options.calibrator ?? new EvaluationCalibrator(this.pool, this.repository);
-    this.anomalyDetector = options.anomalyDetector ?? new AnomalyDetector(this.pool, this.repository);
+    this.anomalyDetector =
+      options.anomalyDetector ?? new AnomalyDetector(this.pool, this.repository);
   }
 
   // ---------------------------------------------------------------------------

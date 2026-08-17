@@ -1,3 +1,6 @@
+import { HardGateEvaluator } from "./hard-gates.js";
+import { CandidateScorer } from "./scorer.js";
+import { extractCandidateInfo, resolveActiveBaseline } from "./service.js";
 import type {
   EvaluationDecision,
   EvaluationDecisionRecord,
@@ -6,11 +9,8 @@ import type {
   ShadowCalibrationReport,
   ShadowEvaluationResult,
 } from "./types.js";
-import { HardGateEvaluator } from "./hard-gates.js";
-import { CandidateScorer } from "./scorer.js";
-import { UpdateComparator } from "./update-comparator.js";
-import { extractCandidateInfo, resolveActiveBaseline } from "./service.js";
 import type { CandidateEvaluationInput } from "./types.js";
+import { UpdateComparator } from "./update-comparator.js";
 
 /**
  * Evaluates candidate tools against shadow policies for offline calibration and threshold tuning.
@@ -26,11 +26,18 @@ export class ShadowPolicyEvaluator {
   evaluateShadowPolicies(
     input: CandidateEvaluationInput,
     activeDecisionRecord: EvaluationDecisionRecord,
-    shadowPolicies: EvaluationPolicy[]
+    shadowPolicies: EvaluationPolicy[],
   ): ShadowEvaluationResult[] {
     const results: ShadowEvaluationResult[] = [];
 
-    const { candidate, validationResult, replayResult, opportunity, envelope, activeVersionBaseline } = input;
+    const {
+      candidate,
+      validationResult,
+      replayResult,
+      opportunity,
+      envelope,
+      activeVersionBaseline,
+    } = input;
     const { manifest, sourceCode, requiredCapabilities } = extractCandidateInfo(candidate);
     for (const shadowPolicy of shadowPolicies) {
       // 1. Evaluate hard gates under shadow policy
@@ -76,7 +83,10 @@ export class ShadowPolicyEvaluator {
 
       // 4. Render shadow decision
       let shadowDecision: EvaluationDecision;
-      if (validationResult.status === "infrastructure_fail" || replayResult?.status === "infrastructure_failure") {
+      if (
+        validationResult.status === "infrastructure_fail" ||
+        replayResult?.status === "infrastructure_failure"
+      ) {
         shadowDecision = "infrastructure_retry";
       } else if (!hardGateResult.passed) {
         shadowDecision = hardGateResult.canRepair ? "repair_requested" : "rejected";
@@ -90,14 +100,23 @@ export class ShadowPolicyEvaluator {
         shadowDecision = "repair_requested";
       }
 
-      const shadowVerdict = shadowDecision === "eligible_for_artifact" ? "pass" : shadowDecision === "rejected" ? "fail" : "conditional";
+      const shadowVerdict =
+        shadowDecision === "eligible_for_artifact"
+          ? "pass"
+          : shadowDecision === "rejected"
+            ? "fail"
+            : "conditional";
       const agreementWithActive = shadowDecision === activeDecisionRecord.decision;
-      const scoreDeltaWithActive = Number((scoringResult.compositeScore - activeDecisionRecord.compositeScore).toFixed(4));
+      const scoreDeltaWithActive = Number(
+        (scoringResult.compositeScore - activeDecisionRecord.compositeScore).toFixed(4),
+      );
 
       // Find differing dimensions
       const differingDimensions: EvaluationDimensionKey[] = [];
       for (const d of scoringResult.dimensionScores) {
-        const activeDim = activeDecisionRecord.dimensionScores.find((ad) => ad.dimension === d.dimension);
+        const activeDim = activeDecisionRecord.dimensionScores.find(
+          (ad) => ad.dimension === d.dimension,
+        );
         if (activeDim && activeDim.passed !== d.passed) {
           differingDimensions.push(d.dimension);
         }
@@ -106,7 +125,9 @@ export class ShadowPolicyEvaluator {
       // Find differing gates
       const differingGates: string[] = [];
       for (const g of hardGateResult.gateResults) {
-        const activeGate = activeDecisionRecord.hardGateResult.gateResults.find((ag) => ag.gate === g.gate);
+        const activeGate = activeDecisionRecord.hardGateResult.gateResults.find(
+          (ag) => ag.gate === g.gate,
+        );
         if (activeGate && activeGate.passed !== g.passed) {
           differingGates.push(g.gate);
         }
@@ -147,7 +168,7 @@ export class ShadowCalibrationAggregator {
   record(
     candidateId: string,
     activeDecisionRecord: EvaluationDecisionRecord,
-    shadowResult: ShadowEvaluationResult
+    shadowResult: ShadowEvaluationResult,
   ): void {
     this.runs.push({ candidateId, activeDecisionRecord, shadowResult });
   }
@@ -157,7 +178,9 @@ export class ShadowCalibrationAggregator {
    */
   generateReport(shadowPolicyId: string, shadowPolicyVersion: string): ShadowCalibrationReport {
     const policyRuns = this.runs.filter(
-      (r) => r.shadowResult.shadowPolicyId === shadowPolicyId && r.shadowResult.shadowPolicyVersion === shadowPolicyVersion
+      (r) =>
+        r.shadowResult.shadowPolicyId === shadowPolicyId &&
+        r.shadowResult.shadowPolicyVersion === shadowPolicyVersion,
     );
 
     const sampleCount = policyRuns.length;

@@ -1,11 +1,11 @@
 import {
-  hashCanonicalContent,
-  NormalizedCommandExecEvent,
-  NormalizedFileEditEvent,
+  type NormalizedCommandExecEvent,
+  type NormalizedFileEditEvent,
   NormalizedSessionEvent,
-  NormalizedToolCallEvent,
+  type NormalizedToolCallEvent,
+  hashCanonicalContent,
 } from "@tool-evolver/contracts";
-import { Episode, EpisodeSignature, ToolClass } from "./types.js";
+import type { Episode, EpisodeSignature, ToolClass } from "./types.js";
 
 /**
  * Normalizes file paths to generic semantic aliases.
@@ -112,7 +112,8 @@ export function classifyToolOrCommand(name: string, commandText?: string): ToolC
     lowerName.includes("vitest") ||
     lowerName.includes("jest") ||
     lowerName.includes("pytest") ||
-    (commandText && /\b(vitest|jest|pytest|cargo test|pnpm test|npm test|go test)\b/i.test(commandText))
+    (commandText &&
+      /\b(vitest|jest|pytest|cargo test|pnpm test|npm test|go test)\b/i.test(commandText))
   ) {
     return "test_runner";
   }
@@ -122,7 +123,8 @@ export function classifyToolOrCommand(name: string, commandText?: string): ToolC
     lowerName.includes("build") ||
     lowerName.includes("tsc") ||
     lowerName.includes("compile") ||
-    (commandText && /\b(pnpm build|npm run build|cargo build|make|webpack|vite build|tsc)\b/i.test(commandText))
+    (commandText &&
+      /\b(pnpm build|npm run build|cargo build|make|webpack|vite build|tsc)\b/i.test(commandText))
   ) {
     return "build_tool";
   }
@@ -203,7 +205,9 @@ function extractArgumentShape(args: unknown): string {
   }
 
   const shape: Record<string, string> = {};
-  const entries = Object.entries(args as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
+  const entries = Object.entries(args as Record<string, unknown>).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
 
   for (const [key, val] of entries) {
     if (val === null || val === undefined) {
@@ -257,7 +261,10 @@ export class SignatureExtractor {
         // Extract path parameters if present
         if (toolEvt.parameters && typeof toolEvt.parameters === "object") {
           for (const [k, v] of Object.entries(toolEvt.parameters)) {
-            if (typeof v === "string" && (k.toLowerCase().includes("path") || k.toLowerCase().includes("file"))) {
+            if (
+              typeof v === "string" &&
+              (k.toLowerCase().includes("path") || k.toLowerCase().includes("file"))
+            ) {
               normalizedPaths.add(normalizePathAlias(v));
             }
           }
@@ -290,7 +297,10 @@ export class SignatureExtractor {
         toolClasses.push("file_edit");
         argumentShapeHashes.push(extractArgumentShape({ path: normPath, type: editEvt.operation }));
       } else if (evt.type === "error") {
-        const errorRecord = evt as unknown as { error?: { code?: string; message?: string }; code?: string };
+        const errorRecord = evt as unknown as {
+          error?: { code?: string; message?: string };
+          code?: string;
+        };
         const code = errorRecord.code || errorRecord.error?.code || "GENERIC_ERROR";
         errorTypes.add(code);
       }

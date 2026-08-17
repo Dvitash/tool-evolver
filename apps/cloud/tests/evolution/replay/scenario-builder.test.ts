@@ -79,7 +79,9 @@ describe("ReplayScenarioBuilder", () => {
       const primary = scenarios.find((s) => s.type === "observed_episode")!;
 
       expect(primary.virtualState.fs?.files).toBeDefined();
-      expect(primary.virtualState.fs?.files?.["/workspace/src/index.ts"]).toContain("export const a = 1;");
+      expect(primary.virtualState.fs?.files?.["/workspace/src/index.ts"]).toContain(
+        "export const a = 1;",
+      );
     });
   });
 
@@ -152,7 +154,7 @@ describe("ReplayScenarioBuilder", () => {
             defaultTimeoutMs: 10000,
             maxOutputBytes: 1048576,
           },
-        }
+        },
       );
 
       const scenarios = builder.buildScenarios(events, candidate, {

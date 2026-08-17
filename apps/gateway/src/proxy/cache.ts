@@ -62,7 +62,7 @@ export class CloudCatalogCache {
    */
   setSnapshot(
     snapshot: CatalogSnapshotResponse,
-    options: { freshTtlMs?: number; hardExpiryMs?: number; workspaceId?: string } = {}
+    options: { freshTtlMs?: number; hardExpiryMs?: number; workspaceId?: string } = {},
   ): void {
     const wsId = options.workspaceId || "default";
     const now = Date.now();
@@ -155,11 +155,14 @@ export class CloudCatalogCache {
    */
   getToolAvailability(
     toolIdOrName: string,
-    workspaceId = "default"
+    workspaceId = "default",
   ): { availability: CloudToolAvailability; tool?: CachedCloudTool; reason?: string } {
     const tool = this.getTool(toolIdOrName, workspaceId);
     if (!tool) {
-      return { availability: "unavailable", reason: `Tool '${toolIdOrName}' not found in cloud catalog cache` };
+      return {
+        availability: "unavailable",
+        reason: `Tool '${toolIdOrName}' not found in cloud catalog cache`,
+      };
     }
 
     this.refreshToolAvailability(tool);
@@ -227,7 +230,9 @@ export class CloudCatalogCache {
    * Marks all cached tools as stale (e.g. when network is disconnected or server offline).
    */
   markAllStale(reason = "Network disconnected / offline mode active", workspaceId?: string): void {
-    const targets = workspaceId ? [this.toolIndex.get(workspaceId)] : Array.from(this.toolIndex.values());
+    const targets = workspaceId
+      ? [this.toolIndex.get(workspaceId)]
+      : Array.from(this.toolIndex.values());
 
     for (const wsTools of targets) {
       if (wsTools) {
@@ -256,7 +261,9 @@ export class CloudCatalogCache {
    * Marks tools as online / clears forced stale flags when cloud connection restored.
    */
   markOnline(workspaceId?: string): void {
-    const targets = workspaceId ? [this.toolIndex.get(workspaceId)] : Array.from(this.toolIndex.values());
+    const targets = workspaceId
+      ? [this.toolIndex.get(workspaceId)]
+      : Array.from(this.toolIndex.values());
 
     for (const wsTools of targets) {
       if (wsTools) {

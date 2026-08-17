@@ -10,8 +10,7 @@ export const JSON_RPC_ERROR_CODES = {
   INTERNAL_ERROR: -32603,
 } as const;
 
-export type JsonRpcErrorCode =
-  (typeof JSON_RPC_ERROR_CODES)[keyof typeof JSON_RPC_ERROR_CODES];
+export type JsonRpcErrorCode = (typeof JSON_RPC_ERROR_CODES)[keyof typeof JSON_RPC_ERROR_CODES];
 
 export const MCP_ERROR_CODES = {
   REQUEST_TIMEOUT: -32000,
@@ -59,11 +58,7 @@ export class McpProtocolError extends Error {
   }
 }
 
-export function createMcpError(
-  code: number,
-  message: string,
-  data?: unknown
-): McpProtocolError {
+export function createMcpError(code: number, message: string, data?: unknown): McpProtocolError {
   return new McpProtocolError(code, message, data);
 }
 

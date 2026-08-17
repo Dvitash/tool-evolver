@@ -80,9 +80,7 @@ export interface AuditIntegrityReport {
 /**
  * Computes deterministic SHA-256 hash for an audit entry given its fields and previous hash.
  */
-export function computeAuditEntryHash(
-  payload: Omit<AuditTrailEntry, "hash">,
-): string {
+export function computeAuditEntryHash(payload: Omit<AuditTrailEntry, "hash">): string {
   const canonicalPayload = {
     sequence: payload.sequence,
     auditId: payload.auditId,
@@ -106,7 +104,7 @@ export function computeAuditEntryHash(
 export class AuditTrailManager {
   private inMemoryChain: AuditTrailEntry[] = [];
   private lastHash: string = GENESIS_HASH;
-  private currentSequence: number = 0;
+  private currentSequence = 0;
   private initialized = false;
 
   constructor(private readonly conn?: LocalDatabaseConnection) {}
@@ -158,7 +156,9 @@ export class AuditTrailManager {
 
     const timestamp = input.timestamp ?? new Date().toISOString();
     const auditId = input.auditId ?? `aud_${crypto.randomUUID()}`;
-    const redactedDetails = input.details ? (redactSecrets(input.details) as Record<string, unknown>) : {};
+    const redactedDetails = input.details
+      ? (redactSecrets(input.details) as Record<string, unknown>)
+      : {};
 
     const nextSequence = this.currentSequence + 1;
     const previousHash = this.lastHash;
@@ -380,7 +380,9 @@ export class AuditTrailManager {
   async count(): Promise<number> {
     await this.initialize();
     if (this.conn) {
-      const row = this.conn.get<{ count: number }>("SELECT COUNT(*) as count FROM audit_trail_chain");
+      const row = this.conn.get<{ count: number }>(
+        "SELECT COUNT(*) as count FROM audit_trail_chain",
+      );
       return row?.count ?? 0;
     }
     return this.inMemoryChain.length;

@@ -1,11 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabasePool, Queryable } from "../db/client.js";
 import type { IMetricsRepository } from "./repositories/metrics-repository.js";
-import {
-  type CalibrateEvaluationParams,
-  type CalibrationRecord,
-  type DecisionOutcome,
-} from "./types.js";
+import type { CalibrateEvaluationParams, CalibrationRecord, DecisionOutcome } from "./types.js";
 
 /**
  * EvaluationCalibrator: Joins pre-deployment evaluation predictions with canary & production outcomes
@@ -20,9 +16,7 @@ export class EvaluationCalibrator {
   /**
    * Calibrate pre-deployment predictions against observed rollout telemetry.
    */
-  async calibrateEvaluation(
-    params: CalibrateEvaluationParams,
-  ): Promise<CalibrationRecord> {
+  async calibrateEvaluation(params: CalibrateEvaluationParams): Promise<CalibrationRecord> {
     const windowStart = params.windowStart ?? new Date(Date.now() - 86400000 * 7).toISOString();
     const windowEnd = params.windowEnd ?? new Date().toISOString();
 
@@ -78,7 +72,9 @@ export class EvaluationCalibrator {
       limit: 1,
     });
     if (effMetrics.length > 0 && sampleSize > 0) {
-      actualTokenSavings = Math.round(effMetrics[0].measuredSavings.tokensSaved / Math.max(1, effMetrics[0].invocationCount));
+      actualTokenSavings = Math.round(
+        effMetrics[0].measuredSavings.tokensSaved / Math.max(1, effMetrics[0].invocationCount),
+      );
     }
 
     // 2. Compute Prediction Errors
@@ -89,13 +85,13 @@ export class EvaluationCalibrator {
     const successRateDelta = Number((actualSuccessRate - predictedSuccessRate).toFixed(4));
     const latencyDeltaMs = Number((actualP95LatencyMs - predictedP95LatencyMs).toFixed(2));
     const tokenSavingsDelta = Number((actualTokenSavings - predictedTokenSavings).toFixed(2));
-    const brierScore = Number(Math.pow(predictedSuccessRate - actualSuccessRate, 2).toFixed(4));
+    const brierScore = Number(((predictedSuccessRate - actualSuccessRate) ** 2).toFixed(4));
 
     // 3. Classify Decision Outcome
     let decisionOutcome: DecisionOutcome = "concordant";
-    if (predictedSuccessRate >= 0.85 && actualSuccessRate < 0.70 && sampleSize >= 5) {
+    if (predictedSuccessRate >= 0.85 && actualSuccessRate < 0.7 && sampleSize >= 5) {
       decisionOutcome = "optimistic_false_positive";
-    } else if (predictedSuccessRate < 0.75 && actualSuccessRate >= 0.90 && sampleSize >= 5) {
+    } else if (predictedSuccessRate < 0.75 && actualSuccessRate >= 0.9 && sampleSize >= 5) {
       decisionOutcome = "pessimistic_false_negative";
     } else if (Math.abs(successRateDelta) <= 0.15 && Math.abs(latencyDeltaMs) <= 300) {
       decisionOutcome = "concordant";

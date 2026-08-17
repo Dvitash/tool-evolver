@@ -2,11 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { BrokerSecurityError, FilesystemBroker } from "../../src/brokers/index.js";
 import { createInvocationGrant } from "../../src/policy/grant.js";
-import {
-  BrokerSecurityError,
-  FilesystemBroker,
-} from "../../src/brokers/index.js";
 
 describe("Filesystem Broker Security & Containment", () => {
   let tempWorkspace: string;
@@ -60,7 +57,7 @@ describe("Filesystem Broker Security & Containment", () => {
     // 1. Write file
     const writeRes = await broker.writeFile(
       { path: "hello.txt", content: "Hello Broker Security!" },
-      ctx
+      ctx,
     );
     expect(writeRes.bytesWritten).toBeGreaterThan(0);
 
@@ -94,15 +91,13 @@ describe("Filesystem Broker Security & Containment", () => {
     ];
 
     for (const badPath of traversalPaths) {
-      await expect(
-        broker.readFile({ path: badPath }, ctx)
-      ).rejects.toThrow(BrokerSecurityError);
+      await expect(broker.readFile({ path: badPath }, ctx)).rejects.toThrow(BrokerSecurityError);
 
       try {
         await broker.readFile({ path: badPath }, ctx);
       } catch (err) {
         expect(["OUTSIDE_ALLOWED_ROOT", "PATH_TRAVERSAL", "HIDDEN_FILE_DENIED"]).toContain(
-          (err as BrokerSecurityError).code
+          (err as BrokerSecurityError).code,
         );
       }
     }
@@ -116,16 +111,10 @@ describe("Filesystem Broker Security & Containment", () => {
       workspaceRoot: tempWorkspace,
     };
 
-    const invalidPaths = [
-      "test.txt\0.js",
-      "test%00.txt",
-      "test\x1f.txt",
-    ];
+    const invalidPaths = ["test.txt\0.js", "test%00.txt", "test\x1f.txt"];
 
     for (const badPath of invalidPaths) {
-      await expect(
-        broker.readFile({ path: badPath }, ctx)
-      ).rejects.toThrow(BrokerSecurityError);
+      await expect(broker.readFile({ path: badPath }, ctx)).rejects.toThrow(BrokerSecurityError);
     }
   });
 
@@ -144,9 +133,9 @@ describe("Filesystem Broker Security & Containment", () => {
     } catch {}
 
     // Reading through the symlink must be blocked
-    await expect(
-      broker.readFile({ path: "malicious_symlink.txt" }, ctx)
-    ).rejects.toThrow(BrokerSecurityError);
+    await expect(broker.readFile({ path: "malicious_symlink.txt" }, ctx)).rejects.toThrow(
+      BrokerSecurityError,
+    );
 
     try {
       await broker.readFile({ path: "malicious_symlink.txt" }, ctx);
@@ -166,9 +155,7 @@ describe("Filesystem Broker Security & Containment", () => {
     // Write a hidden file on disk directly
     fs.writeFileSync(path.join(tempWorkspace, ".env"), "API_KEY=secret123");
 
-    await expect(
-      broker.readFile({ path: ".env" }, ctx)
-    ).rejects.toThrow(BrokerSecurityError);
+    await expect(broker.readFile({ path: ".env" }, ctx)).rejects.toThrow(BrokerSecurityError);
 
     try {
       await broker.readFile({ path: ".env" }, ctx);
@@ -190,9 +177,9 @@ describe("Filesystem Broker Security & Containment", () => {
     fs.mkdirSync(deniedSubdir, { recursive: true });
     fs.writeFileSync(path.join(deniedSubdir, "data.txt"), "Denied Content");
 
-    await expect(
-      broker.readFile({ path: "denied_dir/data.txt" }, ctx)
-    ).rejects.toThrow(BrokerSecurityError);
+    await expect(broker.readFile({ path: "denied_dir/data.txt" }, ctx)).rejects.toThrow(
+      BrokerSecurityError,
+    );
 
     try {
       await broker.readFile({ path: "denied_dir/data.txt" }, ctx);
@@ -211,7 +198,7 @@ describe("Filesystem Broker Security & Containment", () => {
 
     // Write 200 bytes -> rejected
     await expect(
-      broker.writeFile({ path: "oversized.txt", content: "X".repeat(200) }, ctx)
+      broker.writeFile({ path: "oversized.txt", content: "X".repeat(200) }, ctx),
     ).rejects.toThrow(BrokerSecurityError);
 
     try {
@@ -222,9 +209,9 @@ describe("Filesystem Broker Security & Containment", () => {
 
     // Write small file directly on disk (150 bytes) and try reading via broker -> rejected
     fs.writeFileSync(path.join(tempWorkspace, "large_on_disk.txt"), "Y".repeat(150));
-    await expect(
-      broker.readFile({ path: "large_on_disk.txt" }, ctx)
-    ).rejects.toThrow(BrokerSecurityError);
+    await expect(broker.readFile({ path: "large_on_disk.txt" }, ctx)).rejects.toThrow(
+      BrokerSecurityError,
+    );
   });
 
   it("supports atomic file writes without leaving corrupted temporary files", async () => {
@@ -237,7 +224,7 @@ describe("Filesystem Broker Security & Containment", () => {
 
     await broker.writeFile(
       { path: "atomic_target.txt", content: "Atomic payload", atomic: true },
-      ctx
+      ctx,
     );
 
     const readBack = await broker.readFile({ path: "atomic_target.txt" }, ctx);
@@ -271,7 +258,7 @@ describe("Filesystem Broker Security & Containment", () => {
     // 4. Rename file
     await broker.rename(
       { oldPath: "test_dir/nested/file.txt", newPath: "test_dir/nested/renamed.txt" },
-      ctx
+      ctx,
     );
     const existsOld = await broker.exists({ path: "test_dir/nested/file.txt" }, ctx);
     const existsNew = await broker.exists({ path: "test_dir/nested/renamed.txt" }, ctx);

@@ -3,10 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { InMemoryConfigFsBridge } from "@tool-evolver/harness-contracts";
 import { describe, expect, it } from "vitest";
-import {
-  CodexCliAdapter,
-  CodexHarnessAdapter,
-} from "../src/adapter.js";
+import { CodexCliAdapter, CodexHarnessAdapter } from "../src/adapter.js";
 
 describe("CodexHarnessAdapter", () => {
   it("initializes with correct id, name, and version", () => {

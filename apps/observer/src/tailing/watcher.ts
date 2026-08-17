@@ -1,6 +1,6 @@
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
-import { createHash } from "node:crypto";
 import type { SourceCursor } from "@tool-evolver/harness-contracts";
 import { type RecoveryAssessment, SourceRecoveryEngine } from "./recovery.js";
 

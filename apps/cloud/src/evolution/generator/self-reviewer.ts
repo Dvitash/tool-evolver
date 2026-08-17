@@ -1,6 +1,6 @@
-import { CapabilityEnvelope } from "@tool-evolver/contracts";
+import type { CapabilityEnvelope } from "@tool-evolver/contracts";
 import ts from "typescript";
-import { GeneratedArtifactSet, SelfReviewIssue, SelfReviewVerdict } from "./types.js";
+import type { GeneratedArtifactSet, SelfReviewIssue, SelfReviewVerdict } from "./types.js";
 
 const ALLOWED_IMPORT_SPECIFIERS: Record<string, true> = {
   "@tool-evolver/runtime": true,
@@ -33,10 +33,7 @@ export class DeterministicSelfReviewer {
   /**
    * Reviews a generated candidate artifact set.
    */
-  review(
-    artifacts: GeneratedArtifactSet,
-    envelope?: CapabilityEnvelope
-  ): SelfReviewVerdict {
+  review(artifacts: GeneratedArtifactSet, envelope?: CapabilityEnvelope): SelfReviewVerdict {
     const issues: SelfReviewIssue[] = [];
     const sourceCode = artifacts.sourceCode;
 
@@ -46,12 +43,13 @@ export class DeterministicSelfReviewer {
       sourceCode,
       ts.ScriptTarget.Latest,
       true,
-      ts.ScriptKind.TS
+      ts.ScriptKind.TS,
     );
 
-    const parseDiagnostics = "parseDiagnostics" in sourceFile && Array.isArray(sourceFile.parseDiagnostics)
-      ? (sourceFile.parseDiagnostics as ts.Diagnostic[])
-      : [];
+    const parseDiagnostics =
+      "parseDiagnostics" in sourceFile && Array.isArray(sourceFile.parseDiagnostics)
+        ? (sourceFile.parseDiagnostics as ts.Diagnostic[])
+        : [];
 
     for (const diag of parseDiagnostics) {
       issues.push({
@@ -120,11 +118,7 @@ export class DeterministicSelfReviewer {
       // Check property access on input: input.foo or (input as ...).foo
       if (ts.isPropertyAccessExpression(node)) {
         const exprText = node.expression.getText(sourceFile);
-        if (
-          exprText === "input" ||
-          exprText.includes("input as") ||
-          exprText.endsWith(".input")
-        ) {
+        if (exprText === "input" || exprText.includes("input as") || exprText.endsWith(".input")) {
           accessedInputProperties.push(node.name.text);
         }
       }
@@ -180,7 +174,8 @@ export class DeterministicSelfReviewer {
             severity: "error",
             category: "capabilities",
             message: `broker.fs.${bCall.method} called on line ${bCall.line}, but no read capability is granted in manifest`,
-            fixHint: "Grant fs.allowWorkspaceRoot or add paths to fs.readPaths in capability manifest.",
+            fixHint:
+              "Grant fs.allowWorkspaceRoot or add paths to fs.readPaths in capability manifest.",
           });
         }
 
@@ -189,7 +184,8 @@ export class DeterministicSelfReviewer {
             severity: "error",
             category: "capabilities",
             message: `broker.fs.${bCall.method} called on line ${bCall.line}, but no write capability is granted in manifest`,
-            fixHint: "Grant fs.allowWorkspaceRoot or add paths to fs.writePaths in capability manifest.",
+            fixHint:
+              "Grant fs.allowWorkspaceRoot or add paths to fs.writePaths in capability manifest.",
           });
         }
       } else if (bCall.service === "cmd") {
@@ -211,13 +207,13 @@ export class DeterministicSelfReviewer {
             severity: "error",
             category: "capabilities",
             message: `broker.net.${bCall.method} called on line ${bCall.line}, but net.allowOutbound is false in manifest`,
-            fixHint: "Set net.allowOutbound to true and specify allowedDomains in capability manifest.",
+            fixHint:
+              "Set net.allowOutbound to true and specify allowedDomains in capability manifest.",
           });
         }
       } else if (bCall.service === "secret") {
         const hasSecrets =
-          cap.secrets.allowedSecretNames.length > 0 ||
-          cap.secrets.allowedPrefixes.length > 0;
+          cap.secrets.allowedSecretNames.length > 0 || cap.secrets.allowedPrefixes.length > 0;
         if (!hasSecrets) {
           issues.push({
             severity: "error",
@@ -235,7 +231,8 @@ export class DeterministicSelfReviewer {
         issues.push({
           severity: "error",
           category: "capabilities",
-          message: "Candidate requests allowShellExecution but envelope strictly forbids shell execution",
+          message:
+            "Candidate requests allowShellExecution but envelope strictly forbids shell execution",
           fixHint: "Set allowShellExecution to false and specify explicit allowedBinaries.",
         });
       }
@@ -243,7 +240,8 @@ export class DeterministicSelfReviewer {
         issues.push({
           severity: "error",
           category: "capabilities",
-          message: "Candidate requests outbound network access but envelope strictly forbids outbound network",
+          message:
+            "Candidate requests outbound network access but envelope strictly forbids outbound network",
           fixHint: "Disable net.allowOutbound in capability manifest.",
         });
       }

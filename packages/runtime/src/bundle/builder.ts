@@ -1,15 +1,11 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import {
-  canonicalJson,
-  type ToolManifest,
-  ToolManifestSchema,
-} from "@tool-evolver/contracts";
+import { type ToolManifest, ToolManifestSchema, canonicalJson } from "@tool-evolver/contracts";
 import {
   type BundleSignatureData,
-  signBundlePayload,
   type SignBundleOptions,
+  signBundlePayload,
 } from "./signature.js";
 import {
   BUNDLE_FILE_ENTRYPOINT_TS,
@@ -77,12 +73,7 @@ export function normalizeTarPath(rawPath: string): string {
 /**
  * Creates a single 512-byte POSIX ustar tar header.
  */
-function createTarHeader(
-  filePath: string,
-  size: number,
-  typeflag = "0",
-  mode = 0o644,
-): Buffer {
+function createTarHeader(filePath: string, size: number, typeflag = "0", mode = 0o644): Buffer {
   const header = Buffer.alloc(512, 0);
 
   // name: 100 bytes
@@ -158,9 +149,8 @@ function createGnuLongLink(filePath: string): { header: Buffer; body: Buffer } {
   // Null-terminated path body
   const bodyBuf = Buffer.concat([pathBuf, Buffer.from([0])]);
   const paddingBytes = (512 - (bodyBuf.length % 512)) % 512;
-  const paddedBody = paddingBytes > 0
-    ? Buffer.concat([bodyBuf, Buffer.alloc(paddingBytes, 0)])
-    : bodyBuf;
+  const paddedBody =
+    paddingBytes > 0 ? Buffer.concat([bodyBuf, Buffer.alloc(paddingBytes, 0)]) : bodyBuf;
 
   const header = createTarHeader("././@LongLink", bodyBuf.length, "L", 0o644);
   return { header, body: paddedBody };
@@ -176,16 +166,20 @@ function createGnuLongLink(filePath: string): { header: Buffer; body: Buffer } {
  * 4. File modes are normalized to 0o644 (or 0o755 if executable).
  * 5. Two 512-byte zero blocks terminate the archive.
  */
-export function encodeDeterministicTar(
-  files: BundleFileInput[],
-): { archive: Buffer; fileDigests: Record<string, string>; fileEntries: BundleFileEntry[] } {
+export function encodeDeterministicTar(files: BundleFileInput[]): {
+  archive: Buffer;
+  fileDigests: Record<string, string>;
+  fileEntries: BundleFileEntry[];
+} {
   // Sort files strictly by lexicographical path order (UTF-8 code unit / code point comparison)
-  const sortedFiles = [...files].map((f) => ({
-    path: normalizeTarPath(f.path),
-    content: typeof f.content === "string" ? Buffer.from(f.content, "utf8") : f.content,
-    mode: f.executable ? 0o755 : (f.mode ?? 0o644),
-    executable: Boolean(f.executable || (f.mode && (f.mode & 0o111) !== 0)),
-  })).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  const sortedFiles = [...files]
+    .map((f) => ({
+      path: normalizeTarPath(f.path),
+      content: typeof f.content === "string" ? Buffer.from(f.content, "utf8") : f.content,
+      mode: f.executable ? 0o755 : (f.mode ?? 0o644),
+      executable: Boolean(f.executable || (f.mode && (f.mode & 0o111) !== 0)),
+    }))
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 
   const chunks: Buffer[] = [];
   const fileDigests: Record<string, string> = {};
@@ -339,9 +333,7 @@ export function collectDirectoryFiles(dirPath: string): BundleFileInput[] {
 /**
  * Builds a deterministic tool bundle from manifest and source files.
  */
-export async function buildToolBundle(
-  options: BuildToolBundleOptions,
-): Promise<BuiltToolBundle> {
+export async function buildToolBundle(options: BuildToolBundleOptions): Promise<BuiltToolBundle> {
   const validatedManifest = ToolManifestSchema.parse(options.manifest);
   const fileMap = new Map<string, BundleFileInput>();
 
@@ -370,9 +362,10 @@ export async function buildToolBundle(
 
   // Ensure package.json is present
   if (options.packageJson && !fileMap.has(BUNDLE_FILE_PACKAGE)) {
-    const pkgContent = typeof options.packageJson === "string"
-      ? options.packageJson
-      : canonicalJson(options.packageJson);
+    const pkgContent =
+      typeof options.packageJson === "string"
+        ? options.packageJson
+        : canonicalJson(options.packageJson);
     fileMap.set(BUNDLE_FILE_PACKAGE, {
       path: BUNDLE_FILE_PACKAGE,
       content: pkgContent,
@@ -415,7 +408,11 @@ export async function buildToolBundle(
 
   // Final archive build (including signature.json if signed)
   const finalFiles = Array.from(fileMap.values());
-  const { archive: finalArchive, fileDigests: finalDigests, fileEntries } = encodeDeterministicTar(finalFiles);
+  const {
+    archive: finalArchive,
+    fileDigests: finalDigests,
+    fileEntries,
+  } = encodeDeterministicTar(finalFiles);
   const finalBundleDigest = computeSha256(finalArchive);
 
   const createdAt = options.createdAt ?? new Date(0).toISOString();
@@ -424,7 +421,8 @@ export async function buildToolBundle(
     format: options.format ?? "tar",
     manifest: validatedManifest,
     entrypoint: options.entrypoint ?? BUNDLE_FILE_ENTRYPOINT_TS,
-    testsPath: options.testsPath ?? (fileMap.has(BUNDLE_FILE_TESTS_TS) ? BUNDLE_FILE_TESTS_TS : undefined),
+    testsPath:
+      options.testsPath ?? (fileMap.has(BUNDLE_FILE_TESTS_TS) ? BUNDLE_FILE_TESTS_TS : undefined),
     packageJson: typeof options.packageJson === "object" ? options.packageJson : undefined,
     files: fileEntries,
     bundleDigest: finalBundleDigest,
@@ -459,7 +457,9 @@ export async function createBundleFromDirectory(
     const rawManifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
     manifest = ToolManifestSchema.parse(rawManifest);
   } else {
-    throw new Error(`Cannot create bundle from directory: missing ${BUNDLE_FILE_MANIFEST} in ${dirPath}`);
+    throw new Error(
+      `Cannot create bundle from directory: missing ${BUNDLE_FILE_MANIFEST} in ${dirPath}`,
+    );
   }
 
   return buildToolBundle({

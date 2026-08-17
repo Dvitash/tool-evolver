@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { ToolVersion } from "@tool-evolver/contracts";
+import { describe, expect, it } from "vitest";
 import { createMockToolManifest, createTestArtifactEnvironment } from "./helpers.js";
 
 describe("Artifact Repositories - Tool Registry & Signing Keys", () => {
@@ -65,7 +65,9 @@ describe("Artifact Repositories - Tool Registry & Signing Keys", () => {
 
     const retrieved = await env.toolRegistryRepo.getToolVersion(tenant, manifest.id, "1.0.0");
     expect(retrieved?.version).toBe("1.0.0");
-    expect(retrieved?.artifactDigest).toBe("sha256_initial_digest_000000000000000000000000000000000000000000000");
+    expect(retrieved?.artifactDigest).toBe(
+      "sha256_initial_digest_000000000000000000000000000000000000000000000",
+    );
 
     // Saving identical record is idempotent
     const sameRes = await env.toolRegistryRepo.saveToolVersion(tenant, toolVersion);
@@ -95,10 +97,20 @@ describe("Artifact Repositories - Tool Registry & Signing Keys", () => {
       manifest,
       artifact: {
         artifactDigest: "sha256_digest_2_1_0",
-        bundleReference: { uri: "storage://b.tar", hash: "sha256_digest_2_1_0", sizeBytes: 500, format: "tar_gz" },
+        bundleReference: {
+          uri: "storage://b.tar",
+          hash: "sha256_digest_2_1_0",
+          sizeBytes: 500,
+          format: "tar_gz",
+        },
         entrypoint: "src/index.ts",
       },
-      provenance: { synthesizedAt: "2026-08-17T00:00:00.000Z", synthesizerModel: "model", deterministicBuildHash: "h", environment: {} },
+      provenance: {
+        synthesizedAt: "2026-08-17T00:00:00.000Z",
+        synthesizerModel: "model",
+        deterministicBuildHash: "h",
+        environment: {},
+      },
       status: "active",
       createdAt: "2026-08-17T00:00:00.000Z",
       createdBy: "test",
@@ -135,7 +147,9 @@ describe("Artifact Repositories - Tool Registry & Signing Keys", () => {
 
     expect(record.state).toBe("assembling");
 
-    await env.toolRegistryRepo.updatePublicationState("pub_001", "published", { publishedAt: "2026-08-17T00:05:00.000Z" });
+    await env.toolRegistryRepo.updatePublicationState("pub_001", "published", {
+      publishedAt: "2026-08-17T00:05:00.000Z",
+    });
 
     const updated = await env.toolRegistryRepo.getPublicationRecord(tenant, "pub_001");
     expect(updated?.state).toBe("published");
@@ -147,7 +161,10 @@ describe("Artifact Repositories - Tool Registry & Signing Keys", () => {
     const tenant = { accountId: "acc_test", workspaceId: "ws_test" };
     const toolId = "tool_rollback_test";
 
-    const createVersion = (version: string, status: "active" | "deprecated" | "revoked"): ToolVersion => {
+    const createVersion = (
+      version: string,
+      status: "active" | "deprecated" | "revoked",
+    ): ToolVersion => {
       const manifest = createMockToolManifest({ id: toolId, version });
       return {
         toolId,
@@ -157,10 +174,20 @@ describe("Artifact Repositories - Tool Registry & Signing Keys", () => {
         manifest,
         artifact: {
           artifactDigest: `digest_${version}`,
-          bundleReference: { uri: `storage://${version}.tar`, hash: `digest_${version}`, sizeBytes: 100, format: "tar_gz" },
+          bundleReference: {
+            uri: `storage://${version}.tar`,
+            hash: `digest_${version}`,
+            sizeBytes: 100,
+            format: "tar_gz",
+          },
           entrypoint: "src/index.ts",
         },
-        provenance: { synthesizedAt: "2026-08-17T00:00:00.000Z", synthesizerModel: "model", deterministicBuildHash: "h", environment: {} },
+        provenance: {
+          synthesizedAt: "2026-08-17T00:00:00.000Z",
+          synthesizerModel: "model",
+          deterministicBuildHash: "h",
+          environment: {},
+        },
         status,
         createdAt: `2026-08-17T0${version.slice(0, 1)}:00:00.000Z`,
         createdBy: "test",

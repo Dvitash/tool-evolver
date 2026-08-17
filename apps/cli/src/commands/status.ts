@@ -179,9 +179,16 @@ export async function collectStatus(options: {
     fsBridge.readFile(ompPath),
   ]);
 
-  const claudeConfigured = Boolean(claudeContent && (claudeContent.includes("tool-evolver") || claudeContent.includes("toolevolver")));
-  const codexConfigured = Boolean(codexContent && (codexContent.includes("tool-evolver") || codexContent.includes("toolevolver")));
-  const ompConfigured = Boolean(ompContent && (ompContent.includes("tool-evolver") || ompContent.includes("toolevolver")));
+  const claudeConfigured = Boolean(
+    claudeContent &&
+      (claudeContent.includes("tool-evolver") || claudeContent.includes("toolevolver")),
+  );
+  const codexConfigured = Boolean(
+    codexContent && (codexContent.includes("tool-evolver") || codexContent.includes("toolevolver")),
+  );
+  const ompConfigured = Boolean(
+    ompContent && (ompContent.includes("tool-evolver") || ompContent.includes("toolevolver")),
+  );
 
   const harnesses = [
     {
@@ -201,7 +208,9 @@ export async function collectStatus(options: {
     {
       id: "omp",
       name: "Oh My Pi (OMP)",
-      installed: Boolean(ompProbe && (ompProbe.status === "ready" || ompProbe.status === "unknown")),
+      installed: Boolean(
+        ompProbe && (ompProbe.status === "ready" || ompProbe.status === "unknown"),
+      ),
       configured: ompConfigured,
       configPath: ompPath,
     },
@@ -282,8 +291,12 @@ export function formatStatusForTerminal(summary: DaemonStatusSummary): string {
 
   // Tools Section
   lines.push("\n[Tools & MCP Catalog]");
-  lines.push(`  Meta-Tools: ${summary.tools.metaToolsCount} (${summary.tools.metaTools.join(", ")})`);
-  lines.push(`  Custom:     ${summary.tools.activeCustomToolsCount} active dynamically evolved tools`);
+  lines.push(
+    `  Meta-Tools: ${summary.tools.metaToolsCount} (${summary.tools.metaTools.join(", ")})`,
+  );
+  lines.push(
+    `  Custom:     ${summary.tools.activeCustomToolsCount} active dynamically evolved tools`,
+  );
 
   // Harnesses Section
   lines.push("\n[Agent Harness Connections]");
@@ -329,9 +342,7 @@ export async function statusCommand(
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (flags.json) {
-      process.stdout.write(
-        `${JSON.stringify({ error: msg, success: false }, null, 2)}\n`,
-      );
+      process.stdout.write(`${JSON.stringify({ error: msg, success: false }, null, 2)}\n`);
     } else {
       process.stderr.write(`\nError fetching status: ${msg}\n`);
     }

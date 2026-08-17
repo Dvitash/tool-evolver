@@ -1,11 +1,5 @@
 import { Buffer } from "node:buffer";
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  pbkdf2Sync,
-  randomBytes,
-} from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, pbkdf2Sync, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -60,9 +54,10 @@ export class EncryptedVaultSecretStore implements SecretStore {
   private inMemoryRecords: Record<string, SecretRecord> = {};
 
   constructor(options: EncryptedVaultOptions = {}) {
-    this.vaultPath = options.vaultPath && options.vaultPath !== ":memory:"
-      ? path.resolve(options.vaultPath)
-      : undefined;
+    this.vaultPath =
+      options.vaultPath && options.vaultPath !== ":memory:"
+        ? path.resolve(options.vaultPath)
+        : undefined;
     this.isInMemory = !this.vaultPath;
     this.kdf = options.kdf ?? "pbkdf2";
     this.kdfIterations = options.kdfIterations ?? DEFAULT_KDF_ITERATIONS;
@@ -87,13 +82,7 @@ export class EncryptedVaultSecretStore implements SecretStore {
     }
 
     // Derive 256-bit AES key from master passphrase
-    this.derivedKey = pbkdf2Sync(
-      rawPassphrase,
-      this.vaultSalt,
-      this.kdfIterations,
-      32,
-      "sha512"
-    );
+    this.derivedKey = pbkdf2Sync(rawPassphrase, this.vaultSalt, this.kdfIterations, 32, "sha512");
   }
 
   isAvailable(): boolean {
@@ -140,7 +129,11 @@ export class EncryptedVaultSecretStore implements SecretStore {
           }
         }
         // Try exclusive lock creation with 0600 mode
-        const fd = fs.openSync(lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+        const fd = fs.openSync(
+          lockPath,
+          fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
+          0o600,
+        );
         const lockPayload = JSON.stringify({ pid: process.pid, acquiredAt: Date.now() });
         fs.writeSync(fd, lockPayload);
         fs.closeSync(fd);
@@ -164,7 +157,9 @@ export class EncryptedVaultSecretStore implements SecretStore {
       }
     }
 
-    throw new Error(`Failed to acquire lock for vault '${this.vaultPath}' within ${this.lockTimeoutMs}ms`);
+    throw new Error(
+      `Failed to acquire lock for vault '${this.vaultPath}' within ${this.lockTimeoutMs}ms`,
+    );
   }
 
   /**
@@ -224,7 +219,11 @@ export class EncryptedVaultSecretStore implements SecretStore {
     };
 
     const tmpPath = `${this.vaultPath}.${process.pid}.${Date.now()}.tmp`;
-    const fd = fs.openSync(tmpPath, fs.constants.O_CREAT | fs.constants.O_WRONLY | fs.constants.O_TRUNC, 0o600);
+    const fd = fs.openSync(
+      tmpPath,
+      fs.constants.O_CREAT | fs.constants.O_WRONLY | fs.constants.O_TRUNC,
+      0o600,
+    );
     fs.writeSync(fd, JSON.stringify(payload, null, 2), undefined, "utf-8");
     fs.closeSync(fd);
     fs.chmodSync(tmpPath, 0o600);
@@ -237,14 +236,15 @@ export class EncryptedVaultSecretStore implements SecretStore {
   /**
    * Encrypts plaintext string using AES-256-GCM.
    */
-  private encryptValue(plaintext: string): { ciphertextHex: string; ivHex: string; tagHex: string } {
+  private encryptValue(plaintext: string): {
+    ciphertextHex: string;
+    ivHex: string;
+    tagHex: string;
+  } {
     const iv = randomBytes(12); // 96-bit IV for AES-GCM
     const cipher = createCipheriv("aes-256-gcm", this.derivedKey, iv);
 
-    const encrypted = Buffer.concat([
-      cipher.update(plaintext, "utf-8"),
-      cipher.final(),
-    ]);
+    const encrypted = Buffer.concat([cipher.update(plaintext, "utf-8"), cipher.final()]);
     const tag = cipher.getAuthTag();
 
     return {
@@ -265,10 +265,7 @@ export class EncryptedVaultSecretStore implements SecretStore {
     const decipher = createDecipheriv("aes-256-gcm", this.derivedKey, iv);
     decipher.setAuthTag(tag);
 
-    const decrypted = Buffer.concat([
-      decipher.update(ciphertext),
-      decipher.final(),
-    ]);
+    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 
     return decrypted.toString("utf-8");
   }
@@ -279,7 +276,7 @@ export class EncryptedVaultSecretStore implements SecretStore {
   private findRecord(
     records: Record<string, SecretRecord>,
     nameOrAlias: string,
-    workspaceId?: string
+    workspaceId?: string,
   ): SecretRecord | null {
     // 1. Direct name lookup
     const byName = records[nameOrAlias];
@@ -321,7 +318,7 @@ export class EncryptedVaultSecretStore implements SecretStore {
   async setSecret(
     name: string,
     value: string,
-    options: SetSecretOptions = {}
+    options: SetSecretOptions = {},
   ): Promise<SecretMetadata> {
     if (!name || typeof name !== "string" || name.trim().length === 0) {
       throw new Error("Secret name must be a non-empty string");
@@ -340,8 +337,8 @@ export class EncryptedVaultSecretStore implements SecretStore {
       const aliases = options.aliases
         ? Array.from(new Set(options.aliases))
         : options.alias
-        ? [options.alias]
-        : existing?.aliases ?? (existing?.alias ? [existing.alias] : []);
+          ? [options.alias]
+          : (existing?.aliases ?? (existing?.alias ? [existing.alias] : []));
 
       const metadata: SecretMetadata = {
         name,
@@ -352,7 +349,8 @@ export class EncryptedVaultSecretStore implements SecretStore {
         createdAt,
         updatedAt: now,
         version,
-        allowedMediationModes: options.allowedMediationModes ?? existing?.metadata?.allowedMediationModes,
+        allowedMediationModes:
+          options.allowedMediationModes ?? existing?.metadata?.allowedMediationModes,
         tags: options.tags ?? existing?.metadata?.tags,
         description: options.description ?? existing?.metadata?.description,
       };
