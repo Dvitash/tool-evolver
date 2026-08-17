@@ -49,6 +49,11 @@ import {
   type EvidenceSource,
   createHistoricalReplayService,
 } from "./evolution/replay/index.js";
+import {
+  CandidateEvaluationService,
+  type CandidateEvaluationInput,
+  createCandidateEvaluationService,
+} from "./evolution/evaluation/index.js";
 
 // Configuration & Validation
 export * from "./config.js";
@@ -87,6 +92,9 @@ export * from "./evolution/testing/index.js";
 // Evolution Historical Session Replay Engine
 export * from "./evolution/replay/index.js";
 
+// Evolution Candidate Scoring, Evaluation & Eligibility Decisions
+export * from "./evolution/evaluation/index.js";
+
 /**
  * Unified Cloud Service container aggregating persistence, storage,
  * queue, server, and background workers.
@@ -114,6 +122,7 @@ export class CloudService {
   readonly candidateValidationService: CandidateValidationService;
 
   readonly historicalReplayService: HistoricalReplayService;
+  readonly candidateEvaluationService: CandidateEvaluationService;
   private isInitialized = false;
 
   constructor(options: { config?: Partial<RawCloudConfig> } = {}) {
@@ -161,6 +170,7 @@ export class CloudService {
       dbPool: this.dbPool,
     });
 
+    this.candidateEvaluationService = createCandidateEvaluationService();
     this.worker.registerHandler("opportunity.detect", async (job) => {
       const tenant = job.tenantContext;
       const payload = job.payload as { sessionIds?: string[] } | undefined;
@@ -240,6 +250,13 @@ export class CloudService {
             options: payload.options,
           });
         }
+      }
+    });
+
+    this.worker.registerHandler("candidate.evaluate", async (job) => {
+      const payload = job.payload as CandidateEvaluationInput | undefined;
+      if (payload && payload.candidate && payload.validationResult) {
+        await this.candidateEvaluationService.evaluateCandidate(payload);
       }
     });
 
