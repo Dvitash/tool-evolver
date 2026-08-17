@@ -20,6 +20,8 @@
     "check": "pnpm run check:adrs && pnpm run check:boundaries && turbo run check",
     "check:adrs": "node scripts/verify-adrs.mjs",
     "check:boundaries": "node scripts/check-boundaries.mjs",
+    "release:package": "node scripts/package-release.mjs",
+    "release:verify": "node scripts/verify-release.mjs",
     "clean": "turbo run clean"
   },
   "devDependencies": {
