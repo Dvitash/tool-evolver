@@ -74,6 +74,9 @@ importers:
       '@tool-evolver/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@tool-evolver/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@tool-evolver/observer':
         specifier: workspace:*
         version: link:../observer
@@ -92,6 +95,12 @@ importers:
       '@tool-evolver/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@tool-evolver/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@tool-evolver/harness-contracts':
+        specifier: workspace:*
+        version: link:../../packages/harness-contracts
       '@tool-evolver/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -127,9 +136,6 @@ importers:
       '@tool-evolver/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@tool-evolver/observer':
-        specifier: workspace:*
-        version: link:../../apps/observer
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -161,9 +167,21 @@ importers:
       '@tool-evolver/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@tool-evolver/crypto':
+        specifier: workspace:*
+        version: link:../crypto
+      '@tool-evolver/db':
+        specifier: workspace:*
+        version: link:../db
+      '@tool-evolver/observer':
+        specifier: workspace:*
+        version: link:../../apps/observer
       '@tool-evolver/protocol':
         specifier: workspace:*
         version: link:../protocol
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
 packages:
 

@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@tool-evolver/contracts": "workspace:*",
+    "@tool-evolver/db": "workspace:*",
     "@tool-evolver/observer": "workspace:*",
     "@tool-evolver/protocol": "workspace:*",
     "@tool-evolver/runtime": "workspace:*",

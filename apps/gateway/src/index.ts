@@ -10,6 +10,9 @@ export * from "./protocol/index.js";
 // Gateway Router & Mock Router
 export * from "./router.js";
 
+// Dynamic Tool Registry & Atomic Catalog Snapshots
+export * from "./registry/index.js";
+
 // Workspace Context & Symlink-Aware Resolution
 export * from "./workspace-resolver.js";
 

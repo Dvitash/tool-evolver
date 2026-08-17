@@ -13,6 +13,10 @@ import { WorkerRuntime } from "./queue/worker.js";
 import { JobScheduler } from "./queue/scheduler.js";
 import { ObjectStore, createObjectStore } from "./storage/object-store.js";
 import { CloudServer, createCloudServer } from "./server/api.js";
+import {
+  ObservationIngestionService,
+  createObservationIngestionService,
+} from "./ingestion/index.js";
 import { AuthService, createAuthService } from "./auth/index.js";
 
 // Configuration & Validation
@@ -34,6 +38,9 @@ export * from "./models/index.js";
 // Identity & Authentication
 export * from "./auth/index.js";
 
+// Normalized Observation Ingestion & Deduplication
+export * from "./ingestion/index.js";
+
 // HTTP API Server
 export * from "./server/index.js";
 
@@ -51,6 +58,7 @@ export class CloudService {
   readonly worker: WorkerRuntime;
   readonly scheduler: JobScheduler;
   readonly server: CloudServer;
+  readonly ingestionService: ObservationIngestionService;
 
   private isInitialized = false;
 
@@ -69,6 +77,10 @@ export class CloudService {
       jobTimeoutMs: this.config.queue.visibilityTimeoutMs,
     });
     this.scheduler = new JobScheduler();
+    this.ingestionService = createObservationIngestionService({
+      dbPool: this.dbPool,
+      consentManager: this.authService.consentManager,
+    });
     this.server = createCloudServer({
       config: this.config,
       dbPool: this.dbPool,
@@ -76,6 +88,7 @@ export class CloudService {
       queue: this.queue,
       outboxPublisher: this.outboxPublisher,
       authService: this.authService,
+      ingestionService: this.ingestionService,
     });
   }
 

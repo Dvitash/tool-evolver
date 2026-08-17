@@ -192,8 +192,33 @@ export const initialSchemaMigration: Migration = {
       );
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_object_metadata_sha256 ON object_metadata(sha256);`);
+
+    // 9. Ingestion Receipts
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS ingestion_receipts (
+        receipt_id VARCHAR(64) PRIMARY KEY,
+        batch_id VARCHAR(64) NOT NULL,
+        installation_id VARCHAR(64) NOT NULL,
+        workspace_id VARCHAR(64) NOT NULL,
+        device_id VARCHAR(64),
+        account_id VARCHAR(64),
+        source_cursors JSONB DEFAULT '[]'::jsonb,
+        source_cursor VARCHAR(255),
+        content_hash VARCHAR(64) NOT NULL,
+        accepted_count INT NOT NULL DEFAULT 0,
+        duplicate_count INT NOT NULL DEFAULT 0,
+        status VARCHAR(32) NOT NULL DEFAULT 'accepted',
+        response_payload JSONB DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_ingestion_receipts_batch ON ingestion_receipts(installation_id, workspace_id, batch_id);`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_ingestion_receipts_cursor ON ingestion_receipts(installation_id, workspace_id, source_cursor);`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_ingestion_receipts_hash ON ingestion_receipts(content_hash);`);
   },
   down: async (db: Queryable) => {
+    await db.query(`DROP TABLE IF EXISTS ingestion_receipts;`);
     await db.query(`DROP TABLE IF EXISTS object_metadata;`);
     await db.query(`DROP TABLE IF EXISTS dead_letter_queue;`);
     await db.query(`DROP TABLE IF EXISTS jobs;`);

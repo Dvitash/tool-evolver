@@ -14,6 +14,7 @@ import {
   runWithTenant,
 } from "../tenant.js";
 import {
+  AuthContext,
   AuthService,
   TokenError,
   authenticateHttpRequest,
@@ -21,6 +22,11 @@ import {
   createAuthService,
   handleAuthRoutes,
 } from "../auth/index.js";
+import {
+  ObservationIngestionService,
+  createObservationIngestionService,
+  handleObservationBatchRoute,
+} from "../ingestion/index.js";
 
 /**
  * Health check status response.
@@ -46,6 +52,7 @@ export interface CloudServerOptions {
   queue?: DurableQueue;
   outboxPublisher?: OutboxPublisher;
   authService?: AuthService;
+  ingestionService?: ObservationIngestionService;
 }
 /**
  * Cloud API Server shell providing HTTP endpoints, health checks,
@@ -60,6 +67,7 @@ export class CloudServer {
   private server: Server | null = null;
   private startTime: number;
   readonly authService: AuthService;
+  readonly ingestionService: ObservationIngestionService;
 
   constructor(options: CloudServerOptions = {}) {
     this.config = options.config ?? loadConfig();
@@ -73,6 +81,12 @@ export class CloudServer {
         config: this.config.auth,
       });
     this.startTime = Date.now();
+    this.ingestionService =
+      options.ingestionService ??
+      createObservationIngestionService({
+        dbPool: this.dbPool,
+        consentManager: this.authService.consentManager,
+      });
   }
 
   getDbPool(): DatabasePool {
@@ -89,6 +103,10 @@ export class CloudServer {
 
   getOutboxPublisher(): OutboxPublisher {
     return this.outboxPublisher;
+  }
+
+  getIngestionService(): ObservationIngestionService {
+    return this.ingestionService;
   }
 
   getConfig(): CloudConfig {
@@ -300,6 +318,7 @@ export class CloudServer {
     if (path.startsWith("/v1/")) {
       const isPublicRegistration = path === "/v1/accounts" && req.method === "POST";
       let activeContext: TenantContext;
+      let authContext: AuthContext;
 
       if (isPublicRegistration) {
         activeContext = {
@@ -308,9 +327,13 @@ export class CloudServer {
           traceId,
           correlationId: requestId,
         };
+        authContext = {
+          tenant: activeContext,
+          isDevAuth: false,
+        };
       } else {
         try {
-          const authContext = await authenticateHttpRequest(req, this.authService, {
+          authContext = await authenticateHttpRequest(req, this.authService, {
             allowDevHeaders: true,
           });
           activeContext = authContext.tenant;
@@ -343,7 +366,7 @@ export class CloudServer {
 
       try {
         await runWithTenant(activeContext, async () => {
-          await this.routeV1(req, res, path, url, standardHeaders);
+          await this.routeV1(req, res, path, url, standardHeaders, authContext);
         });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
@@ -369,8 +392,22 @@ export class CloudServer {
     path: string,
     url: URL,
     headers: Record<string, string>,
+    authContext: AuthContext,
   ): Promise<void> {
     const tenant = getTenantContext()!;
+
+    // Observation Batch Ingestion
+    if (path === "/v1/observations/batch" && req.method === "POST") {
+      await handleObservationBatchRoute(
+        req,
+        res,
+        authContext,
+        this.ingestionService,
+        (r, status, data, h) => this.sendJson(r, status, data, h),
+        headers,
+      );
+      return;
+    }
 
     // Accounts
     if (path === "/v1/accounts") {

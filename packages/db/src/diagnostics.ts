@@ -1,6 +1,35 @@
 import fs from "node:fs";
-import { redactSensitiveData } from "@tool-evolver/observer";
 import type { LocalDatabaseConnection } from "./connection.js";
+
+const SENSITIVE_KEY_PATTERN = /token|secret|password|key|auth|credential|jwt/i;
+const REDACTED_PLACEHOLDER = "[REDACTED]";
+
+/**
+ * Deeply redacts sensitive keys from any object/record.
+ */
+export function redactSensitiveData(data: unknown): unknown {
+  if (data === null || data === undefined) {
+    return data;
+  }
+  if (typeof data !== "object") {
+    return data;
+  }
+  if (Array.isArray(data)) {
+    return data.map((item) => redactSensitiveData(item));
+  }
+
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+    if (SENSITIVE_KEY_PATTERN.test(key) && typeof value === "string" && value.length > 0) {
+      result[key] = REDACTED_PLACEHOLDER;
+    } else if (typeof value === "object" && value !== null) {
+      result[key] = redactSensitiveData(value);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
 
 /**
  * Diagnostics report structure for LocalStateStore.

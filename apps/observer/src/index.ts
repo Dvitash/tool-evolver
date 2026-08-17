@@ -25,6 +25,9 @@ export * from "./ipc/client.js";
 // Worker Process Supervision & Isolation
 export * from "./worker-supervisor.js";
 
+
+// Transcript Tailing, Checkpointing, and Source Recovery
+export * from "./tailing/index.js";
 // Backward Compatibility Observer Service
 export interface ObserverService {
   recordEvent(message: ProtocolMessage): void;

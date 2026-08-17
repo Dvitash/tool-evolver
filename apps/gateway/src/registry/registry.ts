@@ -1,0 +1,832 @@
+import {
+  type CapabilityEnvelope,
+  type CatalogSnapshot,
+  type CatalogToolSummary,
+  type ToolArtifact,
+  ToolArtifactSchema,
+  type ToolManifest,
+  ToolManifestSchema,
+  type ToolScope,
+  type ToolVersion,
+  ToolVersionSchema,
+} from "@tool-evolver/contracts";
+import { CatalogCache } from "./cache.js";
+import { UserControlsManager } from "./controls.js";
+import { CatalogChangeEventEmitter } from "./events.js";
+import { type CandidateToolForNaming, resolveNameCollision, sanitizeToolName } from "./naming.js";
+import { buildCatalogSnapshot } from "./snapshot.js";
+import type {
+  CatalogEntry,
+  CatalogSnapshotRecord,
+  RegistryTool,
+  ToolRegistryOptions,
+  ToolRegistryStatus,
+  ToolScopeHierarchy,
+  ValidationResult,
+} from "./types.js";
+import { computeManifestDigest, computeSha256, validateToolStaging } from "./validator.js";
+
+interface ToolRepoLike {
+  saveManifest?(manifest: ToolManifest): Promise<void>;
+  saveToolVersion?(version: ToolVersion): Promise<void>;
+  saveCatalogSnapshot?(snapshot: CatalogSnapshot): Promise<void>;
+  getCatalogSnapshot?(snapshotId: string): Promise<CatalogSnapshot | null>;
+  listCatalogSnapshots?(workspaceId: string): Promise<CatalogSnapshot[]>;
+}
+
+interface StateStoreLike {
+  getToolRepository?(): ToolRepoLike;
+  tools?: ToolRepoLike;
+}
+
+function extractToolRepo(db: unknown): ToolRepoLike | null {
+  if (!db || typeof db !== "object") {
+    return null;
+  }
+  const store = db as StateStoreLike;
+  if (typeof store.getToolRepository === "function") {
+    return store.getToolRepository() ?? null;
+  }
+  if (store.tools && typeof store.tools.saveToolVersion === "function") {
+    return store.tools;
+  }
+  if ("saveManifest" in db && typeof (db as ToolRepoLike).saveManifest === "function") {
+    return db as ToolRepoLike;
+  }
+  return null;
+}
+
+/**
+ * Dynamic Tool Registry managing workspace-scoped tool visibility, pre-staging validation,
+ * atomic version activation, rollback, user controls, and catalog snapshot caching.
+ */
+export class ToolRegistry {
+  private readonly toolRepo: ToolRepoLike | null;
+  private readonly defaultEnvelope?: CapabilityEnvelope;
+  readonly cache: CatalogCache;
+  readonly controls: UserControlsManager;
+  readonly events: CatalogChangeEventEmitter;
+
+  // toolId -> version -> RegistryTool
+  private readonly registeredTools = new Map<string, Map<string, RegistryTool>>();
+  // toolId -> latest registered version string
+  private readonly latestVersions = new Map<string, string>();
+
+  // Scope activations: scopeKey -> Map<toolId, version>
+  // System scope
+  private readonly systemActiveTools = new Map<string, string>();
+  // Account scope: accountId -> (toolId -> version)
+  private readonly accountActiveTools = new Map<string, Map<string, string>>();
+  // Workspace scope: workspaceId -> (toolId -> version)
+  private readonly workspaceActiveTools = new Map<string, Map<string, string>>();
+  // Session scope: sessionId -> (toolId -> version)
+  private readonly sessionActiveTools = new Map<string, Map<string, string>>();
+
+  // Monotonic local revision counter per workspace
+  private readonly workspaceRevisions = new Map<string, number>();
+  // Snapshot history per workspace
+  private readonly snapshotHistory = new Map<string, CatalogSnapshotRecord[]>();
+
+  constructor(options?: ToolRegistryOptions) {
+    this.toolRepo = extractToolRepo(options?.db);
+    this.defaultEnvelope = options?.defaultEnvelope;
+    this.cache = new CatalogCache({ maxSize: options?.cacheSize });
+    this.controls = new UserControlsManager(options?.db);
+    this.events = new CatalogChangeEventEmitter({ debounceMs: options?.debounceMs });
+
+    if (options?.initialTools) {
+      for (const tool of options.initialTools) {
+        this.registerToolSync(tool);
+      }
+    }
+  }
+
+  /**
+   * Pre-stages and validates a tool manifest and artifact against capability envelopes.
+   */
+  async stageToolVersion(
+    manifest: unknown,
+    artifact?: unknown,
+    envelope?: CapabilityEnvelope
+  ): Promise<ValidationResult> {
+    const targetEnvelope = envelope ?? this.defaultEnvelope;
+    const existingVersions = this.getExistingVersionsForManifest(manifest);
+
+    const result = validateToolStaging(manifest, artifact, targetEnvelope, {
+      existingVersions,
+    });
+
+    if (!result.valid) {
+      return result;
+    }
+
+    const validatedManifest = ToolManifestSchema.parse(manifest);
+    const toolId = validatedManifest.id;
+    let validatedArtifact: ToolArtifact | undefined;
+    if (artifact !== undefined) {
+      if (typeof artifact === "object" && artifact !== null && "artifactDigest" in artifact && "bundleReference" in artifact) {
+        validatedArtifact = ToolArtifactSchema.parse(artifact);
+      } else {
+        const rawArt = artifact as Record<string, unknown>;
+        const code = typeof rawArt.code === "string" ? rawArt.code : typeof rawArt.sourceCode === "string" ? rawArt.sourceCode : "";
+        const digest = typeof rawArt.digest === "string" ? rawArt.digest : typeof rawArt.artifactDigest === "string" ? rawArt.artifactDigest : computeSha256(code || `${toolId}@${validatedManifest.version}`);
+        validatedArtifact = ToolArtifactSchema.parse({
+          artifactDigest: digest,
+          bundleReference: {
+            uri: `memory://${toolId}/${validatedManifest.version}`,
+            hash: digest,
+            sizeBytes: Buffer.byteLength(code, "utf8"),
+            format: "embedded",
+          },
+          entrypoint: typeof rawArt.entrypoint === "string" ? rawArt.entrypoint : "index.js",
+          sourceCode: code,
+          checksums: {},
+        });
+      }
+    }
+
+    // Register into memory
+    const registryTool: RegistryTool = {
+      toolId,
+      name: validatedManifest.name,
+      version: validatedManifest.version,
+      manifest: validatedManifest,
+      artifact: validatedArtifact,
+      scope: validatedManifest.scope as ToolScopeHierarchy,
+      status: "active",
+      description: validatedManifest.description,
+      parameters: validatedManifest.parameters,
+      outputSchema: validatedManifest.outputSchema,
+      metadata: validatedManifest.metadata,
+      createdAt: validatedManifest.createdAt,
+      updatedAt: validatedManifest.updatedAt,
+    };
+
+    this.registerToolSync(registryTool);
+
+    // Persist to DB if repository available
+    if (this.toolRepo) {
+      try {
+        if (this.toolRepo.saveManifest) {
+          await this.toolRepo.saveManifest(validatedManifest);
+        }
+        if (this.toolRepo.saveToolVersion && validatedArtifact) {
+          const toolVersion: ToolVersion = {
+            toolId,
+            version: validatedManifest.version,
+            manifestDigest: result.manifestDigest || validatedManifest.digest,
+            artifactDigest: result.artifactDigest || validatedArtifact.artifactDigest,
+            manifest: validatedManifest,
+            artifact: validatedArtifact,
+            provenance: {
+              synthesizedAt: new Date().toISOString(),
+              synthesizerModel: "gateway",
+              deterministicBuildHash: result.artifactDigest || validatedArtifact.artifactDigest,
+              environment: {},
+            },
+            status: "active",
+            createdAt: validatedManifest.createdAt,
+            createdBy: "gateway",
+          };
+          ToolVersionSchema.parse(toolVersion);
+          await this.toolRepo.saveToolVersion(toolVersion);
+        }
+      } catch {
+        // Suppress DB persistence failure during staging if running in ephemeral mode
+      }
+    }
+    return result;
+  }
+
+  private getExistingVersionsForManifest(rawManifest: unknown): ToolVersion[] {
+    if (!rawManifest || typeof rawManifest !== "object") {
+      return [];
+    }
+    const raw = rawManifest as { id?: string; toolId?: string };
+    const toolId = raw.id ?? raw.toolId;
+    if (!toolId) {
+      return [];
+    }
+    const versions = this.registeredTools.get(toolId);
+    if (!versions) {
+      return [];
+    }
+
+    const list: ToolVersion[] = [];
+    for (const tool of versions.values()) {
+      if (tool.artifact) {
+        list.push({
+          toolId: tool.toolId,
+          version: tool.version,
+          manifestDigest: tool.manifest.digest,
+          artifactDigest: tool.artifact.artifactDigest,
+          manifest: tool.manifest,
+          artifact: tool.artifact,
+          provenance: {
+            synthesizedAt: tool.createdAt || new Date().toISOString(),
+            synthesizerModel: "memory",
+            deterministicBuildHash: tool.artifact.artifactDigest,
+            environment: {},
+          },
+          status: tool.status,
+          createdAt: tool.createdAt || new Date().toISOString(),
+          createdBy: "gateway",
+        });
+      }
+    }
+    return list;
+  }
+
+  /**
+   * Registers a tool directly into the in-memory registry.
+   */
+  registerToolSync(tool: RegistryTool): void {
+    let versions = this.registeredTools.get(tool.toolId);
+    if (!versions) {
+      versions = new Map();
+      this.registeredTools.set(tool.toolId, versions);
+    }
+    versions.set(tool.version, tool);
+    this.latestVersions.set(tool.toolId, tool.version);
+
+    // If tool scope is system/global, auto-register in system active list
+    if (tool.scope === "system" || tool.scope === "global") {
+      this.systemActiveTools.set(tool.toolId, tool.version);
+    } else if (tool.workspaceId) {
+      let wsTools = this.workspaceActiveTools.get(tool.workspaceId);
+      if (!wsTools) {
+        wsTools = new Map();
+        this.workspaceActiveTools.set(tool.workspaceId, wsTools);
+      }
+      wsTools.set(tool.toolId, tool.version);
+    } else if (tool.sessionId) {
+      let sessTools = this.sessionActiveTools.get(tool.sessionId);
+      if (!sessTools) {
+        sessTools = new Map();
+        this.sessionActiveTools.set(tool.sessionId, sessTools);
+      }
+      sessTools.set(tool.toolId, tool.version);
+    }
+  }
+
+  /**
+   * Registers a tool asynchronously, staging manifest and optional artifact.
+   */
+  async registerTool(
+    tool: RegistryTool | ToolManifest,
+    artifact?: ToolArtifact,
+    options?: {
+      scope?: ToolScopeHierarchy;
+      workspaceId?: string;
+      sessionId?: string;
+    }
+  ): Promise<RegistryTool> {
+    if ("toolId" in tool && "manifest" in tool) {
+      this.registerToolSync(tool as RegistryTool);
+      return tool as RegistryTool;
+    }
+
+    const manifest = tool as ToolManifest;
+    await this.stageToolVersion(manifest, artifact);
+
+    const registered = this.registeredTools.get(manifest.id)?.get(manifest.version);
+    if (!registered) {
+      throw new Error(`Failed to stage tool ${manifest.id} version ${manifest.version}`);
+    }
+
+    if (options?.workspaceId) {
+      await this.activateToolVersion(manifest.id, manifest.version, options.workspaceId, {
+        sessionId: options.sessionId,
+        scope: options.scope,
+      });
+    }
+
+    return registered;
+  }
+
+  /**
+   * Resolves the visible tool catalog for a workspace and optional session,
+   * applying scope hierarchy, user pins/disables, name collision resolution,
+   * and LRU snapshot caching.
+   */
+  async resolveCatalog(workspaceId: string, sessionId?: string): Promise<CatalogSnapshot> {
+    // 1. Check LRU Cache
+    const cached = this.cache.get(workspaceId, sessionId);
+    if (cached) {
+      return cached;
+    }
+
+    // 2. Load User Controls
+    const controls = await this.controls.getControls(workspaceId);
+
+    // 3. Resolve tools across Scope Hierarchy (Session > Workspace > Account > System)
+    interface CandidateEntry {
+      tool: RegistryTool;
+      scope: ToolScopeHierarchy;
+      priority: number;
+    }
+
+    const candidateTools = new Map<string, CandidateEntry>();
+
+    // Layer 1: System Scope (Priority 1)
+    for (const [toolId, version] of this.systemActiveTools.entries()) {
+      if (controls.disabledTools.includes(toolId)) {
+        continue;
+      }
+      const targetVersion = controls.pinnedVersions[toolId] ?? version;
+      const tool = this.registeredTools.get(toolId)?.get(targetVersion);
+      if (tool) {
+        candidateTools.set(toolId, { tool, scope: "system", priority: 1 });
+      }
+    }
+
+    // Layer 2: Workspace Scope (Priority 2)
+    const wsMap = this.workspaceActiveTools.get(workspaceId);
+    if (wsMap) {
+      for (const [toolId, version] of wsMap.entries()) {
+        if (controls.disabledTools.includes(toolId)) {
+          continue;
+        }
+        const targetVersion = controls.pinnedVersions[toolId] ?? version;
+        const tool = this.registeredTools.get(toolId)?.get(targetVersion);
+        if (tool) {
+          candidateTools.set(toolId, { tool, scope: "workspace", priority: 2 });
+        }
+      }
+    }
+
+    // Layer 3: Session Scope (Priority 3)
+    if (sessionId) {
+      const sessMap = this.sessionActiveTools.get(sessionId);
+      if (sessMap) {
+        for (const [toolId, version] of sessMap.entries()) {
+          if (controls.disabledTools.includes(toolId)) {
+            continue;
+          }
+          const targetVersion = controls.pinnedVersions[toolId] ?? version;
+          const tool = this.registeredTools.get(toolId)?.get(targetVersion);
+          if (tool) {
+            candidateTools.set(toolId, { tool, scope: "session", priority: 3 });
+          }
+        }
+      }
+    }
+
+    // 4. Resolve Name Collisions
+    const namingCandidates: CandidateToolForNaming[] = [];
+    for (const { tool, scope } of candidateTools.values()) {
+      namingCandidates.push({
+        toolId: tool.toolId,
+        name: tool.name,
+        scope,
+        version: tool.version,
+      });
+    }
+
+    const nameMap = resolveNameCollision(namingCandidates);
+
+    // 5. Build Catalog Entries
+    const entries: CatalogEntry[] = [];
+    for (const { tool, scope } of candidateTools.values()) {
+      const exposedName = nameMap.get(tool.toolId) || sanitizeToolName(tool.name);
+      const isPinned = Boolean(controls.pinnedVersions[tool.toolId]);
+
+      entries.push({
+        toolId: tool.toolId,
+        name: tool.name,
+        version: tool.version,
+        manifestDigest: tool.manifest.digest || computeManifestDigest(tool.manifest),
+        artifactDigest: tool.artifact?.artifactDigest,
+        scope,
+        status: tool.status || "active",
+        exposedName,
+        description: tool.description,
+        parameters: tool.parameters,
+        outputSchema: tool.outputSchema,
+        manifest: tool.manifest,
+        artifact: tool.artifact,
+        handler: tool.handler,
+        workspaceId,
+        sessionId,
+        isPinned,
+        isDisabled: false,
+      });
+    }
+
+    // 6. Compute Monotonic Revision and Build Snapshot
+    const currentRevision = this.workspaceRevisions.get(workspaceId) ?? 1;
+    const snapshot = buildCatalogSnapshot({
+      workspaceId,
+      revision: currentRevision,
+      entries,
+      sessionId,
+    });
+
+    // 7. Store in Cache and History
+    this.cache.set(workspaceId, sessionId, snapshot);
+    this.recordSnapshot(snapshot);
+
+    if (this.toolRepo?.saveCatalogSnapshot) {
+      try {
+        await this.toolRepo.saveCatalogSnapshot(snapshot);
+      } catch {
+        // Fallback for in-memory environments
+      }
+    }
+
+    return snapshot;
+  }
+
+  /**
+   * Retrieves a tool by toolId, name, or exposedName within the context of a workspace.
+   */
+  async getTool(
+    toolIdOrName: string,
+    workspaceId?: string,
+    sessionId?: string
+  ): Promise<RegistryTool | undefined> {
+    if (!toolIdOrName) {
+      return undefined;
+    }
+
+    if (workspaceId) {
+      const controls = await this.controls.getControls(workspaceId);
+      if (controls.disabledTools.includes(toolIdOrName)) {
+        return undefined;
+      }
+
+      const catalog = await this.resolveCatalog(workspaceId, sessionId);
+      const entry = Object.values(catalog.tools).find(
+        (t) => t.toolId === toolIdOrName
+      );
+
+      if (entry) {
+        const found = this.registeredTools.get(entry.toolId)?.get(entry.version);
+        if (found) {
+          return { ...found, isDisabled: false };
+        }
+      }
+
+      // Check exposed names in extended snapshot record
+      const record = catalog as CatalogSnapshotRecord;
+      if (record.entries) {
+        for (const e of Object.values(record.entries)) {
+          if (e.exposedName === toolIdOrName || e.name === toolIdOrName || e.toolId === toolIdOrName) {
+            const found = this.registeredTools.get(e.toolId)?.get(e.version);
+            if (found) {
+              return { ...found, isDisabled: false };
+            }
+          }
+        }
+      }
+
+      for (const disabledId of controls.disabledTools) {
+        const disabledTool = this.registeredTools.get(disabledId);
+        if (disabledTool) {
+          for (const t of disabledTool.values()) {
+            if (t.name === toolIdOrName || t.exposedName === toolIdOrName) {
+              return undefined;
+            }
+          }
+        }
+      }
+    }
+
+    // Global / Registry fallback lookup (when no workspace specified)
+    if (!workspaceId) {
+      const directVersions = this.registeredTools.get(toolIdOrName);
+      if (directVersions) {
+        const latest = this.latestVersions.get(toolIdOrName);
+        if (latest) {
+          return directVersions.get(latest);
+        }
+        return directVersions.values().next().value;
+      }
+
+      for (const versions of this.registeredTools.values()) {
+        for (const tool of versions.values()) {
+          if (tool.name === toolIdOrName || tool.exposedName === toolIdOrName) {
+            return tool;
+          }
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Atomically activates a tool version in a workspace or session,
+   * building a new snapshot revision and notifying listeners.
+   */
+  async activateToolVersion(
+    toolId: string,
+    version: string,
+    workspaceId: string,
+    options?: {
+      sessionId?: string;
+      scope?: ToolScopeHierarchy;
+    }
+  ): Promise<CatalogSnapshot> {
+    const tool = this.registeredTools.get(toolId)?.get(version);
+    if (!tool) {
+      throw new Error(`Tool '${toolId}' version '${version}' is not registered`);
+    }
+
+    // Ensure tool is enabled in user controls
+    await this.controls.enableTool(workspaceId, toolId);
+
+    // If scope is session, activate in session map
+    if (options?.sessionId) {
+      let sessMap = this.sessionActiveTools.get(options.sessionId);
+      if (!sessMap) {
+        sessMap = new Map();
+        this.sessionActiveTools.set(options.sessionId, sessMap);
+      }
+      sessMap.set(toolId, version);
+    } else if (options?.scope === "system" || tool.scope === "system" || tool.scope === "global") {
+      this.systemActiveTools.set(toolId, version);
+    } else {
+      let wsMap = this.workspaceActiveTools.get(workspaceId);
+      if (!wsMap) {
+        wsMap = new Map();
+        this.workspaceActiveTools.set(workspaceId, wsMap);
+      }
+      wsMap.set(toolId, version);
+    }
+
+    // Monotonically advance revision
+    const nextRevision = (this.workspaceRevisions.get(workspaceId) ?? 0) + 1;
+    this.workspaceRevisions.set(workspaceId, nextRevision);
+
+    // Invalidate LRU cache for workspace
+    this.cache.invalidateWorkspace(workspaceId);
+
+    // Rebuild snapshot
+    const snapshot = await this.resolveCatalog(workspaceId, options?.sessionId);
+
+    // Emit debounced catalog change event
+    this.events.emit({
+      workspaceId,
+      sessionId: options?.sessionId,
+      revision: nextRevision,
+      snapshot,
+      changedToolIds: [toolId],
+      timestamp: new Date().toISOString(),
+    });
+
+    return snapshot;
+  }
+
+  /**
+   * Deactivates a tool from a workspace or session catalog.
+   */
+  async deactivateTool(
+    toolId: string,
+    workspaceId: string,
+    options?: {
+      sessionId?: string;
+    }
+  ): Promise<CatalogSnapshot> {
+    if (options?.sessionId) {
+      const sessMap = this.sessionActiveTools.get(options.sessionId);
+      if (sessMap) {
+        sessMap.delete(toolId);
+      }
+    } else {
+      const wsMap = this.workspaceActiveTools.get(workspaceId);
+      if (wsMap) {
+        wsMap.delete(toolId);
+      }
+      this.systemActiveTools.delete(toolId);
+    }
+
+    const nextRevision = (this.workspaceRevisions.get(workspaceId) ?? 0) + 1;
+    this.workspaceRevisions.set(workspaceId, nextRevision);
+
+    this.cache.invalidateWorkspace(workspaceId);
+
+    const snapshot = await this.resolveCatalog(workspaceId, options?.sessionId);
+
+    this.events.emit({
+      workspaceId,
+      sessionId: options?.sessionId,
+      revision: nextRevision,
+      snapshot,
+      changedToolIds: [toolId],
+      timestamp: new Date().toISOString(),
+    });
+
+    return snapshot;
+  }
+
+  /**
+   * Pins a tool version in a workspace, locking it against automated candidate updates.
+   */
+  async pinToolVersion(toolId: string, version: string, workspaceId: string): Promise<void> {
+    const tool = this.registeredTools.get(toolId)?.get(version);
+    if (!tool) {
+      throw new Error(`Cannot pin unregistered tool '${toolId}' version '${version}'`);
+    }
+
+    await this.controls.pinToolVersion(workspaceId, toolId, version);
+
+    // Also activate it in the workspace
+    let wsMap = this.workspaceActiveTools.get(workspaceId);
+    if (!wsMap) {
+      wsMap = new Map();
+      this.workspaceActiveTools.set(workspaceId, wsMap);
+    }
+    wsMap.set(toolId, version);
+
+    const nextRevision = (this.workspaceRevisions.get(workspaceId) ?? 0) + 1;
+    this.workspaceRevisions.set(workspaceId, nextRevision);
+
+    this.cache.invalidateWorkspace(workspaceId);
+
+    const snapshot = await this.resolveCatalog(workspaceId);
+
+    this.events.emit({
+      workspaceId,
+      revision: nextRevision,
+      snapshot,
+      changedToolIds: [toolId],
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Unpins a tool version, returning it to autonomous update eligibility.
+   */
+  async unpinToolVersion(toolId: string, workspaceId: string): Promise<void> {
+    await this.controls.unpinToolVersion(workspaceId, toolId);
+
+    const nextRevision = (this.workspaceRevisions.get(workspaceId) ?? 0) + 1;
+    this.workspaceRevisions.set(workspaceId, nextRevision);
+
+    this.cache.invalidateWorkspace(workspaceId);
+
+    const snapshot = await this.resolveCatalog(workspaceId);
+
+    this.events.emit({
+      workspaceId,
+      revision: nextRevision,
+      snapshot,
+      changedToolIds: [toolId],
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Disables a tool in a workspace.
+   */
+  async disableTool(toolId: string, workspaceId: string): Promise<CatalogSnapshot> {
+    await this.controls.disableTool(workspaceId, toolId);
+
+    const nextRevision = (this.workspaceRevisions.get(workspaceId) ?? 0) + 1;
+    this.workspaceRevisions.set(workspaceId, nextRevision);
+
+    this.cache.invalidateWorkspace(workspaceId);
+
+    const snapshot = await this.resolveCatalog(workspaceId);
+
+    this.events.emit({
+      workspaceId,
+      revision: nextRevision,
+      snapshot,
+      changedToolIds: [toolId],
+      timestamp: new Date().toISOString(),
+    });
+
+    return snapshot;
+  }
+
+  /**
+   * Enables a tool in a workspace.
+   */
+  async enableTool(toolId: string, workspaceId: string): Promise<CatalogSnapshot> {
+    await this.controls.enableTool(workspaceId, toolId);
+
+    const nextRevision = (this.workspaceRevisions.get(workspaceId) ?? 0) + 1;
+    this.workspaceRevisions.set(workspaceId, nextRevision);
+
+    this.cache.invalidateWorkspace(workspaceId);
+
+    const snapshot = await this.resolveCatalog(workspaceId);
+
+    this.events.emit({
+      workspaceId,
+      revision: nextRevision,
+      snapshot,
+      changedToolIds: [toolId],
+      timestamp: new Date().toISOString(),
+    });
+
+    return snapshot;
+  }
+
+  /**
+   * Rolls back a workspace catalog to an exact target revision or historical snapshot,
+   * atomically restoring referenced tool versions and producing a new immutable snapshot.
+   */
+  async rollbackCatalog(
+    workspaceId: string,
+    targetRevision: number | string
+  ): Promise<CatalogSnapshot> {
+    const history = this.snapshotHistory.get(workspaceId) ?? [];
+    let targetSnapshot: CatalogSnapshot | undefined;
+
+    if (typeof targetRevision === "number") {
+      targetSnapshot = history.find((s) => s.revision === targetRevision);
+    } else {
+      targetSnapshot = history.find(
+        (s) => s.snapshotId === targetRevision || String(s.revision) === targetRevision
+      );
+    }
+
+    // Try DB if not in memory
+    if (!targetSnapshot && this.toolRepo?.getCatalogSnapshot && typeof targetRevision === "string") {
+      try {
+        const fromDb = await this.toolRepo.getCatalogSnapshot(targetRevision);
+        if (fromDb && fromDb.workspaceId === workspaceId) {
+          targetSnapshot = fromDb;
+        }
+      } catch {
+        // DB lookup failure fallback
+      }
+    }
+
+    if (!targetSnapshot) {
+      throw new Error(
+        `Rollback failed: target revision/snapshot '${targetRevision}' not found for workspace '${workspaceId}'`
+      );
+    }
+
+    // Restore active tools to match target snapshot exactly
+    let wsMap = this.workspaceActiveTools.get(workspaceId);
+    if (!wsMap) {
+      wsMap = new Map();
+      this.workspaceActiveTools.set(workspaceId, wsMap);
+    }
+    wsMap.clear();
+
+    const changedToolIds: string[] = [];
+    for (const [toolId, summary] of Object.entries(targetSnapshot.tools)) {
+      wsMap.set(toolId, summary.version);
+      changedToolIds.push(toolId);
+    }
+
+    // Monotonically advance workspace revision for the rollback event
+    const nextRevision = (this.workspaceRevisions.get(workspaceId) ?? 0) + 1;
+    this.workspaceRevisions.set(workspaceId, nextRevision);
+
+    await this.controls.recordRollback(workspaceId, targetRevision, targetSnapshot.snapshotId);
+
+    this.cache.invalidateWorkspace(workspaceId);
+
+    const newSnapshot = await this.resolveCatalog(workspaceId);
+
+    this.events.emit({
+      workspaceId,
+      revision: nextRevision,
+      snapshot: newSnapshot,
+      changedToolIds,
+      timestamp: new Date().toISOString(),
+    });
+
+    return newSnapshot;
+  }
+
+  private recordSnapshot(snapshot: CatalogSnapshotRecord): void {
+    let history = this.snapshotHistory.get(snapshot.workspaceId);
+    if (!history) {
+      history = [];
+      this.snapshotHistory.set(snapshot.workspaceId, history);
+    }
+    if (!history.some((s) => s.snapshotId === snapshot.snapshotId)) {
+      history.push(snapshot);
+    }
+  }
+
+  /**
+   * Retrieves current monotonic revision for a workspace.
+   */
+  getRevision(workspaceId: string): number {
+    return this.workspaceRevisions.get(workspaceId) ?? 1;
+  }
+
+  /**
+   * Flushes all pending debounced catalog change events.
+   */
+  flushEvents(): void {
+    this.events.flush();
+  }
+
+  /**
+   * Releases resources, timers, and caches.
+   */
+  destroy(): void {
+    this.events.destroy();
+    this.cache.invalidateAll();
+  }
+}

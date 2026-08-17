@@ -268,7 +268,7 @@ export class MemoryDatabasePool implements DatabasePool {
 
     // UPDATE statement
     if (/^UPDATE/i.test(trimmed)) {
-      const match = trimmed.match(/UPDATE\s+([a-zA-Z0-9_".]+)\s+SET\s+([^WHERE]+)(?:\s+WHERE\s+(.+))?/i);
+      const match = trimmed.match(/UPDATE\s+([a-zA-Z0-9_".]+)\s+SET\s+(.+?)(?:\s+WHERE\s+(.+))?$/i);
       if (match) {
         const tableName = match[1].replace(/["`]/g, "").toLowerCase();
         const setClause = match[2].trim();

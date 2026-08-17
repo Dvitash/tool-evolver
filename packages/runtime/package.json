@@ -21,6 +21,10 @@
   },
   "dependencies": {
     "@tool-evolver/contracts": "workspace:*",
-    "@tool-evolver/protocol": "workspace:*"
+    "@tool-evolver/crypto": "workspace:*",
+    "@tool-evolver/db": "workspace:*",
+    "@tool-evolver/observer": "workspace:*",
+    "@tool-evolver/protocol": "workspace:*",
+    "zod": "^3.25.76"
   }
 }

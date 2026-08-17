@@ -24,6 +24,8 @@
   },
   "dependencies": {
     "@tool-evolver/contracts": "workspace:*",
+    "@tool-evolver/db": "workspace:*",
+    "@tool-evolver/harness-contracts": "workspace:*",
     "@tool-evolver/protocol": "workspace:*",
     "zod": "^3.25.76"
   }
