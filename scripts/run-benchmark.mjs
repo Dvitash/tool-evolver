@@ -15,19 +15,15 @@ import { performance } from "node:perf_hooks";
 import { HermeticE2EEnvironment, runHappyPathScenario } from "../fixtures/e2e/dist/index.js";
 import { OpenAiCompatibleProvider } from "../apps/cloud/dist/index.js";
 
-// 1. Resolve OpenRouter API Key
-let apiKey = process.env.OPENROUTER_API_KEY;
-if (!apiKey) {
-  const stagingEnvPath = "/home/dvitash/Projects/rometrics/.env.staging";
-  if (existsSync(stagingEnvPath)) {
-    const content = readFileSync(stagingEnvPath, "utf-8");
-    const match = content.match(/OPENROUTER_API_KEY=(.+)/);
-    if (match) {
-      apiKey = match[1].trim().replace(/^["']|["']$/g, "");
-    }
+// 1. Resolve OpenRouter / Model API Key from environment variables
+let apiKey = process.env.OPENROUTER_API_KEY || process.env.TOOL_EVOLVER_OPENAI_API_KEY;
+if (!apiKey && process.env.TOOL_EVOLVER_ENV_FILE && existsSync(process.env.TOOL_EVOLVER_ENV_FILE)) {
+  const content = readFileSync(process.env.TOOL_EVOLVER_ENV_FILE, "utf-8");
+  const match = content.match(/(?:OPENROUTER_API_KEY|TOOL_EVOLVER_OPENAI_API_KEY)=(.+)/);
+  if (match) {
+    apiKey = match[1].trim().replace(/^["']|["']$/g, "");
   }
 }
-
 const FREE_MODELS = [
   "nvidia/nemotron-3.5-lightning:free",
   "google/gemma-4-31b-it:free",
