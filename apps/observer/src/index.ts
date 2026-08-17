@@ -28,6 +28,9 @@ export * from "./worker-supervisor.js";
 
 // Transcript Tailing, Checkpointing, and Source Recovery
 export * from "./tailing/index.js";
+
+// Transcript Normalization, Deduplication, Privacy Redaction & Re-normalization
+export * from "./normalization/index.js";
 // Backward Compatibility Observer Service
 export interface ObserverService {
   recordEvent(message: ProtocolMessage): void;

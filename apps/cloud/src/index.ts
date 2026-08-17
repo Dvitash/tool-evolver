@@ -11,7 +11,18 @@ import { OutboxPublisher } from "./db/outbox.js";
 import { DurableQueue, createDurableQueue } from "./queue/queue.js";
 import { WorkerRuntime } from "./queue/worker.js";
 import { JobScheduler } from "./queue/scheduler.js";
+import type { JobEnvelope } from "./queue/envelope.js";
 import { ObjectStore, createObjectStore } from "./storage/object-store.js";
+import {
+  ObservationRepository,
+  SessionRepository,
+  EvidenceRepository,
+  RetentionRepository,
+  StoreObservationBatchConsumer,
+  RetentionService,
+  ExportService,
+} from "./storage/index.js";
+import type { StoreObservationBatchPayload } from "./storage/index.js";
 import { CloudServer, createCloudServer } from "./server/api.js";
 import {
   ObservationIngestionService,
@@ -28,7 +39,7 @@ export * from "./tenant.js";
 // Database Layer (Pool, Client, Migrations, Outbox)
 export * from "./db/index.js";
 
-// Content-Addressed Storage
+// Content-Addressed Storage, Observations, Sessions & Evidence
 export * from "./storage/index.js";
 
 // Durable Queue, Envelope, Worker Runtime & Scheduler
@@ -59,6 +70,13 @@ export class CloudService {
   readonly scheduler: JobScheduler;
   readonly server: CloudServer;
   readonly ingestionService: ObservationIngestionService;
+  readonly observationRepo: ObservationRepository;
+  readonly sessionRepo: SessionRepository;
+  readonly evidenceRepo: EvidenceRepository;
+  readonly retentionRepo: RetentionRepository;
+  readonly observationConsumer: StoreObservationBatchConsumer;
+  readonly retentionService: RetentionService;
+  readonly exportService: ExportService;
 
   private isInitialized = false;
 
@@ -81,14 +99,38 @@ export class CloudService {
       dbPool: this.dbPool,
       consentManager: this.authService.consentManager,
     });
+
+    this.observationRepo = new ObservationRepository(this.dbPool);
+    this.sessionRepo = new SessionRepository(this.dbPool);
+    this.evidenceRepo = new EvidenceRepository(this.dbPool);
+    this.retentionRepo = new RetentionRepository(this.dbPool);
+    this.observationConsumer = new StoreObservationBatchConsumer(this.dbPool, {
+      obsRepo: this.observationRepo,
+      sessionRepo: this.sessionRepo,
+    });
+    this.retentionService = new RetentionService(this.dbPool, {
+      retentionRepo: this.retentionRepo,
+    });
+    this.exportService = new ExportService(this.dbPool, this.objectStore, {
+      obsRepo: this.observationRepo,
+      sessionRepo: this.sessionRepo,
+      evidenceRepo: this.evidenceRepo,
+      retentionRepo: this.retentionRepo,
+    });
+
+    this.worker.registerHandler("store-observation-batch", async (job) => {
+      const typedJob = job as unknown as JobEnvelope<StoreObservationBatchPayload>;
+      await this.observationConsumer.processJob(typedJob);
+    });
+
     this.server = createCloudServer({
       config: this.config,
       dbPool: this.dbPool,
+      authService: this.authService,
+      ingestionService: this.ingestionService,
       objectStore: this.objectStore,
       queue: this.queue,
       outboxPublisher: this.outboxPublisher,
-      authService: this.authService,
-      ingestionService: this.ingestionService,
     });
   }
 
@@ -101,18 +143,20 @@ export class CloudService {
     // Run database migrations
     await runMigrations(this.dbPool);
 
-    // Initialize worker runtime
-    await this.worker.start();
+    // Start workers and publishers
+    this.outboxPublisher.start(100);
+    this.worker.start();
+    this.scheduler.start();
 
     this.isInitialized = true;
   }
 
   /**
-   * Start the HTTP API server.
+   * Start HTTP API server and underlying worker processes.
    */
-  async start(port?: number, host?: string): Promise<number> {
+  async start(port?: number): Promise<number> {
     await this.initialize();
-    return this.server.start(port, host);
+    return this.server.start(port);
   }
 
   /**
@@ -120,11 +164,20 @@ export class CloudService {
    */
   async stop(): Promise<void> {
     await this.server.stop();
+    this.outboxPublisher.stop();
     await this.worker.stop();
     await this.scheduler.stop();
     await this.dbPool.end();
     this.isInitialized = false;
   }
+
+  /**
+   * Alias for stop().
+   */
+  async close(): Promise<void> {
+    await this.stop();
+  }
+
   /**
    * Alias for stop().
    */

@@ -2,8 +2,13 @@
 import process from "node:process";
 import { loadConfig } from "../config.js";
 import { createDatabasePool } from "../db/client.js";
+import type { JobEnvelope } from "../queue/envelope.js";
 import { createDurableQueue } from "../queue/queue.js";
 import { WorkerRuntime } from "../queue/worker.js";
+import {
+  StoreObservationBatchConsumer,
+  type StoreObservationBatchPayload,
+} from "../storage/index.js";
 
 async function main() {
   const config = loadConfig();
@@ -16,16 +21,23 @@ async function main() {
     jobTimeoutMs: config.queue.visibilityTimeoutMs,
   });
 
-  // Register default handlers
-  worker.registerHandler("observation.process", async (job, signal) => {
+  const obsConsumer = new StoreObservationBatchConsumer(pool);
+
+  // Register handlers
+  worker.registerHandler("store-observation-batch", async (job) => {
+    const typedJob = job as unknown as JobEnvelope<StoreObservationBatchPayload>;
+    await obsConsumer.processJob(typedJob);
+  });
+
+  worker.registerHandler("observation.process", async (job) => {
     console.log(`[Worker] Processing observation for tenant ${job.tenantContext.accountId}:${job.tenantContext.workspaceId}`);
   });
 
-  worker.registerHandler("evaluation.run", async (job, signal) => {
+  worker.registerHandler("evaluation.run", async (job) => {
     console.log(`[Worker] Running evaluation for tenant ${job.tenantContext.accountId}`);
   });
 
-  worker.registerHandler("artifact.sync", async (job, signal) => {
+  worker.registerHandler("artifact.sync", async (job) => {
     console.log(`[Worker] Syncing artifact for tenant ${job.tenantContext.accountId}`);
   });
 

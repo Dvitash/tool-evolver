@@ -31,6 +31,9 @@ export * from "./loader/inspector.js";
 // Tool Bundle Loader
 export * from "./loader/loader.js";
 
+// Worker Protocol, SDK, Process & Runner
+export * from "./worker/index.js";
+
 // Backward-compatible Runtime Engine Interface
 export interface RuntimeEngine {
   isReady(): boolean;

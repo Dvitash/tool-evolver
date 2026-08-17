@@ -1,3 +1,4 @@
+import type { ToolInvocationRouter } from "./meta/router-contract.js";
 import { MCP_ERROR_CODES, McpProtocolError } from "./protocol/errors.js";
 import type { CallToolResult, McpTool, McpToolInput } from "./protocol/types.js";
 import type { CatalogSnapshotRecord, ToolRegistry } from "./registry/index.js";
@@ -13,7 +14,7 @@ export interface ToolCallOptions {
 export type ToolHandler = (
   context: WorkspaceContext,
   params: Record<string, unknown>,
-  options?: ToolCallOptions
+  options?: ToolCallOptions,
 ) => Promise<CallToolResult>;
 
 export interface GatewayRouter {
@@ -22,7 +23,7 @@ export interface GatewayRouter {
     context: WorkspaceContext,
     name: string,
     params: Record<string, unknown>,
-    options?: ToolCallOptions
+    options?: ToolCallOptions,
   ): Promise<CallToolResult>;
   onToolListChanged?(listener: () => void): () => void;
 }
@@ -66,7 +67,7 @@ export class FakeGatewayRouter implements GatewayRouter {
             text: `Echo: ${typeof params.message === "string" ? params.message : JSON.stringify(params)}`,
           },
         ],
-      })
+      }),
     );
 
     // 2. Workspace info tool
@@ -94,11 +95,11 @@ export class FakeGatewayRouter implements GatewayRouter {
                 harnessId: ctx.harnessId,
               },
               null,
-              2
+              2,
             ),
           },
         ],
-      })
+      }),
     );
 
     // 3. Fail tool (for testing error handling & redaction)
@@ -126,7 +127,7 @@ export class FakeGatewayRouter implements GatewayRouter {
           };
         }
         throw new Error(msg);
-      }
+      },
     );
 
     // 4. Slow tool (for testing progress and cancellation)
@@ -143,17 +144,13 @@ export class FakeGatewayRouter implements GatewayRouter {
         },
       },
       async (_ctx, params, options) => {
-        const durationMs =
-          typeof params.durationMs === "number" ? params.durationMs : 300;
+        const durationMs = typeof params.durationMs === "number" ? params.durationMs : 300;
         const steps = typeof params.steps === "number" ? params.steps : 3;
         const stepDelay = Math.max(10, Math.floor(durationMs / steps));
 
         for (let i = 1; i <= steps; i++) {
           if (options?.signal?.aborted) {
-            throw new McpProtocolError(
-              MCP_ERROR_CODES.CANCELLED,
-              "Operation cancelled by client"
-            );
+            throw new McpProtocolError(MCP_ERROR_CODES.CANCELLED, "Operation cancelled by client");
           }
 
           const { promise, resolve, reject } = withResolvers<void>();
@@ -165,10 +162,7 @@ export class FakeGatewayRouter implements GatewayRouter {
           const onAbort = () => {
             cleanup();
             reject(
-              new McpProtocolError(
-                MCP_ERROR_CODES.CANCELLED,
-                "Operation cancelled by client"
-              )
+              new McpProtocolError(MCP_ERROR_CODES.CANCELLED, "Operation cancelled by client"),
             );
           };
 
@@ -191,15 +185,11 @@ export class FakeGatewayRouter implements GatewayRouter {
             },
           ],
         };
-      }
+      },
     );
   }
 
-  registerTool(
-    tool: McpTool,
-    handler: ToolHandler,
-    workspaceId?: string
-  ): void {
+  registerTool(tool: McpTool, handler: ToolHandler, workspaceId?: string): void {
     const key = workspaceId ? `${workspaceId}:${tool.name}` : tool.name;
     this.tools.set(key, { tool, handler, workspaceId });
     this.triggerToolListChanged();
@@ -232,17 +222,14 @@ export class FakeGatewayRouter implements GatewayRouter {
     context: WorkspaceContext,
     name: string,
     params: Record<string, unknown>,
-    options?: ToolCallOptions
+    options?: ToolCallOptions,
   ): Promise<CallToolResult> {
     // Check workspace-specific first, then global
     const wsKey = `${context.workspaceId}:${name}`;
     const entry = this.tools.get(wsKey) ?? this.tools.get(name);
 
     if (!entry) {
-      throw new McpProtocolError(
-        MCP_ERROR_CODES.TOOL_NOT_FOUND,
-        `Tool '${name}' not found`
-      );
+      throw new McpProtocolError(MCP_ERROR_CODES.TOOL_NOT_FOUND, `Tool '${name}' not found`);
     }
 
     const delay = this.delays.get(name);
@@ -280,16 +267,13 @@ function toMcpInputSchema(rawSchema?: Record<string, unknown>): McpToolInput {
     rawSchema.properties && typeof rawSchema.properties === "object"
       ? (rawSchema.properties as Record<string, unknown>)
       : undefined;
-  const required = Array.isArray(rawSchema.required)
-    ? (rawSchema.required as string[])
-    : undefined;
+  const required = Array.isArray(rawSchema.required) ? (rawSchema.required as string[]) : undefined;
   const additionalProperties =
     typeof rawSchema.additionalProperties === "boolean" ||
     (rawSchema.additionalProperties && typeof rawSchema.additionalProperties === "object")
       ? (rawSchema.additionalProperties as boolean | Record<string, unknown>)
       : undefined;
-  const description =
-    typeof rawSchema.description === "string" ? rawSchema.description : undefined;
+  const description = typeof rawSchema.description === "string" ? rawSchema.description : undefined;
 
   return {
     type: "object",
@@ -300,7 +284,6 @@ function toMcpInputSchema(rawSchema?: Record<string, unknown>): McpToolInput {
   };
 }
 
-
 /**
  * Dynamic GatewayRouter implementation backed by a ToolRegistry.
  */
@@ -309,13 +292,14 @@ export class RegistryGatewayRouter implements GatewayRouter {
   private readonly listeners = new Set<() => void>();
   private readonly unsubscribeEvents?: () => void;
 
-  constructor(registry: ToolRegistry) {
+  constructor(registry: ToolRegistry, invocationRouter?: ToolInvocationRouter) {
     this.registry = registry;
-    if (this.registry.events) {
-      this.unsubscribeEvents = this.registry.events.onCatalogChanged(() => {
-        this.triggerToolListChanged();
-      });
+    if (invocationRouter) {
+      this.registry.setInvocationRouter(invocationRouter);
     }
+    this.unsubscribeEvents = this.registry.events.onCatalogChanged(() => {
+      this.triggerToolListChanged();
+    });
   }
 
   async listTools(context: WorkspaceContext): Promise<McpTool[]> {
@@ -334,7 +318,11 @@ export class RegistryGatewayRouter implements GatewayRouter {
       }
     } else {
       for (const summary of Object.values(snapshot.tools)) {
-        const tool = await this.registry.getTool(summary.toolId, context.workspaceId, context.sessionId);
+        const tool = await this.registry.getTool(
+          summary.toolId,
+          context.workspaceId,
+          context.sessionId,
+        );
         if (tool) {
           const schema = toMcpInputSchema(tool.parameters ?? tool.manifest?.parameters);
           mcpTools.push({
@@ -351,22 +339,22 @@ export class RegistryGatewayRouter implements GatewayRouter {
     context: WorkspaceContext,
     name: string,
     params: Record<string, unknown>,
-    options?: ToolCallOptions
+    options?: ToolCallOptions,
   ): Promise<CallToolResult> {
     const tool = await this.registry.getTool(name, context.workspaceId, context.sessionId);
 
     if (!tool) {
-      throw new McpProtocolError(
-        MCP_ERROR_CODES.TOOL_NOT_FOUND,
-        `Tool '${name}' not found`
-      );
+      throw new McpProtocolError(MCP_ERROR_CODES.TOOL_NOT_FOUND, `Tool '${name}' not found`);
     }
 
-    const isToolDisabled = await this.registry.controls.isToolDisabled(context.workspaceId, tool.toolId);
+    const isToolDisabled = await this.registry.controls.isToolDisabled(
+      context.workspaceId,
+      tool.toolId,
+    );
     if (tool.isDisabled || isToolDisabled) {
       throw new McpProtocolError(
         MCP_ERROR_CODES.TOOL_NOT_FOUND,
-        `Tool '${name}' is disabled in this workspace`
+        `Tool '${name}' is disabled in this workspace`,
       );
     }
 
@@ -422,6 +410,9 @@ export class RegistryGatewayRouter implements GatewayRouter {
 /**
  * Creates a GatewayRouter backed by a ToolRegistry.
  */
-export function createRegistryGatewayRouter(registry: ToolRegistry): RegistryGatewayRouter {
-  return new RegistryGatewayRouter(registry);
+export function createRegistryGatewayRouter(
+  registry: ToolRegistry,
+  invocationRouter?: ToolInvocationRouter,
+): RegistryGatewayRouter {
+  return new RegistryGatewayRouter(registry, invocationRouter);
 }

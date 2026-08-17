@@ -10,6 +10,11 @@ import {
   type ToolVersion,
   ToolVersionSchema,
 } from "@tool-evolver/contracts";
+import {
+  type ToolInvocationRouter,
+  createSystemMetaTools,
+  isSystemMetaTool,
+} from "../meta/index.js";
 import { CatalogCache } from "./cache.js";
 import { UserControlsManager } from "./controls.js";
 import { CatalogChangeEventEmitter } from "./events.js";
@@ -71,6 +76,7 @@ export class ToolRegistry {
   private readonly registeredTools = new Map<string, Map<string, RegistryTool>>();
   // toolId -> latest registered version string
   private readonly latestVersions = new Map<string, string>();
+  private invocationRouter?: ToolInvocationRouter;
 
   // Scope activations: scopeKey -> Map<toolId, version>
   // System scope
@@ -93,6 +99,8 @@ export class ToolRegistry {
     this.cache = new CatalogCache({ maxSize: options?.cacheSize });
     this.controls = new UserControlsManager(options?.db);
     this.events = new CatalogChangeEventEmitter({ debounceMs: options?.debounceMs });
+    this.invocationRouter = options?.invocationRouter;
+    this.initSystemMetaTools();
 
     if (options?.initialTools) {
       for (const tool of options.initialTools) {
@@ -102,12 +110,46 @@ export class ToolRegistry {
   }
 
   /**
+   * Updates the invocation router for system meta-tools.
+   */
+  setInvocationRouter(router: ToolInvocationRouter): void {
+    this.invocationRouter = router;
+    this.initSystemMetaTools();
+  }
+
+  private initSystemMetaTools(): void {
+    const metaTools = createSystemMetaTools(this, this.invocationRouter);
+    for (const tool of metaTools) {
+      this.registerToolSync(tool);
+    }
+  }
+
+  /**
+   * Returns all registered tools across all versions.
+   */
+  getAllRegisteredTools(): RegistryTool[] {
+    const list: RegistryTool[] = [];
+    for (const versionMap of this.registeredTools.values()) {
+      for (const tool of versionMap.values()) {
+        list.push(tool);
+      }
+    }
+    return list;
+  }
+
+  /**
+   * Returns the latest registered version string for a toolId.
+   */
+  getLatestRegisteredVersion(toolId: string): string | undefined {
+    return this.latestVersions.get(toolId);
+  }
+  /**
    * Pre-stages and validates a tool manifest and artifact against capability envelopes.
    */
   async stageToolVersion(
     manifest: unknown,
     artifact?: unknown,
-    envelope?: CapabilityEnvelope
+    envelope?: CapabilityEnvelope,
   ): Promise<ValidationResult> {
     const targetEnvelope = envelope ?? this.defaultEnvelope;
     const existingVersions = this.getExistingVersionsForManifest(manifest);
@@ -124,12 +166,27 @@ export class ToolRegistry {
     const toolId = validatedManifest.id;
     let validatedArtifact: ToolArtifact | undefined;
     if (artifact !== undefined) {
-      if (typeof artifact === "object" && artifact !== null && "artifactDigest" in artifact && "bundleReference" in artifact) {
+      if (
+        typeof artifact === "object" &&
+        artifact !== null &&
+        "artifactDigest" in artifact &&
+        "bundleReference" in artifact
+      ) {
         validatedArtifact = ToolArtifactSchema.parse(artifact);
       } else {
         const rawArt = artifact as Record<string, unknown>;
-        const code = typeof rawArt.code === "string" ? rawArt.code : typeof rawArt.sourceCode === "string" ? rawArt.sourceCode : "";
-        const digest = typeof rawArt.digest === "string" ? rawArt.digest : typeof rawArt.artifactDigest === "string" ? rawArt.artifactDigest : computeSha256(code || `${toolId}@${validatedManifest.version}`);
+        const code =
+          typeof rawArt.code === "string"
+            ? rawArt.code
+            : typeof rawArt.sourceCode === "string"
+              ? rawArt.sourceCode
+              : "";
+        const digest =
+          typeof rawArt.digest === "string"
+            ? rawArt.digest
+            : typeof rawArt.artifactDigest === "string"
+              ? rawArt.artifactDigest
+              : computeSha256(code || `${toolId}@${validatedManifest.version}`);
         validatedArtifact = ToolArtifactSchema.parse({
           artifactDigest: digest,
           bundleReference: {
@@ -279,7 +336,7 @@ export class ToolRegistry {
       scope?: ToolScopeHierarchy;
       workspaceId?: string;
       sessionId?: string;
-    }
+    },
   ): Promise<RegistryTool> {
     if ("toolId" in tool && "manifest" in tool) {
       this.registerToolSync(tool as RegistryTool);
@@ -295,6 +352,9 @@ export class ToolRegistry {
     }
 
     if (options?.workspaceId) {
+      registered.workspaceId = options.workspaceId;
+      if (options.sessionId) registered.sessionId = options.sessionId;
+      if (options.scope) registered.scope = options.scope;
       await this.activateToolVersion(manifest.id, manifest.version, options.workspaceId, {
         sessionId: options.sessionId,
         scope: options.scope,
@@ -330,7 +390,7 @@ export class ToolRegistry {
 
     // Layer 1: System Scope (Priority 1)
     for (const [toolId, version] of this.systemActiveTools.entries()) {
-      if (controls.disabledTools.includes(toolId)) {
+      if (controls.disabledTools.includes(toolId) && !isSystemMetaTool(toolId)) {
         continue;
       }
       const targetVersion = controls.pinnedVersions[toolId] ?? version;
@@ -380,9 +440,9 @@ export class ToolRegistry {
         name: tool.name,
         scope,
         version: tool.version,
+        isSystem: tool.isSystem || isSystemMetaTool(tool.toolId),
       });
     }
-
     const nameMap = resolveNameCollision(namingCandidates);
 
     // 5. Build Catalog Entries
@@ -410,6 +470,7 @@ export class ToolRegistry {
         sessionId,
         isPinned,
         isDisabled: false,
+        metadata: tool.metadata,
       });
     }
 
@@ -443,7 +504,7 @@ export class ToolRegistry {
   async getTool(
     toolIdOrName: string,
     workspaceId?: string,
-    sessionId?: string
+    sessionId?: string,
   ): Promise<RegistryTool | undefined> {
     if (!toolIdOrName) {
       return undefined;
@@ -451,14 +512,12 @@ export class ToolRegistry {
 
     if (workspaceId) {
       const controls = await this.controls.getControls(workspaceId);
-      if (controls.disabledTools.includes(toolIdOrName)) {
+      if (controls.disabledTools.includes(toolIdOrName) && !isSystemMetaTool(toolIdOrName)) {
         return undefined;
       }
 
       const catalog = await this.resolveCatalog(workspaceId, sessionId);
-      const entry = Object.values(catalog.tools).find(
-        (t) => t.toolId === toolIdOrName
-      );
+      const entry = Object.values(catalog.tools).find((t) => t.toolId === toolIdOrName);
 
       if (entry) {
         const found = this.registeredTools.get(entry.toolId)?.get(entry.version);
@@ -471,7 +530,11 @@ export class ToolRegistry {
       const record = catalog as CatalogSnapshotRecord;
       if (record.entries) {
         for (const e of Object.values(record.entries)) {
-          if (e.exposedName === toolIdOrName || e.name === toolIdOrName || e.toolId === toolIdOrName) {
+          if (
+            e.exposedName === toolIdOrName ||
+            e.name === toolIdOrName ||
+            e.toolId === toolIdOrName
+          ) {
             const found = this.registeredTools.get(e.toolId)?.get(e.version);
             if (found) {
               return { ...found, isDisabled: false };
@@ -526,16 +589,20 @@ export class ToolRegistry {
     options?: {
       sessionId?: string;
       scope?: ToolScopeHierarchy;
-    }
+    },
   ): Promise<CatalogSnapshot> {
     const tool = this.registeredTools.get(toolId)?.get(version);
     if (!tool) {
       throw new Error(`Tool '${toolId}' version '${version}' is not registered`);
     }
 
-    // Ensure tool is enabled in user controls
-    await this.controls.enableTool(workspaceId, toolId);
-
+    tool.workspaceId = workspaceId;
+    if (options?.sessionId) {
+      tool.sessionId = options.sessionId;
+    }
+    if (options?.scope) {
+      tool.scope = options.scope;
+    }
     // If scope is session, activate in session map
     if (options?.sessionId) {
       let sessMap = this.sessionActiveTools.get(options.sessionId);
@@ -586,7 +653,7 @@ export class ToolRegistry {
     workspaceId: string,
     options?: {
       sessionId?: string;
-    }
+    },
   ): Promise<CatalogSnapshot> {
     if (options?.sessionId) {
       const sessMap = this.sessionActiveTools.get(options.sessionId);
@@ -624,6 +691,9 @@ export class ToolRegistry {
    * Pins a tool version in a workspace, locking it against automated candidate updates.
    */
   async pinToolVersion(toolId: string, version: string, workspaceId: string): Promise<void> {
+    if (isSystemMetaTool(toolId)) {
+      throw new Error(`Cannot pin invariant system meta-tool '${toolId}'`);
+    }
     const tool = this.registeredTools.get(toolId)?.get(version);
     if (!tool) {
       throw new Error(`Cannot pin unregistered tool '${toolId}' version '${version}'`);
@@ -659,6 +729,9 @@ export class ToolRegistry {
    * Unpins a tool version, returning it to autonomous update eligibility.
    */
   async unpinToolVersion(toolId: string, workspaceId: string): Promise<void> {
+    if (isSystemMetaTool(toolId)) {
+      throw new Error(`Cannot unpin invariant system meta-tool '${toolId}'`);
+    }
     await this.controls.unpinToolVersion(workspaceId, toolId);
 
     const nextRevision = (this.workspaceRevisions.get(workspaceId) ?? 0) + 1;
@@ -681,6 +754,9 @@ export class ToolRegistry {
    * Disables a tool in a workspace.
    */
   async disableTool(toolId: string, workspaceId: string): Promise<CatalogSnapshot> {
+    if (isSystemMetaTool(toolId)) {
+      throw new Error(`Cannot disable invariant system meta-tool '${toolId}'`);
+    }
     await this.controls.disableTool(workspaceId, toolId);
 
     const nextRevision = (this.workspaceRevisions.get(workspaceId) ?? 0) + 1;
@@ -724,6 +800,44 @@ export class ToolRegistry {
 
     return snapshot;
   }
+  /**
+   * Rolls back a single tool to an installed version in a workspace.
+   */
+  async rollbackTool(toolId: string, targetVersion: string, workspaceId: string): Promise<void> {
+    if (isSystemMetaTool(toolId)) {
+      throw new Error(`Cannot rollback invariant system meta-tool '${toolId}'`);
+    }
+
+    const tool = this.registeredTools.get(toolId)?.get(targetVersion);
+    if (!tool) {
+      throw new Error(
+        `Cannot rollback: version '${targetVersion}' is not installed for tool '${toolId}'`,
+      );
+    }
+
+    await this.controls.pinToolVersion(workspaceId, toolId, targetVersion);
+    await this.controls.recordRollback(workspaceId, 0, targetVersion);
+
+    let wsMap = this.workspaceActiveTools.get(workspaceId);
+    if (!wsMap) {
+      wsMap = new Map();
+      this.workspaceActiveTools.set(workspaceId, wsMap);
+    }
+    wsMap.set(toolId, targetVersion);
+
+    const nextRevision = (this.workspaceRevisions.get(workspaceId) ?? 0) + 1;
+    this.workspaceRevisions.set(workspaceId, nextRevision);
+    this.cache.invalidateWorkspace(workspaceId);
+
+    const snapshot = await this.resolveCatalog(workspaceId);
+    this.events.emit({
+      workspaceId,
+      revision: nextRevision,
+      snapshot,
+      changedToolIds: [toolId],
+      timestamp: new Date().toISOString(),
+    });
+  }
 
   /**
    * Rolls back a workspace catalog to an exact target revision or historical snapshot,
@@ -731,7 +845,7 @@ export class ToolRegistry {
    */
   async rollbackCatalog(
     workspaceId: string,
-    targetRevision: number | string
+    targetRevision: number | string,
   ): Promise<CatalogSnapshot> {
     const history = this.snapshotHistory.get(workspaceId) ?? [];
     let targetSnapshot: CatalogSnapshot | undefined;
@@ -740,12 +854,16 @@ export class ToolRegistry {
       targetSnapshot = history.find((s) => s.revision === targetRevision);
     } else {
       targetSnapshot = history.find(
-        (s) => s.snapshotId === targetRevision || String(s.revision) === targetRevision
+        (s) => s.snapshotId === targetRevision || String(s.revision) === targetRevision,
       );
     }
 
     // Try DB if not in memory
-    if (!targetSnapshot && this.toolRepo?.getCatalogSnapshot && typeof targetRevision === "string") {
+    if (
+      !targetSnapshot &&
+      this.toolRepo?.getCatalogSnapshot &&
+      typeof targetRevision === "string"
+    ) {
       try {
         const fromDb = await this.toolRepo.getCatalogSnapshot(targetRevision);
         if (fromDb && fromDb.workspaceId === workspaceId) {
@@ -758,7 +876,7 @@ export class ToolRegistry {
 
     if (!targetSnapshot) {
       throw new Error(
-        `Rollback failed: target revision/snapshot '${targetRevision}' not found for workspace '${workspaceId}'`
+        `Rollback failed: target revision/snapshot '${targetRevision}' not found for workspace '${workspaceId}'`,
       );
     }
 

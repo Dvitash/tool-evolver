@@ -53,33 +53,36 @@ describe("Database Client, Migrations & Outbox", () => {
     // Initial run
     const result = await runMigrations(pool);
     expect(result.success).toBe(true);
-    expect(result.appliedCount).toBe(1);
-    expect(result.currentVersion).toBe(1);
+    expect(result.appliedCount).toBe(2);
+    expect(result.currentVersion).toBe(2);
 
     // Verify migration status
     const statuses = await getMigrationStatus(pool);
-    expect(statuses.length).toBeGreaterThanOrEqual(1);
+    expect(statuses.length).toBeGreaterThanOrEqual(2);
     expect(statuses[0].applied).toBe(true);
     expect(statuses[0].version).toBe(1);
+    expect(statuses[1].applied).toBe(true);
+    expect(statuses[1].version).toBe(2);
 
     // Re-running migrations is idempotent
     const secondRun = await runMigrations(pool);
     expect(secondRun.appliedCount).toBe(0);
-    expect(secondRun.currentVersion).toBe(1);
+    expect(secondRun.currentVersion).toBe(2);
 
     // Verify tables exist by querying accounts and jobs
     const accountsRes = await pool.query(`SELECT * FROM accounts`);
     expect(accountsRes.rows).toEqual([]);
     const jobsRes = await pool.query(`SELECT * FROM jobs`);
     expect(jobsRes.rows).toEqual([]);
+    const sessionsRes = await pool.query(`SELECT * FROM sessions`);
+    expect(sessionsRes.rows).toEqual([]);
 
     // Rollback migration
     const rollback = await rollbackMigration(pool, { targetVersion: 0 });
     expect(rollback.success).toBe(true);
-    expect(rollback.rolledBackCount).toBe(1);
+    expect(rollback.rolledBackCount).toBe(2);
     expect(rollback.currentVersion).toBe(0);
   });
-
   it("should atomically commit domain entity and outbox message in the same transaction", async () => {
     const pool = new MemoryDatabasePool();
     await runMigrations(pool);

@@ -6,6 +6,7 @@ import type {
   ToolManifest,
   ToolScope,
 } from "@tool-evolver/contracts";
+import type { ToolInvocationRouter } from "../meta/router-contract.js";
 import type { CallToolResult } from "../protocol/types.js";
 import type { ToolCallOptions, ToolHandler } from "../router.js";
 import type { WorkspaceContext } from "../workspace-resolver.js";
@@ -50,6 +51,7 @@ export interface RegistryTool {
   isPinned?: boolean;
   isDisabled?: boolean;
   metadata?: Record<string, unknown>;
+  isSystem?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -76,6 +78,7 @@ export interface CatalogEntry {
   sessionId?: string;
   isPinned?: boolean;
   isDisabled?: boolean;
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -150,4 +153,8 @@ export interface ToolRegistryOptions {
    * Initial set of registry tools to pre-populate.
    */
   initialTools?: RegistryTool[];
+  /**
+   * Optional invocation router for dispatching tool executions.
+   */
+  invocationRouter?: ToolInvocationRouter;
 }

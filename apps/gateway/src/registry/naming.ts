@@ -42,10 +42,7 @@ export interface FormatMcpToolNameOptions {
 /**
  * Formats an MCP-exposed tool name with optional namespace, scope, or suffix.
  */
-export function formatMcpToolName(
-  name: string,
-  options?: FormatMcpToolNameOptions
-): string {
+export function formatMcpToolName(name: string, options?: FormatMcpToolNameOptions): string {
   const base = sanitizeToolName(name);
 
   if (!options) {
@@ -76,6 +73,7 @@ export interface CandidateToolForNaming {
   name: string;
   scope?: ToolScopeHierarchy | string;
   version?: string;
+  isSystem?: boolean;
 }
 
 const SCOPE_RANK: Record<string, number> = {
@@ -94,16 +92,18 @@ const SCOPE_RANK: Record<string, number> = {
  *
  * @returns Map of toolId -> unique exposedName
  */
-export function resolveNameCollision(
-  tools: CandidateToolForNaming[]
-): Map<string, string> {
+export function resolveNameCollision(tools: CandidateToolForNaming[]): Map<string, string> {
   const result = new Map<string, string>();
   if (!tools || tools.length === 0) {
     return result;
   }
 
   // Sort tools by scope precedence descending so higher precedence tools get first claim on canonical name
+  // Sort tools: system tools first, then by scope precedence descending, then by toolId
   const sorted = [...tools].sort((a, b) => {
+    if (a.isSystem && !b.isSystem) return -1;
+    if (!a.isSystem && b.isSystem) return 1;
+
     const rankA = SCOPE_RANK[a.scope ?? "workspace"] ?? 0;
     const rankB = SCOPE_RANK[b.scope ?? "workspace"] ?? 0;
     if (rankB !== rankA) {

@@ -250,7 +250,18 @@ export class MemoryDatabasePool implements DatabasePool {
         }
       }
 
-      // LIMIT support
+      // OFFSET and LIMIT support
+      let offsetVal = 0;
+      if (/OFFSET/i.test(trimmed)) {
+        const offsetMatch = trimmed.match(/OFFSET\s+(\$?\d+)/i);
+        if (offsetMatch) {
+          offsetVal = offsetMatch[1].startsWith("$")
+            ? Number(params[Number(offsetMatch[1].slice(1)) - 1])
+            : Number(offsetMatch[1]);
+          if (Number.isNaN(offsetVal) || offsetVal < 0) offsetVal = 0;
+        }
+      }
+
       if (/LIMIT/i.test(trimmed)) {
         const limitMatch = trimmed.match(/LIMIT\s+(\$?\d+)/i);
         if (limitMatch) {
@@ -258,9 +269,20 @@ export class MemoryDatabasePool implements DatabasePool {
             ? Number(params[Number(limitMatch[1].slice(1)) - 1])
             : Number(limitMatch[1]);
           if (!Number.isNaN(limitVal)) {
-            records = records.slice(0, limitVal);
+            records = records.slice(offsetVal, offsetVal + limitVal);
+          } else if (offsetVal > 0) {
+            records = records.slice(offsetVal);
           }
         }
+      } else if (offsetVal > 0) {
+        records = records.slice(offsetVal);
+      }
+
+      if (/^SELECT\s+COUNT\(/i.test(trimmed)) {
+        return {
+          rows: [{ count: records.length, count_num: records.length }] as unknown as T[],
+          rowCount: 1,
+        };
       }
 
       return { rows: records as unknown as T[], rowCount: records.length };
@@ -268,7 +290,8 @@ export class MemoryDatabasePool implements DatabasePool {
 
     // UPDATE statement
     if (/^UPDATE/i.test(trimmed)) {
-      const match = trimmed.match(/UPDATE\s+([a-zA-Z0-9_".]+)\s+SET\s+(.+?)(?:\s+WHERE\s+(.+))?$/i);
+      const normalized = trimmed.replace(/\s+/g, " ");
+      const match = normalized.match(/UPDATE\s+([a-zA-Z0-9_".]+)\s+SET\s+(.+?)(?:\s+WHERE\s+(.+))?$/i);
       if (match) {
         const tableName = match[1].replace(/["`]/g, "").toLowerCase();
         const setClause = match[2].trim();
@@ -314,15 +337,14 @@ export class MemoryDatabasePool implements DatabasePool {
         return { rows: updatedRows as unknown as T[], rowCount: updatedCount };
       }
     }
-
     // DELETE statement
     if (/^DELETE\s+FROM/i.test(trimmed)) {
-      const match = trimmed.match(/DELETE\s+FROM\s+([a-zA-Z0-9_".]+)(?:\s+WHERE\s+(.+))?/i);
+      const normalized = trimmed.replace(/\s+/g, " ");
+      const match = normalized.match(/^DELETE\s+FROM\s+([a-zA-Z0-9_".]+)(?:\s+WHERE\s+(.+))?$/i);
       if (match) {
         const tableName = match[1].replace(/["`]/g, "").toLowerCase();
         const whereClause = match[2]?.trim();
         const table = this.getTable(tableName);
-
         let deletedCount = 0;
         for (const [pk, row] of Array.from(table.entries())) {
           const matches = !whereClause || this.evaluateWhereClause(whereClause, row, params);
@@ -365,7 +387,27 @@ export class MemoryDatabasePool implements DatabasePool {
         return row[col] !== null && row[col] !== undefined;
       }
 
-      // Check equality: col = $N or col = 'val'
+      // Check IN / NOT IN
+      const inMatch = trimmedCond.match(/([a-zA-Z0-9_.]+)\s+(NOT\s+IN|IN)\s*\(([^)]+)\)/i);
+      if (inMatch) {
+        const col = inMatch[1].replace(/["`]/g, "");
+        const isIn = !inMatch[2].toUpperCase().includes("NOT");
+        const listItems = inMatch[3].split(",").map((s) => s.trim());
+        const allowedValues = listItems.map((item) => {
+          if (item.startsWith("$")) {
+            const idx = Number.parseInt(item.slice(1), 10) - 1;
+            return params[idx];
+          }
+          if (item.startsWith("'")) return item.slice(1, -1);
+          if (!Number.isNaN(Number(item))) return Number(item);
+          return item;
+        });
+        const rowVal = row[col];
+        const contains = allowedValues.some((v) => String(v) === String(rowVal) || v === rowVal);
+        return isIn ? contains : !contains;
+      }
+
+      // Check equality and comparison: col = $N or col = 'val'
       const eqMatch = trimmedCond.match(/([a-zA-Z0-9_.]+)\s*(=|!=|<>|<=|>=|<|>)\s*(\$?\w+|'[^']*')/i);
       if (eqMatch) {
         const col = eqMatch[1].replace(/["`]/g, "");
@@ -387,10 +429,19 @@ export class MemoryDatabasePool implements DatabasePool {
         const rowVal = row[col];
         if (op === "=") return String(rowVal) === String(targetVal);
         if (op === "!=" || op === "<>") return String(rowVal) !== String(targetVal);
-        if (op === "<=") return (rowVal as number) <= (targetVal as number);
-        if (op === ">=") return (rowVal as number) >= (targetVal as number);
-        if (op === "<") return (rowVal as number) < (targetVal as number);
-        if (op === ">") return (rowVal as number) > (targetVal as number);
+        if (typeof rowVal === "number" && typeof targetVal === "number") {
+          if (op === "<=") return rowVal <= targetVal;
+          if (op === ">=") return rowVal >= targetVal;
+          if (op === "<") return rowVal < targetVal;
+          if (op === ">") return rowVal > targetVal;
+        } else {
+          const strRow = rowVal !== undefined && rowVal !== null ? String(rowVal) : "";
+          const strTarget = targetVal !== undefined && targetVal !== null ? String(targetVal) : "";
+          if (op === "<=") return strRow <= strTarget;
+          if (op === ">=") return strRow >= strTarget;
+          if (op === "<") return strRow < strTarget;
+          if (op === ">") return strRow > strTarget;
+        }
       }
 
       // Fallback to true if clause cannot be evaluated

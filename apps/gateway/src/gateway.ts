@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
-import { type McpConnectionOptions, McpConnection } from "./connection.js";
+import { McpConnection, type McpConnectionOptions } from "./connection.js";
+import type { ToolInvocationRouter } from "./meta/router-contract.js";
 import {
   JSON_RPC_ERROR_CODES,
   MCP_ERROR_CODES,
@@ -13,23 +14,26 @@ import {
   CallToolParamsSchema,
   CancelRequestParamsSchema,
   InitializeParamsSchema,
-  LATEST_PROTOCOL_VERSION,
   type JsonRpcErrorObject,
   type JsonRpcId,
   type JsonRpcMessage,
   type JsonRpcNotification,
   type JsonRpcRequest,
   type JsonRpcResponse,
+  LATEST_PROTOCOL_VERSION,
   type ListToolsResult,
   type McpImplementationInfo,
   type McpTool,
   type ProgressNotificationParams,
 } from "./protocol/types.js";
-import type { GatewayRouter } from "./router.js";
-import { resolveWorkspaceContext, type WorkspaceContext } from "./workspace-resolver.js";
+import { ToolRegistry } from "./registry/registry.js";
+import { type GatewayRouter, createRegistryGatewayRouter } from "./router.js";
+import { type WorkspaceContext, resolveWorkspaceContext } from "./workspace-resolver.js";
 
 export interface GatewayServerOptions {
-  router: GatewayRouter;
+  router?: GatewayRouter;
+  registry?: ToolRegistry;
+  invocationRouter?: ToolInvocationRouter;
   serverInfo?: McpImplementationInfo;
   maxMessageSizeBytes?: number;
   maxConcurrentRequestsPerConnection?: number;
@@ -121,14 +125,20 @@ export class LocalMcpGateway {
   private isClosed = false;
 
   constructor(options: GatewayServerOptions) {
-    this.router = options.router;
+    if (options.router) {
+      this.router = options.router;
+    } else if (options.registry) {
+      this.router = createRegistryGatewayRouter(options.registry, options.invocationRouter);
+    } else {
+      const reg = new ToolRegistry({ invocationRouter: options.invocationRouter });
+      this.router = createRegistryGatewayRouter(reg, options.invocationRouter);
+    }
     this.serverInfo = options.serverInfo ?? {
       name: "tool-evolver-mcp",
       version: "0.1.0",
     };
     this.maxMessageSizeBytes = options.maxMessageSizeBytes ?? 10 * 1024 * 1024;
-    this.maxConcurrentRequestsPerConnection =
-      options.maxConcurrentRequestsPerConnection ?? 32;
+    this.maxConcurrentRequestsPerConnection = options.maxConcurrentRequestsPerConnection ?? 32;
     this.maxTotalConcurrentRequests = options.maxTotalConcurrentRequests ?? 128;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 60000;
     this.rateLimitRps = options.rateLimitRps ?? 100;
@@ -152,7 +162,7 @@ export class LocalMcpGateway {
       harnessId?: string;
       cwd?: string;
       sendMessage?: (msg: JsonRpcMessage) => void;
-    } = {}
+    } = {},
   ): McpConnection {
     const workspace = resolveWorkspaceContext({
       cwd: options.cwd,
@@ -197,7 +207,7 @@ export class LocalMcpGateway {
    */
   async handleMessage(
     connectionId: string,
-    message: JsonRpcMessage
+    message: JsonRpcMessage,
   ): Promise<JsonRpcResponse | null> {
     const connection = this.connections.get(connectionId);
     if (!connection) {
@@ -232,7 +242,7 @@ export class LocalMcpGateway {
    */
   private async handleRequest(
     connection: McpConnection,
-    request: JsonRpcRequest
+    request: JsonRpcRequest,
   ): Promise<JsonRpcResponse> {
     const { id, method, params } = request;
 
@@ -266,14 +276,9 @@ export class LocalMcpGateway {
     }
 
     // Register request for timeout & cancellation
-    const signal = connection.registerInFlightRequest(
-      id,
-      method,
-      this.requestTimeoutMs,
-      () => {
-        this.logger?.("warn", `Request ${id} (${method}) timed out`);
-      }
-    );
+    const signal = connection.registerInFlightRequest(id, method, this.requestTimeoutMs, () => {
+      this.logger?.("warn", `Request ${id} (${method}) timed out`);
+    });
 
     try {
       let result: unknown;
@@ -307,7 +312,7 @@ export class LocalMcpGateway {
         default:
           throw new McpProtocolError(
             JSON_RPC_ERROR_CODES.METHOD_NOT_FOUND,
-            `Method '${method}' not found`
+            `Method '${method}' not found`,
           );
       }
 
@@ -332,7 +337,7 @@ export class LocalMcpGateway {
    */
   private async handleNotification(
     connection: McpConnection,
-    notification: JsonRpcNotification
+    notification: JsonRpcNotification,
   ): Promise<void> {
     const { method, params } = notification;
 
@@ -373,15 +378,12 @@ export class LocalMcpGateway {
   /**
    * Handles `initialize` request.
    */
-  private async handleInitialize(
-    connection: McpConnection,
-    rawParams: unknown
-  ): Promise<unknown> {
+  private async handleInitialize(connection: McpConnection, rawParams: unknown): Promise<unknown> {
     const parsed = InitializeParamsSchema.safeParse(rawParams);
     if (!parsed.success) {
       throw new McpProtocolError(
         JSON_RPC_ERROR_CODES.INVALID_PARAMS,
-        `Invalid initialize parameters: ${parsed.error.message}`
+        `Invalid initialize parameters: ${parsed.error.message}`,
       );
     }
 
@@ -412,12 +414,12 @@ export class LocalMcpGateway {
    */
   private async handleToolsList(
     connection: McpConnection,
-    _params: unknown
+    _params: unknown,
   ): Promise<ListToolsResult> {
     if (!connection.isInitialized) {
       throw new McpProtocolError(
         JSON_RPC_ERROR_CODES.INVALID_REQUEST,
-        "Server is not initialized. Send 'initialize' first."
+        "Server is not initialized. Send 'initialize' first.",
       );
     }
 
@@ -432,12 +434,12 @@ export class LocalMcpGateway {
     connection: McpConnection,
     requestId: JsonRpcId,
     rawParams: unknown,
-    signal: AbortSignal
+    signal: AbortSignal,
   ): Promise<unknown> {
     if (!connection.isInitialized) {
       throw new McpProtocolError(
         JSON_RPC_ERROR_CODES.INVALID_REQUEST,
-        "Server is not initialized. Send 'initialize' first."
+        "Server is not initialized. Send 'initialize' first.",
       );
     }
 
@@ -445,7 +447,7 @@ export class LocalMcpGateway {
     if (!parsed.success) {
       throw new McpProtocolError(
         JSON_RPC_ERROR_CODES.INVALID_PARAMS,
-        `Invalid tools/call parameters: ${parsed.error.message}`
+        `Invalid tools/call parameters: ${parsed.error.message}`,
       );
     }
 
@@ -466,16 +468,11 @@ export class LocalMcpGateway {
         }
       : undefined;
 
-    return this.router.callTool(
-      connection.workspaceContext,
-      name,
-      args ?? {},
-      {
-        signal,
-        onProgress,
-        timeoutMs: this.requestTimeoutMs,
-      }
-    );
+    return this.router.callTool(connection.workspaceContext, name, args ?? {}, {
+      signal,
+      onProgress,
+      timeoutMs: this.requestTimeoutMs,
+    });
   }
 
   /**
@@ -497,16 +494,16 @@ export class LocalMcpGateway {
   /**
    * Sends a JSON-RPC notification to a specific connection.
    */
-  sendNotificationToConnection(
-    connectionId: string,
-    notification: JsonRpcNotification
-  ): void {
+  sendNotificationToConnection(connectionId: string, notification: JsonRpcNotification): void {
     const writer = this.messageWriters.get(connectionId);
     if (writer) {
       try {
         writer(notification);
       } catch (err) {
-        this.logger?.("error", `Failed to send notification to ${connectionId}: ${(err as Error).message}`);
+        this.logger?.(
+          "error",
+          `Failed to send notification to ${connectionId}: ${(err as Error).message}`,
+        );
       }
     }
   }
@@ -514,10 +511,7 @@ export class LocalMcpGateway {
   /**
    * Maps an arbitrary caught error to a sanitized JsonRpcErrorObject.
    */
-  private mapErrorToJsonRpcError(
-    err: unknown,
-    workspaceRoot?: string
-  ): JsonRpcErrorObject {
+  private mapErrorToJsonRpcError(err: unknown, workspaceRoot?: string): JsonRpcErrorObject {
     if (isMcpProtocolError(err)) {
       return {
         code: err.code,
@@ -541,7 +535,7 @@ export class LocalMcpGateway {
   async processStream(
     input: NodeJS.ReadableStream,
     output: NodeJS.WritableStream,
-    options: { connectionId?: string; cwd?: string; harnessId?: string } = {}
+    options: { connectionId?: string; cwd?: string; harnessId?: string } = {},
   ): Promise<McpConnection> {
     const decoder = new McpFrameDecoder({
       maxMessageSizeBytes: this.maxMessageSizeBytes,
@@ -602,7 +596,10 @@ export class LocalMcpGateway {
     };
 
     const onError = (err: Error) => {
-      this.logger?.("error", `Stream error on connection ${connection.connectionId}: ${err.message}`);
+      this.logger?.(
+        "error",
+        `Stream error on connection ${connection.connectionId}: ${err.message}`,
+      );
       connection.close();
       cleanup();
     };
