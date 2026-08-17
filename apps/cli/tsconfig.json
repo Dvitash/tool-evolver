@@ -13,6 +13,24 @@
     },
     {
       "path": "../../packages/protocol"
+    },
+    {
+      "path": "../../packages/harness-contracts"
+    },
+    {
+      "path": "../../apps/observer"
+    },
+    {
+      "path": "../../apps/gateway"
+    },
+    {
+      "path": "../../adapters/claude-code"
+    },
+    {
+      "path": "../../adapters/codex-cli"
+    },
+    {
+      "path": "../../adapters/omp"
     }
   ]
 }

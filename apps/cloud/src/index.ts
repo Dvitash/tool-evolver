@@ -38,6 +38,11 @@ import {
   CandidateGenerationService,
   createCandidateGenerationService,
 } from "./evolution/generator/index.js";
+import {
+  CandidateValidationService,
+  type CandidateValidationTarget,
+  createCandidateValidationService,
+} from "./evolution/testing/index.js";
 
 // Configuration & Validation
 export * from "./config.js";
@@ -70,6 +75,9 @@ export * from "./evolution/opportunity/index.js";
 // Evolution Candidate Planning, Code Generation & Repair Engine
 export * from "./evolution/generator/index.js";
 
+// Evolution Candidate Test Synthesis & Static Validation
+export * from "./evolution/testing/index.js";
+
 /**
  * Unified Cloud Service container aggregating persistence, storage,
  * queue, server, and background workers.
@@ -94,6 +102,7 @@ export class CloudService {
   readonly exportService: ExportService;
   readonly opportunityService: OpportunityDetectionService;
   readonly candidateGenerationService: CandidateGenerationService;
+  readonly candidateValidationService: CandidateValidationService;
 
   private isInitialized = false;
 
@@ -136,6 +145,7 @@ export class CloudService {
     });
     this.opportunityService = createOpportunityDetectionService();
     this.candidateGenerationService = createCandidateGenerationService();
+    this.candidateValidationService = createCandidateValidationService();
 
     this.worker.registerHandler("opportunity.detect", async (job) => {
       const tenant = job.tenantContext;
@@ -185,6 +195,16 @@ export class CloudService {
     this.worker.registerHandler("store-observation-batch", async (job) => {
       const typedJob = job as unknown as JobEnvelope<StoreObservationBatchPayload>;
       await this.observationConsumer.processJob(typedJob);
+    });
+
+    this.worker.registerHandler("candidate.validate", async (job) => {
+      const payload = job.payload as { candidate?: unknown; revision?: unknown; target?: unknown } | undefined;
+      if (payload) {
+        const target = (payload.target ?? payload.revision ?? payload.candidate) as CandidateValidationTarget;
+        if (target) {
+          await this.candidateValidationService.validateCandidate(target);
+        }
+      }
     });
 
     this.server = createCloudServer({

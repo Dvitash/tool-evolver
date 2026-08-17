@@ -1,20 +1,26 @@
 import type { SecretCapability } from "@tool-evolver/contracts";
+import type { SecretManager } from "@tool-evolver/crypto";
 import { BrokerAuditEmitter, defaultBrokerAuditEmitter } from "./audit.js";
 import {
   type BaseCapabilityBrokerOptions,
   type BrokerContext,
   BrokerSecurityError,
 } from "./base.js";
+import { CommandBroker } from "./cmd-broker.js";
 import { FilesystemBroker } from "./fs-broker.js";
 import { NetworkBroker } from "./net-broker.js";
-import { CommandBroker } from "./cmd-broker.js";
+import { SecretBroker } from "./secret-broker.js";
 import type { BrokerRequestHandlerFn } from "../worker/sdk.js";
 
 export interface CapabilityBrokerManagerOptions extends BaseCapabilityBrokerOptions {
   fsBroker?: FilesystemBroker;
   netBroker?: NetworkBroker;
   cmdBroker?: CommandBroker;
-  secrets?: Record<string, string>;
+  secretBroker?: SecretBroker;
+  secrets?: Record<string, string> | SecretBroker;
+  secretManager?: SecretManager;
+  vaultPath?: string;
+  passphrase?: string;
 }
 
 /**
@@ -26,8 +32,8 @@ export class CapabilityBrokerManager {
   readonly fs: FilesystemBroker;
   readonly net: NetworkBroker;
   readonly cmd: CommandBroker;
+  readonly secret: SecretBroker;
   readonly auditEmitter: BrokerAuditEmitter;
-  private readonly secrets: Record<string, string>;
 
   constructor(options: CapabilityBrokerManagerOptions = {}) {
     this.auditEmitter = options.auditEmitter ?? defaultBrokerAuditEmitter;
@@ -36,16 +42,27 @@ export class CapabilityBrokerManager {
     this.fs = options.fsBroker ?? new FilesystemBroker(baseOpts);
     this.net = options.netBroker ?? new NetworkBroker(baseOpts);
     this.cmd = options.cmdBroker ?? new CommandBroker(baseOpts);
-    this.secrets = options.secrets ?? {};
+    this.secret =
+      options.secretBroker ??
+      (options.secrets instanceof SecretBroker
+        ? options.secrets
+        : new SecretBroker({
+            auditEmitter: this.auditEmitter,
+            requireGrant: options.requireGrant,
+            secrets: options.secrets,
+            secretManager: options.secretManager,
+            vaultPath: options.vaultPath,
+            passphrase: options.passphrase,
+          }));
   }
 
   /**
-   * Dispatches a capability request to the appropriate specialized broker.
+   * Dispatches an incoming broker request from a worker process to the corresponding capability broker.
    */
   async handleRequest(
-    service: string,
+    service: "fs" | "net" | "cmd" | "secret",
     action: string,
-    payload: Record<string, unknown> = {},
+    payload: Record<string, unknown>,
     context: BrokerContext
   ): Promise<unknown> {
     switch (service) {
@@ -60,27 +77,27 @@ export class CapabilityBrokerManager {
       default:
         throw new BrokerSecurityError(
           "OPERATION_NOT_PERMITTED",
-          `Unknown broker service: '${service}'`
+          `Unsupported broker service: '${service}'`
         );
     }
   }
 
   /**
-   * Creates a BrokerRequestHandlerFn closure bound to an invocation context.
+   * Creates a bound request handler function suitable for SDK clients or worker processes.
    */
   createRequestHandler(context: BrokerContext): BrokerRequestHandlerFn {
-    return async (service, action, payload) => {
-      return this.handleRequest(service, action, payload, context);
-    };
+    return (service, action, payload) =>
+      this.handleRequest(service, action, payload, context);
   }
 
   /**
-   * Cleans up tracking state for an invocation across all managed brokers.
+   * Cleans up all per-invocation state across all brokers.
    */
   cleanupInvocation(invocationId: string): void {
     this.fs.cleanupInvocation(invocationId);
     this.net.cleanupInvocation(invocationId);
     this.cmd.cleanupInvocation(invocationId);
+    this.secret.cleanupInvocation(invocationId);
   }
 
   private async handleFsRequest(
@@ -89,10 +106,6 @@ export class CapabilityBrokerManager {
     context: BrokerContext
   ): Promise<unknown> {
     switch (action) {
-      case "stat":
-        return this.fs.stat({ path: String(payload.path ?? "") }, context);
-      case "exists":
-        return this.fs.exists({ path: String(payload.path ?? "") }, context);
       case "readFile":
         return this.fs.readFile(
           {
@@ -155,6 +168,20 @@ export class CapabilityBrokerManager {
           },
           context
         );
+      case "exists":
+        return this.fs.exists(
+          {
+            path: String(payload.path ?? ""),
+          },
+          context
+        );
+      case "stat":
+        return this.fs.stat(
+          {
+            path: String(payload.path ?? ""),
+          },
+          context
+        );
       default:
         throw new BrokerSecurityError(
           "OPERATION_NOT_PERMITTED",
@@ -169,20 +196,30 @@ export class CapabilityBrokerManager {
     context: BrokerContext
   ): Promise<unknown> {
     switch (action) {
-      case "request":
-      case "fetch":
+      case "fetch": {
+        let headers = payload.headers as Record<string, string> | undefined;
+        let url = String(payload.url ?? "");
+
+        if (headers) {
+          headers = await this.secret.mediateHeaders(headers, context);
+        }
+        if (url.includes("{{")) {
+          url = await this.secret.mediateUrl(url, context);
+        }
+
         return this.net.request(
           {
-            url: String(payload.url ?? ""),
-            method: payload.method !== undefined ? String(payload.method) : undefined,
-            headers: payload.headers as Record<string, string> | undefined,
-            body: payload.body !== undefined ? String(payload.body) : undefined,
-            timeoutMs: payload.timeoutMs !== undefined ? Number(payload.timeoutMs) : undefined,
+            url,
+            method: payload.method as string | undefined,
+            headers,
+            body: payload.body as string | undefined,
+            timeoutMs: payload.timeoutMs as number | undefined,
             redirect: payload.redirect as "follow" | "error" | "manual" | undefined,
-            maxRedirects: payload.maxRedirects !== undefined ? Number(payload.maxRedirects) : undefined,
+            maxRedirects: payload.maxRedirects as number | undefined,
           },
           context
         );
+      }
       default:
         throw new BrokerSecurityError(
           "OPERATION_NOT_PERMITTED",
@@ -198,19 +235,34 @@ export class CapabilityBrokerManager {
   ): Promise<unknown> {
     switch (action) {
       case "execute":
-      case "exec":
+      case "exec": {
+        let env = payload.env as Record<string, string> | undefined;
+        let stdin = payload.stdin as string | undefined;
+
+        if (env) {
+          env = await this.secret.mediateCommandEnv(env, context);
+        } else if (context.grant?.capabilities?.secrets?.injectAsEnv) {
+          env = await this.secret.mediateCommandEnv({}, context);
+        }
+
+        if (stdin) {
+          stdin = await this.secret.mediateCommandStdin(stdin, context);
+        }
+
         return this.cmd.execute(
           {
-            executable: payload.executable !== undefined ? String(payload.executable) : undefined,
-            command: payload.command !== undefined ? String(payload.command) : undefined,
-            args: Array.isArray(payload.args) ? (payload.args as string[]) : undefined,
-            cwd: payload.cwd !== undefined ? String(payload.cwd) : undefined,
-            env: payload.env as Record<string, string> | undefined,
-            timeoutMs: payload.timeoutMs !== undefined ? Number(payload.timeoutMs) : undefined,
-            maxOutputSizeBytes: payload.maxOutputSizeBytes !== undefined ? Number(payload.maxOutputSizeBytes) : undefined,
+            command: payload.command as string | undefined,
+            executable: payload.executable as string | undefined,
+            args: payload.args as string[] | undefined,
+            cwd: payload.cwd as string | undefined,
+            env,
+            stdin,
+            timeoutMs: payload.timeoutMs as number | undefined,
+            maxOutputSizeBytes: payload.maxOutputSizeBytes as number | undefined,
           },
           context
         );
+      }
       default:
         throw new BrokerSecurityError(
           "OPERATION_NOT_PERMITTED",
@@ -224,71 +276,6 @@ export class CapabilityBrokerManager {
     payload: Record<string, unknown>,
     context: BrokerContext
   ): Promise<unknown> {
-    const startTime = Date.now();
-    const grant = context.grant;
-
-    if (!grant) {
-      throw new BrokerSecurityError("GRANT_REQUIRED", "Invocation grant is required to resolve secrets");
-    }
-
-    const secretCap: SecretCapability = grant.capabilities.secrets ?? {};
-    const secretName = String(payload.name ?? "");
-
-    if (!secretName) {
-      throw new BrokerSecurityError("OPERATION_NOT_PERMITTED", "Secret name must be specified");
-    }
-
-    // Check direct read permission
-    if (secretCap.denyDirectRead) {
-      this.auditEmitter.emitAudit({
-        service: "secret",
-        action: "getSecret",
-        invocationId: context.invocationId,
-        grantId: grant.grantId,
-        toolId: context.toolId ?? grant.toolId,
-        status: "denied",
-        error: { code: "OPERATION_NOT_PERMITTED", message: "Direct secret read is denied by policy" },
-        durationMs: Date.now() - startTime,
-        summary: { secretName },
-      });
-      throw new BrokerSecurityError("OPERATION_NOT_PERMITTED", `Direct read of secret '${secretName}' is denied`);
-    }
-
-    // Check allowed secret names and prefixes
-    const allowedNames = secretCap.allowedSecretNames ?? [];
-    const allowedPrefixes = secretCap.allowedPrefixes ?? [];
-    const isAllowed =
-      allowedNames.includes(secretName) ||
-      allowedPrefixes.some((prefix) => secretName.startsWith(prefix));
-
-    if (!isAllowed) {
-      this.auditEmitter.emitAudit({
-        service: "secret",
-        action: "getSecret",
-        invocationId: context.invocationId,
-        grantId: grant.grantId,
-        toolId: context.toolId ?? grant.toolId,
-        status: "denied",
-        error: { code: "OPERATION_NOT_PERMITTED", message: "Secret name is not authorized" },
-        durationMs: Date.now() - startTime,
-        summary: { secretName },
-      });
-      throw new BrokerSecurityError("OPERATION_NOT_PERMITTED", `Secret '${secretName}' is not authorized by capability policy`);
-    }
-
-    const secretValue = this.secrets[secretName] ?? process.env[secretName] ?? null;
-
-    this.auditEmitter.emitAudit({
-      service: "secret",
-      action: "getSecret",
-      invocationId: context.invocationId,
-      grantId: grant.grantId,
-      toolId: context.toolId ?? grant.toolId,
-      status: "allowed",
-      durationMs: Date.now() - startTime,
-      summary: { secretName, found: secretValue !== null },
-    });
-
-    return { secret: secretValue };
+    return this.secret.handleRequest(action, payload, context);
   }
 }

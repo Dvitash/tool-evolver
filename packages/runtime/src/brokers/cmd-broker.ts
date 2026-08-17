@@ -24,6 +24,7 @@ export interface CommandExecuteParams {
   args?: string[];
   cwd?: string;
   env?: Record<string, string>;
+  stdin?: string;
   timeoutMs?: number;
   maxOutputSizeBytes?: number;
 }
@@ -284,6 +285,7 @@ export class CommandBroker extends BaseCapabilityBroker {
         args: resolvedArgs,
         cwd: resolvedCwd,
         env: childEnv,
+        stdin: params.stdin,
         timeoutMs,
         maxOutputBytes,
       });
@@ -303,14 +305,12 @@ export class CommandBroker extends BaseCapabilityBroker {
     } catch (error) {
       const err = error instanceof BrokerSecurityError
         ? error
-        : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
+        : new BrokerSecurityError("PROCESS_SPAWN_FAILED", (error as Error).message);
 
-      this.recordAudit("execute", context, "denied", {
-        executable: params.executable ?? params.command,
-      }, {
-        error: { code: err.code, message: err.message },
-        durationMs: Date.now() - startTime,
-      });
+      this.recordAudit("execute", context, "error", {
+        command: params.command ?? params.executable,
+        error: err.message,
+      }, { durationMs: Date.now() - startTime, error: { code: err.code, message: err.message } });
 
       throw err;
     }
@@ -324,6 +324,7 @@ export class CommandBroker extends BaseCapabilityBroker {
     args: string[];
     cwd: string;
     env: NodeJS.ProcessEnv;
+    stdin?: string;
     timeoutMs: number;
     maxOutputBytes: number;
   }): Promise<CommandExecuteResult> {
@@ -343,9 +344,12 @@ export class CommandBroker extends BaseCapabilityBroker {
       reject(new BrokerSecurityError("PROCESS_SPAWN_FAILED", `Failed to spawn executable: ${(spawnErr as Error).message}`));
       return promise;
     }
-
     let stdoutData = "";
     let stderrData = "";
+    if (options.stdin !== undefined && child.stdin) {
+      child.stdin.write(options.stdin);
+      child.stdin.end();
+    }
     let totalBytes = 0;
     let timedOut = false;
     let killedForSize = false;

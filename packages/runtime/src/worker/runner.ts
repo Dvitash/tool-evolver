@@ -6,6 +6,7 @@ import vm from "node:vm";
 import { type ToolManifest, ToolManifestSchema } from "@tool-evolver/contracts";
 import type { InvocationGrant } from "../policy/grant.js";
 import { CapabilityBrokerManager } from "../brokers/manager.js";
+import type { SecretBroker } from "../brokers/secret-broker.js";
 import {
   type ErrorMessage,
   type LogMessage,
@@ -47,6 +48,8 @@ export interface ToolExecutionOptions {
   allowDirectHostAccess?: boolean;
   grant?: InvocationGrant;
   brokerManager?: CapabilityBrokerManager;
+  secretBroker?: SecretBroker;
+  secrets?: Record<string, string>;
 }
 
 /**
@@ -408,12 +411,20 @@ export class DeterministicWorkerSandbox {
  */
 export class ToolRuntime {
   private readonly brokerManager?: CapabilityBrokerManager;
-
   constructor(
     private readonly defaultOptions: ToolExecutionOptions = {},
     brokerManager?: CapabilityBrokerManager
   ) {
-    this.brokerManager = brokerManager ?? defaultOptions.brokerManager;
+    if (brokerManager) {
+      this.brokerManager = brokerManager;
+    } else if (defaultOptions.brokerManager) {
+      this.brokerManager = defaultOptions.brokerManager;
+    } else if (defaultOptions.secretBroker || defaultOptions.secrets) {
+      this.brokerManager = new CapabilityBrokerManager({
+        secretBroker: defaultOptions.secretBroker,
+        secrets: defaultOptions.secrets,
+      });
+    }
   }
   /**
    * Executes a tool defined by manifest and bundle/handler in an isolated sandbox.
@@ -424,9 +435,17 @@ export class ToolRuntime {
     input: unknown,
     options: ToolExecutionOptions = {}
   ): Promise<InvocationResult> {
+    let brokerManager = options.brokerManager ?? this.brokerManager ?? this.defaultOptions.brokerManager;
+    if (!brokerManager && (options.secretBroker || options.secrets)) {
+      brokerManager = new CapabilityBrokerManager({
+        secretBroker: options.secretBroker,
+        secrets: options.secrets,
+      });
+    }
+
     const mergedOptions: ToolExecutionOptions = {
       ...this.defaultOptions,
-      brokerManager: options.brokerManager ?? this.brokerManager ?? this.defaultOptions.brokerManager,
+      brokerManager,
       ...options,
     };
 

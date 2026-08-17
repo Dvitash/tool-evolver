@@ -71,12 +71,33 @@ importers:
 
   apps/cli:
     dependencies:
+      '@tool-evolver/adapter-claude-code':
+        specifier: workspace:*
+        version: link:../../adapters/claude-code
+      '@tool-evolver/adapter-codex':
+        specifier: workspace:*
+        version: link:../../adapters/codex-cli
+      '@tool-evolver/adapter-omp':
+        specifier: workspace:*
+        version: link:../../adapters/omp
       '@tool-evolver/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@tool-evolver/gateway':
+        specifier: workspace:*
+        version: link:../gateway
+      '@tool-evolver/harness-contracts':
+        specifier: workspace:*
+        version: link:../../packages/harness-contracts
+      '@tool-evolver/observer':
+        specifier: workspace:*
+        version: link:../observer
       '@tool-evolver/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
   apps/cloud:
     dependencies:
