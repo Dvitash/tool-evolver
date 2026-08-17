@@ -5,6 +5,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AuthContext } from "../auth/middleware.js";
+import type { CloudCatalogService } from "./catalog-service.js";
 import {
   McpInvocationError,
   composeMiddleware,
@@ -15,7 +16,6 @@ import {
   createTenantAuthMiddleware,
   createTimeoutMiddleware,
 } from "./middleware.js";
-import type { CloudCatalogService } from "./catalog-service.js";
 import type {
   CallToolResult,
   CloudMcpInvocationContext,
@@ -33,11 +33,7 @@ import type {
   McpInitializeResult,
   McpToolsListResult,
 } from "./types.js";
-import {
-  MCP_ERROR_CODES,
-  MCP_PROTOCOL_VERSION,
-  SUPPORTED_MCP_VERSIONS,
-} from "./types.js";
+import { MCP_ERROR_CODES, MCP_PROTOCOL_VERSION, SUPPORTED_MCP_VERSIONS } from "./types.js";
 
 /**
  * Options for configuring CloudMcpServer.
@@ -120,7 +116,10 @@ export class CloudMcpServer {
     try {
       switch (req.method) {
         case "initialize": {
-          const result = await this.handleInitialize(req.params as unknown as McpInitializeParams, context);
+          const result = await this.handleInitialize(
+            req.params as unknown as McpInitializeParams,
+            context,
+          );
           return { jsonrpc: "2.0", id, result };
         }
 
@@ -266,7 +265,10 @@ export class CloudMcpServer {
     }
 
     const toolId = (parsed.toolId as string) || (parsed.name as string);
-    const args = (parsed.arguments as Record<string, unknown>) || (parsed.params as Record<string, unknown>) || {};
+    const args =
+      (parsed.arguments as Record<string, unknown>) ||
+      (parsed.params as Record<string, unknown>) ||
+      {};
     const invocationCtx = this.createInvocationContext(req, authContext);
 
     if (!toolId) {
@@ -281,7 +283,12 @@ export class CloudMcpServer {
     if (!tool) {
       this.sendJsonResponse(res, 404, {
         isError: true,
-        content: [{ type: "text", text: `Tool '${toolId}' not found in workspace '${authContext.tenant.workspaceId}'` }],
+        content: [
+          {
+            type: "text",
+            text: `Tool '${toolId}' not found in workspace '${authContext.tenant.workspaceId}'`,
+          },
+        ],
       });
       return;
     }
@@ -350,7 +357,7 @@ export class CloudMcpServer {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
+      Connection: "keep-alive",
       "Access-Control-Allow-Origin": "*",
     });
 
@@ -396,7 +403,9 @@ export class CloudMcpServer {
     const requestedVersion = params?.protocolVersion ?? "2024-11-05";
 
     return {
-      protocolVersion: SUPPORTED_MCP_VERSIONS.includes(requestedVersion as unknown as (typeof SUPPORTED_MCP_VERSIONS)[number])
+      protocolVersion: SUPPORTED_MCP_VERSIONS.includes(
+        requestedVersion as unknown as (typeof SUPPORTED_MCP_VERSIONS)[number],
+      )
         ? requestedVersion
         : MCP_PROTOCOL_VERSION,
       capabilities: {
@@ -419,9 +428,7 @@ export class CloudMcpServer {
   /**
    * MCP Method: tools/list
    */
-  private async handleToolsList(
-    context: CloudMcpInvocationContext,
-  ): Promise<McpToolsListResult> {
+  private async handleToolsList(context: CloudMcpInvocationContext): Promise<McpToolsListResult> {
     const tools = await this.catalogService.getTools(context.tenant);
 
     return {
@@ -463,9 +470,13 @@ export class CloudMcpServer {
 
     // Link parent signal if present
     if (context.signal) {
-      context.signal.addEventListener("abort", () => {
-        abortController.abort(context.signal?.reason);
-      });
+      if (context.signal.aborted) {
+        abortController.abort(context.signal.reason);
+      } else {
+        context.signal.addEventListener("abort", () => {
+          abortController.abort(context.signal?.reason);
+        });
+      }
     }
 
     const toolContext: CloudMcpInvocationContext = {
@@ -474,11 +485,7 @@ export class CloudMcpServer {
     };
 
     try {
-      return await this.executeToolWithMiddleware(
-        tool,
-        params.arguments ?? {},
-        toolContext,
-      );
+      return await this.executeToolWithMiddleware(tool, params.arguments ?? {}, toolContext);
     } finally {
       this.activeRequests.delete(reqKey);
     }

@@ -9,21 +9,11 @@ import {
   ToolManifestSchema,
   hashCanonicalContent,
 } from "@tool-evolver/contracts";
-import type {
-  CatalogSnapshotResponse,
-  StreamCatalogInvalidation,
-} from "@tool-evolver/protocol";
+import type { CatalogSnapshotResponse, StreamCatalogInvalidation } from "@tool-evolver/protocol";
 import type { DatabasePool } from "../db/client.js";
-import { OutboxRepository, type OutboxPublisher } from "../db/outbox.js";
+import { type OutboxPublisher, OutboxRepository } from "../db/outbox.js";
 import type { ToolRegistryRepository } from "../evolution/artifacts/repositories/tool-registry-repository.js";
 import type { TenantContext } from "../tenant.js";
-import type {
-  CatalogInvalidationListener,
-  CatalogInvalidationReason,
-  CloudCatalogSnapshotRecord,
-  CloudMcpToolDefinition,
-  CloudToolProvider,
-} from "./types.js";
 import {
   echoFixtureTool,
   getEvolutionStatusTool,
@@ -31,6 +21,13 @@ import {
   statusFixtureTool,
   testFailureFixtureTool,
 } from "./tools/index.js";
+import type {
+  CatalogInvalidationListener,
+  CatalogInvalidationReason,
+  CloudCatalogSnapshotRecord,
+  CloudMcpToolDefinition,
+  CloudToolProvider,
+} from "./types.js";
 
 /**
  * Options for configuring CloudCatalogService.
@@ -166,7 +163,7 @@ export class CloudCatalogService {
           if (!toolsMap.has(entity.id)) {
             const manifest = this.convertToolEntityToManifest(entity, tenant);
             toolsMap.set(entity.id, {
-              name: entity.id,
+              name: entity.name,
               description: entity.description ?? `Evolved tool ${entity.name}`,
               inputSchema: manifest.parameters ?? { type: "object", properties: {} },
               source: "registry",
@@ -203,10 +200,7 @@ export class CloudCatalogService {
   /**
    * Lookup a specific tool by name for a given tenant context.
    */
-  async getTool(
-    tenant: TenantContext,
-    toolName: string,
-  ): Promise<CloudMcpToolDefinition | null> {
+  async getTool(tenant: TenantContext, toolName: string): Promise<CloudMcpToolDefinition | null> {
     // 1. Direct tools
     const directTool = this.directTools.get(toolName);
     if (directTool && this.isToolAccessibleToTenant(directTool, tenant)) {
@@ -292,9 +286,10 @@ export class CloudCatalogService {
     const tools = await this.getTools(tenant);
 
     // Filter tools if filterScopes specified
-    const filteredTools = filterScopes && filterScopes.length > 0
-      ? tools.filter((t) => !t.scope || filterScopes.includes(t.scope) || t.scope === "platform")
-      : tools;
+    const filteredTools =
+      filterScopes && filterScopes.length > 0
+        ? tools.filter((t) => !t.scope || filterScopes.includes(t.scope) || t.scope === "platform")
+        : tools;
 
     // Convert tool definitions to ToolManifest records
     const manifests: ToolManifest[] = filteredTools.map((t) => this.convertToManifest(t, tenant));
@@ -403,10 +398,7 @@ export class CloudCatalogService {
   /**
    * Helper to check if a tool is accessible to a tenant context.
    */
-  private isToolAccessibleToTenant(
-    tool: CloudMcpToolDefinition,
-    tenant: TenantContext,
-  ): boolean {
+  private isToolAccessibleToTenant(tool: CloudMcpToolDefinition, tenant: TenantContext): boolean {
     if (tool.scope === "platform" || tool.scope === "public") {
       return true;
     }
@@ -421,15 +413,15 @@ export class CloudCatalogService {
   /**
    * Helper to convert a tool definition to a ToolManifest.
    */
-  private convertToManifest(
-    tool: CloudMcpToolDefinition,
-    tenant: TenantContext,
-  ): ToolManifest {
+  private convertToManifest(tool: CloudMcpToolDefinition, tenant: TenantContext): ToolManifest {
     if (tool.manifest) {
       return tool.manifest;
     }
 
-    const rawSchema = (tool.inputSchema ?? { type: "object", properties: {} }) as Record<string, unknown>;
+    const rawSchema = (tool.inputSchema ?? { type: "object", properties: {} }) as Record<
+      string,
+      unknown
+    >;
     const parameters = {
       type: "object" as const,
       properties: (rawSchema.properties as Record<string, Record<string, unknown>>) ?? {},
@@ -437,11 +429,14 @@ export class CloudCatalogService {
       additionalProperties: false,
     };
 
-    const manifestDigest = hashCanonicalContent({
-      id: tool.name,
-      version: tool.version ?? "1.0.0",
-      parameters,
-    }, { prefix: false });
+    const manifestDigest = hashCanonicalContent(
+      {
+        id: tool.name,
+        version: tool.version ?? "1.0.0",
+        parameters,
+      },
+      { prefix: false },
+    );
 
     return {
       id: tool.name,
@@ -457,11 +452,43 @@ export class CloudCatalogService {
         maxOutputSizeBytes: 1048576,
       },
       capabilities: {
-        fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        fs: {
+          readPaths: [],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: true,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 4,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       },
       limits: {
         timeoutMs: tool.timeoutMs ?? 30000,
@@ -485,7 +512,12 @@ export class CloudCatalogService {
    * Helper to convert a DB ToolEntity to a ToolManifest.
    */
   private convertToolEntityToManifest(
-    entity: { id: string; name: string; description?: string | null; activeVersion?: string | null },
+    entity: {
+      id: string;
+      name: string;
+      description?: string | null;
+      activeVersion?: string | null;
+    },
     tenant: TenantContext,
   ): ToolManifest {
     const parameters = {
@@ -495,11 +527,14 @@ export class CloudCatalogService {
       additionalProperties: false,
     };
 
-    const manifestDigest = hashCanonicalContent({
-      id: entity.id,
-      version: entity.activeVersion ?? "1.0.0",
-      parameters,
-    }, { prefix: false });
+    const manifestDigest = hashCanonicalContent(
+      {
+        id: entity.id,
+        version: entity.activeVersion ?? "1.0.0",
+        parameters,
+      },
+      { prefix: false },
+    );
 
     return {
       id: entity.id,
@@ -515,11 +550,43 @@ export class CloudCatalogService {
         maxOutputSizeBytes: 1048576,
       },
       capabilities: {
-        fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        fs: {
+          readPaths: [],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: true,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 4,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       },
       limits: {
         timeoutMs: 30000,

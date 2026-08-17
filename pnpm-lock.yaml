@@ -177,6 +177,58 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
 
+  fixtures/e2e:
+    dependencies:
+      '@tool-evolver/adapter-claude-code':
+        specifier: workspace:*
+        version: link:../../adapters/claude-code
+      '@tool-evolver/adapter-codex':
+        specifier: workspace:*
+        version: link:../../adapters/codex-cli
+      '@tool-evolver/adapter-omp':
+        specifier: workspace:*
+        version: link:../../adapters/omp
+      '@tool-evolver/cli':
+        specifier: workspace:*
+        version: link:../../apps/cli
+      '@tool-evolver/cloud':
+        specifier: workspace:*
+        version: link:../../apps/cloud
+      '@tool-evolver/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@tool-evolver/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
+      '@tool-evolver/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@tool-evolver/gateway':
+        specifier: workspace:*
+        version: link:../../apps/gateway
+      '@tool-evolver/harness-contracts':
+        specifier: workspace:*
+        version: link:../../packages/harness-contracts
+      '@tool-evolver/observer':
+        specifier: workspace:*
+        version: link:../../apps/observer
+      '@tool-evolver/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@tool-evolver/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      '@tool-evolver/test-fixtures':
+        specifier: workspace:*
+        version: link:../test-fixtures
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      vitest:
+        specifier: ^3.0.5
+        version: 3.2.7(@types/node@22.20.1)
+
   fixtures/test-fixtures:
     dependencies:
       '@tool-evolver/contracts':

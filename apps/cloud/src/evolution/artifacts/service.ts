@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  type EvaluationResult,
   type EvolutionCandidate,
   type ProvenanceMetadata,
   type SignatureMetadata,
@@ -7,13 +8,12 @@ import {
   type ToolManifest,
   type ToolVersion,
   type ToolVersionStatus,
-  type EvaluationResult,
   canonicalJson,
   hashCanonicalContent,
 } from "@tool-evolver/contracts";
 import { computeSha256 } from "@tool-evolver/runtime";
 import type { DatabasePool, Queryable } from "../../db/client.js";
-import { OutboxRepository, type OutboxPublisher } from "../../db/outbox.js";
+import { type OutboxPublisher, OutboxRepository } from "../../db/outbox.js";
 import type { ObjectStore } from "../../storage/object-store.js";
 import { TenantGuard, getTenantContext } from "../../tenant.js";
 import { ArtifactBuilder } from "./builder.js";
@@ -78,7 +78,9 @@ export class ToolVersionRevokedError extends Error {
 export class ArtifactIntegrityError extends Error {
   readonly code = "ARTIFACT_INTEGRITY_MISMATCH";
   constructor(expectedSha256: string, computedSha256: string) {
-    super(`Artifact digest mismatch: expected '${expectedSha256}' but computed '${computedSha256}'`);
+    super(
+      `Artifact digest mismatch: expected '${expectedSha256}' but computed '${computedSha256}'`,
+    );
     this.name = "ArtifactIntegrityError";
   }
 }
@@ -133,8 +135,9 @@ export class ToolArtifactRegistryService {
     evaluationResult: EvaluationResult,
     options: PublishCandidateOptions = {},
   ): Promise<ToolVersion> {
+    const currentTenant = getTenantContext();
     const workspaceId = candidate.workspaceId;
-    const accountId = "account_default";
+    const accountId = currentTenant?.accountId ?? "account_default";
     const tenant = { accountId, workspaceId };
 
     // 1. Eligibility validation
@@ -179,13 +182,19 @@ export class ToolArtifactRegistryService {
       );
     }
 
-    const sourceCode = options.sourceCode ?? options.revision?.artifacts?.sourceCode ?? candidate.sourceCode;
+    const sourceCode =
+      options.sourceCode ?? options.revision?.artifacts?.sourceCode ?? candidate.sourceCode;
     if (!sourceCode || sourceCode.trim().length === 0) {
-      throw new CandidateIneligibleError(`Candidate '${candidate.id}' contains no source code for publication`);
+      throw new CandidateIneligibleError(
+        `Candidate '${candidate.id}' contains no source code for publication`,
+      );
     }
 
     // 3. Version resolution and semantic diffing
-    const priorActiveVersion = await this.toolRegistryRepo.getLatestActiveVersion(tenant, candidate.proposedTool.id);
+    const priorActiveVersion = await this.toolRegistryRepo.getLatestActiveVersion(
+      tenant,
+      candidate.proposedTool.id,
+    );
     const diffReport = this.versioning.diffManifests(
       candidate.proposedTool,
       priorActiveVersion ? priorActiveVersion.manifest : undefined,
@@ -279,7 +288,9 @@ export class ToolArtifactRegistryService {
       }
 
       if (!signingKey.privateKeyPem) {
-        throw new Error(`Signing key '${signingKey.keyId}' does not have a private key available for signing`);
+        throw new Error(
+          `Signing key '${signingKey.keyId}' does not have a private key available for signing`,
+        );
       }
 
       const signature: SignatureMetadata = this.signer.signArtifact(
@@ -377,8 +388,20 @@ export class ToolArtifactRegistryService {
         await this.toolRegistryRepo.saveToolVersion(tenant, toolVersion, txClient);
 
         // Update aliases
-        await this.toolRegistryRepo.setAlias(tenant, candidate.proposedTool.id, "latest", targetVersion, txClient);
-        await this.toolRegistryRepo.setAlias(tenant, candidate.proposedTool.id, "active", targetVersion, txClient);
+        await this.toolRegistryRepo.setAlias(
+          tenant,
+          candidate.proposedTool.id,
+          "latest",
+          targetVersion,
+          txClient,
+        );
+        await this.toolRegistryRepo.setAlias(
+          tenant,
+          candidate.proposedTool.id,
+          "active",
+          targetVersion,
+          txClient,
+        );
 
         // Update publication record
         await txClient.query(

@@ -1,0 +1,42 @@
+{
+  "name": "@tool-evolver/e2e",
+  "version": "0.1.0",
+  "description": "Cross-harness E2E fixtures and autonomous evolution flow test suite.",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@tool-evolver/adapter-claude-code": "workspace:*",
+    "@tool-evolver/adapter-codex": "workspace:*",
+    "@tool-evolver/adapter-omp": "workspace:*",
+    "@tool-evolver/cli": "workspace:*",
+    "@tool-evolver/cloud": "workspace:*",
+    "@tool-evolver/contracts": "workspace:*",
+    "@tool-evolver/crypto": "workspace:*",
+    "@tool-evolver/db": "workspace:*",
+    "@tool-evolver/gateway": "workspace:*",
+    "@tool-evolver/harness-contracts": "workspace:*",
+    "@tool-evolver/observer": "workspace:*",
+    "@tool-evolver/protocol": "workspace:*",
+    "@tool-evolver/runtime": "workspace:*",
+    "@tool-evolver/test-fixtures": "workspace:*",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.5"
+  }
+}
