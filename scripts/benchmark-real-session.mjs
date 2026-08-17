@@ -12,21 +12,22 @@ import { performance } from "node:perf_hooks";
 import { HermeticE2EEnvironment, runHappyPathScenario } from "../fixtures/e2e/dist/index.js";
 import { OmpRecordDecoder } from "../adapters/omp/dist/index.js";
 
-// 1. Resolve real session path
-const defaultSessionPath = process.env.OMP_SESSION_PATH || 
-  "/home/dvitash/.omp/agent/sessions/-.herdr-worktrees-rometrics-dataset-generator/2026-08-16T23-44-45-017Z_01a00cf6-a1d9-7000-b9e6-ea1c7479b6e8/TDatasetScripts.jsonl";
+// 1. Resolve real session path from CLI argument or environment variable
+const sessionFile = process.argv[2] || process.env.OMP_SESSION_PATH;
 
-const sessionFile = process.argv[2] || defaultSessionPath;
-
-if (!existsSync(sessionFile)) {
-  console.error(`Session file not found: ${sessionFile}`);
+if (!sessionFile || !existsSync(sessionFile)) {
+  console.error("Usage: node scripts/benchmark-real-session.mjs <path-to-omp-session.jsonl>");
+  console.error("Or set OMP_SESSION_PATH environment variable.");
+  if (sessionFile) {
+    console.error(`File not found: ${sessionFile}`);
+  }
   process.exit(1);
 }
 
 console.log("================================================================================");
 console.log("       TOOL EVOLVER V1.0.0 — REAL OMP SESSION EVOLUTION & BENCHMARK             ");
 console.log("================================================================================");
-console.log(`📂 Source Session : ${sessionFile.replace("/home/dvitash/.omp/agent/sessions/", "~/.omp/agent/sessions/")}`);
+console.log(`📂 Source Session : ${sessionFile}`);
 console.log(`⏱️  Timestamp      : ${new Date().toISOString()}`);
 console.log("--------------------------------------------------------------------------------\n");
 
