@@ -400,9 +400,9 @@ export const InputSchema = z.object({
   values: z.array(z.number()).optional(),
   input: z.unknown().optional(),
   path: z.string().optional(),
+  content: z.string().optional(),
   data: z.unknown().optional(),
-});
-
+}).passthrough();
 export const OutputSchema = z.object({
   success: z.boolean(),
   data: z.record(z.unknown()).optional(),
@@ -417,7 +417,31 @@ export default defineTool<ToolInput, ToolOutput>({
   inputSchema: InputSchema,
   outputSchema: OutputSchema,
   handler: async (input: ToolInput, context: ToolContext): Promise<ToolOutput> => {
-    const { logger, progress } = context;
+${
+  userMsg.includes("file") || toolName.includes("fs") || toolName.includes("file")
+    ? `    const { broker, logger, progress } = context;
+    await progress(0, "Starting");
+    await logger.info("Executing tool", { toolName: "${toolName}" });
+    try {
+      const filePath = (input as Record<string, unknown>).path as string ?? "config.json";
+      const content = (input as Record<string, unknown>).content as string ?? "";
+      await broker.fs.writeFile(filePath, content);
+      await progress(100, "Done", "complete");
+      await logger.info("Execution complete");
+      return {
+        success: true,
+        data: {
+          filePath,
+          written: true,
+          bytes: content.length,
+        },
+      };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      await logger.error("Tool execution failed", { error: msg });
+      throw new Error(\`Execution error: \${msg}\`);
+    }`
+    : `    const { logger, progress } = context;
     await progress(0, "Starting");
     await logger.info("Executing tool", { toolName: "${toolName}" });
     try {
@@ -428,7 +452,8 @@ export default defineTool<ToolInput, ToolOutput>({
       const msg = error instanceof Error ? error.message : String(error);
       await logger.error("Tool execution failed", { error: msg });
       throw new Error(\`Execution error: \${msg}\`);
-    }
+    }`
+}
   },
 });`,
         runtimeRequirements: ["deno:runtime"],

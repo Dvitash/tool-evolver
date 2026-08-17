@@ -6,6 +6,7 @@ export * from "./types.js";
 export * from "./schema-generator.js";
 export * from "./capability-mapper.js";
 export * from "./workflow-generator.js";
+export * from "./workflow-planner.js";
 export * from "./code-generator.js";
 export * from "./self-reviewer.js";
 export * from "./repair-orchestrator.js";

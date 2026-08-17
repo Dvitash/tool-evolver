@@ -425,21 +425,20 @@ export class CapabilityMapper {
     }
 
     // Protocols containment
-    for (const proto of manifest.net.allowedProtocols) {
-      if (!envelope.net.allowedProtocols.includes(proto)) {
+    for (const proto of manifest.net.allowedProtocols ?? []) {
+      if (envelope.net.allowedProtocols && !envelope.net.allowedProtocols.includes(proto)) {
         violations.push(`Manifest protocol '${proto}' is not permitted by envelope.`);
       }
     }
 
     // Ports containment
-    if (envelope.net.allowedPorts.length > 0) {
-      for (const port of manifest.net.allowedPorts) {
+    if (envelope.net.allowedPorts && envelope.net.allowedPorts.length > 0) {
+      for (const port of manifest.net.allowedPorts ?? []) {
         if (!envelope.net.allowedPorts.includes(port)) {
           violations.push(`Manifest port '${port}' is not permitted by envelope.`);
         }
       }
     }
-
     // 3. Command execution containment
     if (manifest.command.allowShellExecution && !envelope.command.allowShellExecution) {
       violations.push(
@@ -534,43 +533,58 @@ export class CapabilityMapper {
     envelope?: CapabilityEnvelope,
   ): CapabilityManifest {
     const fs: FsCapability = {
-      readPaths: Array.from(new Set(manifest.fs.readPaths)).sort(),
-      writePaths: Array.from(new Set(manifest.fs.writePaths)).sort(),
-      allowWorkspaceRoot: manifest.fs.allowWorkspaceRoot,
-      allowTemp: manifest.fs.allowTemp,
-      denyPaths: Array.from(new Set(manifest.fs.denyPaths)).sort(),
-      maxFileSizeBytes: manifest.fs.maxFileSizeBytes,
+      readPaths: Array.from(new Set(manifest.fs?.readPaths ?? [])).sort(),
+      writePaths: Array.from(new Set(manifest.fs?.writePaths ?? [])).sort(),
+      allowWorkspaceRoot: manifest.fs?.allowWorkspaceRoot ?? true,
+      allowTemp: manifest.fs?.allowTemp ?? true,
+      denyPaths: Array.from(new Set(manifest.fs?.denyPaths ?? [])).sort(),
+      maxFileSizeBytes: manifest.fs?.maxFileSizeBytes ?? 10485760,
     };
 
     const net: NetCapability = {
-      allowOutbound: manifest.net.allowOutbound,
-      allowedDomains: Array.from(new Set(manifest.net.allowedDomains)).sort(),
-      allowedHosts: Array.from(new Set(manifest.net.allowedHosts)).sort(),
-      allowedPorts: Array.from(new Set(manifest.net.allowedPorts)).sort(),
-      allowedProtocols: Array.from(new Set(manifest.net.allowedProtocols)),
-      allowLocalhost: manifest.net.allowLocalhost,
-      denyPrivateRanges: manifest.net.denyPrivateRanges,
+      allowOutbound: manifest.net?.allowOutbound ?? false,
+      allowedDomains: Array.from(new Set(manifest.net?.allowedDomains ?? [])).sort(),
+      allowedHosts: Array.from(new Set(manifest.net?.allowedHosts ?? [])).sort(),
+      allowedPorts: Array.from(new Set(manifest.net?.allowedPorts ?? [])).sort(),
+      allowedProtocols: Array.from(new Set(manifest.net?.allowedProtocols ?? ["https"])),
+      allowLocalhost: manifest.net?.allowLocalhost ?? false,
+      denyPrivateRanges: manifest.net?.denyPrivateRanges ?? true,
     };
 
     const command: CommandCapability = {
-      allowShellExecution: manifest.command.allowShellExecution,
-      allowedCommands: Array.from(new Set(manifest.command.allowedCommands)).sort(),
-      allowedBinaries: Array.from(new Set(manifest.command.allowedBinaries)).sort(),
-      forbiddenPatterns: Array.from(new Set(manifest.command.forbiddenPatterns)).sort(),
-      allowEnvPassthrough: Array.from(new Set(manifest.command.allowEnvPassthrough)).sort(),
+      allowShellExecution: manifest.command?.allowShellExecution ?? false,
+      allowedCommands: Array.from(new Set(manifest.command?.allowedCommands ?? [])).sort(),
+      allowedBinaries: Array.from(new Set(manifest.command?.allowedBinaries ?? [])).sort(),
+      forbiddenPatterns: Array.from(new Set(manifest.command?.forbiddenPatterns ?? [])).sort(),
+      allowEnvPassthrough: Array.from(new Set(manifest.command?.allowEnvPassthrough ?? [])).sort(),
     };
 
     const secrets: SecretCapability = {
-      allowedSecretNames: Array.from(new Set(manifest.secrets.allowedSecretNames)).sort(),
-      allowedPrefixes: Array.from(new Set(manifest.secrets.allowedPrefixes)).sort(),
-      denyDirectRead: true, // Always enforce non-disclosing secret model
-      injectAsEnv: manifest.secrets.injectAsEnv,
+      allowedSecretNames: Array.from(new Set(manifest.secrets?.allowedSecretNames ?? [])).sort(),
+      allowedPrefixes: Array.from(new Set(manifest.secrets?.allowedPrefixes ?? [])).sort(),
+      denyDirectRead: manifest.secrets?.denyDirectRead ?? true,
+      injectAsEnv: manifest.secrets?.injectAsEnv ?? true,
     };
 
-    const limits: CapabilityLimits = { ...manifest.limits };
-
+    const limits: CapabilityLimits = {
+      maxConcurrentExecutions: manifest.limits?.maxConcurrentExecutions ?? 4,
+      maxCpuUsagePercent: manifest.limits?.maxCpuUsagePercent ?? 100,
+      maxMemoryMb: manifest.limits?.maxMemoryMb ?? 128,
+      maxExecutionTimeMs: manifest.limits?.maxExecutionTimeMs ?? 30000,
+      maxOutputSizeBytes: manifest.limits?.maxOutputSizeBytes ?? 1048576,
+    };
     // Constrain by envelope if provided
     if (envelope) {
+      if (envelope.fs.readPaths.length > 0) {
+        fs.readPaths = fs.readPaths.filter((p) =>
+          envelope.fs.readPaths.some((ep) => this.pathCovers(ep, p)),
+        );
+      }
+      if (envelope.fs.writePaths.length > 0) {
+        fs.writePaths = fs.writePaths.filter((p) =>
+          envelope.fs.writePaths.some((ep) => this.pathCovers(ep, p)),
+        );
+      }
       if (!envelope.fs.allowWorkspaceRoot) fs.allowWorkspaceRoot = false;
       if (!envelope.fs.allowTemp) fs.allowTemp = false;
       fs.maxFileSizeBytes = Math.min(fs.maxFileSizeBytes, envelope.fs.maxFileSizeBytes);
@@ -579,40 +593,58 @@ export class CapabilityMapper {
         net.allowOutbound = false;
         net.allowedHosts = [];
         net.allowedDomains = [];
+      } else if (envelope.net.allowedHosts.length > 0 || envelope.net.allowedDomains.length > 0) {
+        const allowedHosts = [...envelope.net.allowedHosts, ...envelope.net.allowedDomains];
+        net.allowedDomains = net.allowedDomains.filter((d) =>
+          allowedHosts.some((ah) => this.hostMatches(d, ah)),
+        );
+        net.allowedHosts = net.allowedHosts.filter((h) =>
+          allowedHosts.some((ah) => this.hostMatches(h, ah)),
+        );
       }
       if (!envelope.net.allowLocalhost) net.allowLocalhost = false;
       if (envelope.net.denyPrivateRanges) net.denyPrivateRanges = true;
 
-      if (!envelope.command.allowShellExecution) command.allowShellExecution = false;
       const allowedCmds = [
         ...envelope.command.allowedCommands,
         ...envelope.command.allowedBinaries,
       ];
       if (allowedCmds.length > 0) {
         const filteredCmds = command.allowedCommands.filter((c) =>
-          allowedCmds.some((ec) => ec === c || c.startsWith(`${ec} `) || ec.startsWith(`${c} `)),
+          allowedCmds.some((ac) => c === ac || c.startsWith(`${ac} `)),
         );
-        const filteredBins = command.allowedBinaries.filter((b) =>
-          allowedCmds.some((ec) => ec === b || ec.startsWith(`${b} `)),
-        );
+        const filteredBins = command.allowedBinaries.filter((b) => allowedCmds.includes(b));
         if (filteredCmds.length > 0 || filteredBins.length > 0) {
           command.allowedCommands = filteredCmds;
           command.allowedBinaries = filteredBins;
         } else if (
-          manifest.command.allowedCommands.length > 0 ||
-          manifest.command.allowedBinaries.length > 0
+          manifest.command?.allowedCommands &&
+          manifest.command.allowedCommands.length > 0
         ) {
           command.allowedCommands = [...envelope.command.allowedCommands];
           command.allowedBinaries = [...envelope.command.allowedBinaries];
         }
       }
-      limits.maxMemoryMb = Math.min(limits.maxMemoryMb, envelope.limits.maxMemoryMb);
-      limits.maxOutputSizeBytes = Math.min(
-        limits.maxOutputSizeBytes,
-        envelope.limits.maxOutputSizeBytes,
-      );
-    }
+      if (!envelope.command.allowShellExecution) command.allowShellExecution = false;
 
+      if (envelope.limits) {
+        if (envelope.limits.maxMemoryMb) {
+          limits.maxMemoryMb = Math.min(limits.maxMemoryMb, envelope.limits.maxMemoryMb);
+        }
+        if (envelope.limits.maxOutputSizeBytes) {
+          limits.maxOutputSizeBytes = Math.min(
+            limits.maxOutputSizeBytes,
+            envelope.limits.maxOutputSizeBytes,
+          );
+        }
+        if (envelope.limits.maxExecutionTimeMs) {
+          limits.maxExecutionTimeMs = Math.min(
+            limits.maxExecutionTimeMs,
+            envelope.limits.maxExecutionTimeMs,
+          );
+        }
+      }
+    }
     return CapabilityManifestSchema.parse({
       fs,
       net,

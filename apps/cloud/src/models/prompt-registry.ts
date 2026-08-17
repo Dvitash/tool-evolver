@@ -326,6 +326,136 @@ export const ToolRepairOutputSchema = z.object({
   schemaChanges: z.record(z.unknown()).optional(),
 });
 export type ToolRepairOutput = z.infer<typeof ToolRepairOutputSchema>;
+
+export const WorkflowPlanningStepSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().optional(),
+  toolClass: z.string(),
+  action: z.string(),
+  service: z.enum(["fs", "net", "cmd", "secret", "compute"]).optional(),
+  inputs: z.record(z.unknown()).default({}),
+  outputs: z.union([z.record(z.unknown()), z.array(z.string())]).optional(),
+  outputVar: z.string().optional(),
+  dependsOn: z.array(z.string()).default([]),
+  capabilityRequirements: z.record(z.unknown()).optional(),
+  timeoutMs: z.number().int().positive().default(30000),
+  retryPolicy: z
+    .object({
+      maxRetries: z.number().int().min(0).default(0),
+      backoffMs: z.number().int().min(0).default(1000),
+      idempotent: z.boolean().default(false),
+    })
+    .optional(),
+  failureBehavior: z.enum(["abort", "continue", "compensate", "fail"]).default("abort"),
+  compensation: z
+    .object({
+      action: z.string(),
+      inputs: z.record(z.unknown()).default({}),
+      service: z.string().optional(),
+      description: z.string().optional(),
+      deterministicInverse: z.boolean().default(true),
+    })
+    .optional(),
+  condition: z.string().optional(),
+});
+export type WorkflowPlanningStep = z.infer<typeof WorkflowPlanningStepSchema>;
+
+export const WorkflowPlanningOutputSchema = z.object({
+  planId: z.string(),
+  targetToolName: z.string(),
+  description: z.string(),
+  workflowPattern: z.string().default("sequential_pipeline"),
+  variableInputs: z
+    .array(
+      z.object({
+        name: z.string(),
+        type: z.enum(["string", "number", "boolean", "array", "object"]),
+        description: z.string(),
+        required: z.boolean().default(true),
+        defaultValue: z.unknown().optional(),
+        examples: z.array(z.unknown()).optional(),
+      }),
+    )
+    .default([]),
+  invariantInputs: z
+    .array(
+      z.object({
+        name: z.string(),
+        value: z.unknown(),
+        description: z.string().optional(),
+      }),
+    )
+    .default([]),
+  steps: z.array(WorkflowPlanningStepSchema),
+  requiredCapabilities: z.record(z.unknown()).default({}),
+  compensationPolicy: z
+    .object({
+      enabled: z.boolean().default(true),
+      autoRollback: z.boolean().default(true),
+    })
+    .default({ enabled: true, autoRollback: true }),
+  rationale: z.string().optional(),
+});
+export type WorkflowPlanningOutput = z.infer<typeof WorkflowPlanningOutputSchema>;
+
+export const WorkflowSynthesisOutputSchema = z.object({
+  workflowId: z.string(),
+  name: z.string(),
+  version: z.string().default("1.0.0"),
+  description: z.string(),
+  steps: z.array(WorkflowPlanningStepSchema),
+  code: z.string(),
+  unitTests: z
+    .array(
+      z.object({
+        name: z.string(),
+        description: z.string(),
+        code: z.string(),
+        testType: z.enum(["unit", "property", "integration"]).default("unit"),
+      }),
+    )
+    .default([]),
+  propertyTests: z
+    .array(
+      z.object({
+        name: z.string(),
+        description: z.string(),
+        code: z.string(),
+        testType: z.enum(["unit", "property", "integration"]).default("property"),
+      }),
+    )
+    .default([]),
+  failureInjectionTests: z
+    .array(
+      z.object({
+        name: z.string(),
+        description: z.string(),
+        code: z.string(),
+        testType: z.enum(["unit", "property", "integration"]).default("integration"),
+      }),
+    )
+    .default([]),
+  requiredCapabilities: z.record(z.unknown()).default({}),
+});
+export type WorkflowSynthesisOutput = z.infer<typeof WorkflowSynthesisOutputSchema>;
+
+export const CompensationGenerationOutputSchema = z.object({
+  stepId: z.string(),
+  action: z.string(),
+  hasDeterministicInverse: z.boolean(),
+  compensation: z
+    .object({
+      action: z.string(),
+      inputs: z.record(z.unknown()).default({}),
+      service: z.string().optional(),
+      description: z.string().optional(),
+      deterministicInverse: z.boolean().default(true),
+    })
+    .optional(),
+  safetyRationale: z.string(),
+});
+export type CompensationGenerationOutput = z.infer<typeof CompensationGenerationOutputSchema>;
 /**
  * Versioned prompt template registry.
  */
@@ -773,6 +903,48 @@ export class PromptRegistry {
       userTemplate:
         "Tool Name: {{toolName}}\nPrevious Code:\n{{previousCode}}\nReview Issues:\n{{reviewIssues}}\nWorkspace Envelope:\n{{capabilityEnvelope}}\nRepair the tool implementation.",
       outputSchema: ToolRepairOutputSchema,
+    });
+
+    // 10. Multi-Step Workflow Planning (workflow_planning v1.0.0)
+    this.register({
+      id: "workflow_planning",
+      version: "1.0.0",
+      taskClass: "candidate_planning",
+      description:
+        "Plans multi-step workflow graphs with variable bindings, minimal capabilities, and safe compensation.",
+      systemInstruction:
+        "You are the Tool Evolver Workflow Planner. Plan a robust, minimal multi-step workflow graph from observed tool interaction episodes. Each step must declare its toolClass, action, inputs, outputs, dependencies (dependsOn), capability requirements, timeoutMs, retryPolicy (with idempotency verification), failureBehavior, and deterministic compensation action where a safe inverse exists. Variable bindings (${input.x}, ${step.step_id.y}) must be strictly typed and safe. Output structured JSON matching WorkflowPlanningOutputSchema.",
+      userTemplate:
+        "Workflow Title: {{title}}\nDescription: {{description}}\nObserved Episodes:\n{{episodes}}\nWorkspace Capability Envelope:\n{{capabilityEnvelope}}\nPlan an acyclic workflow graph with variable bindings and compensation.",
+      outputSchema: WorkflowPlanningOutputSchema,
+    });
+
+    // 11. Step Graph Synthesis (step_graph_synthesis v1.0.0)
+    this.register({
+      id: "step_graph_synthesis",
+      version: "1.0.0",
+      taskClass: "tool_synthesis",
+      description:
+        "Synthesizes executable TypeScript workflow orchestrator code and comprehensive test suites.",
+      systemInstruction:
+        "You are the Tool Evolver Workflow Synthesizer. Generate executable TypeScript orchestrator source code for Deno execution that executes the planned step graph in topological dependency order, resolves variable bindings safely, tracks a LIFO compensation stack, handles retries with backoff, emits progress events, and rolls back on failure. Also generate unit, property, and failure-injection test suites. Output structured JSON matching WorkflowSynthesisOutputSchema.",
+      userTemplate:
+        "Workflow Plan:\n{{plan}}\nWorkspace Envelope:\n{{capabilityEnvelope}}\nSynthesize executable workflow code and test suites.",
+      outputSchema: WorkflowSynthesisOutputSchema,
+    });
+
+    // 12. Safe Compensation Generation (compensation_generation v1.0.0)
+    this.register({
+      id: "compensation_generation",
+      version: "1.0.0",
+      taskClass: "tool_synthesis",
+      description:
+        "Derives safe, deterministic compensation and rollback actions for workflow operations.",
+      systemInstruction:
+        "You are the Tool Evolver Compensation Engineer. Determine whether a workflow action has a deterministic safe inverse. Safe inverses include: fs.writeFile -> fs.remove or backup restoration, fs.mkdir -> fs.rmdir, fs.copy -> delete dest, reversible cmd -> rollback command. Irreversible or unsafe operations must NOT have synthetic compensation (flag hasDeterministicInverse: false). Output structured JSON matching CompensationGenerationOutputSchema.",
+      userTemplate:
+        "Step Action: {{action}}\nStep Inputs: {{inputs}}\nWorkflow Context: {{context}}\nDetermine deterministic safe compensation action.",
+      outputSchema: CompensationGenerationOutputSchema,
     });
   }
 }

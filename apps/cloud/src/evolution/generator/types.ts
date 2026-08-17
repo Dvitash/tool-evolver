@@ -38,7 +38,9 @@ export interface InvariantInputDefinition {
 export interface StepCompensation {
   action: string;
   inputs: Record<string, unknown>;
+  service?: "fs" | "net" | "cmd" | "secret" | "compute" | string;
   description?: string;
+  deterministicInverse?: boolean;
 }
 
 /**
@@ -47,6 +49,7 @@ export interface StepCompensation {
 export interface StepRetryPolicy {
   maxRetries: number;
   backoffMs?: number;
+  idempotent?: boolean;
 }
 
 /**
@@ -60,10 +63,17 @@ export interface WorkflowStep {
   action: string;
   service?: "fs" | "net" | "cmd" | "secret" | "compute";
   inputs: Record<string, unknown>;
-  dependsOn: string[];
+  outputs?: Record<string, unknown> | string[];
   outputVar?: string;
+  dependsOn: string[];
+  capabilities?: CapabilityManifest;
+  capabilityRequirements?: CapabilityManifest;
+  timeout?: number;
+  timeoutMs?: number;
   compensation?: StepCompensation;
   retryPolicy?: StepRetryPolicy;
+  failureBehavior?: "abort" | "continue" | "compensate" | "fail";
+  onFailure?: "abort" | "continue" | "compensate" | "fail";
   condition?: string;
 }
 /**
@@ -85,11 +95,13 @@ export interface ToolPlan {
   planId?: string;
   opportunityId: string;
   workspaceId?: string;
-  targetType: "single_tool" | "workflow";
-  intent?: string;
   name: string;
-  description: string;
   version?: string;
+  description: string;
+  targetType?: "pure_compute" | "brokered_tool" | "workflow" | string;
+  action?: "create" | "modify" | "deprecate";
+  intent?: string;
+  workflowPattern?: string;
   variableInputs: VariableInputDefinition[];
   invariantInputs: InvariantInputDefinition[];
   inputSchema: ToolParameterSchema;
@@ -99,8 +111,32 @@ export interface ToolPlan {
   capabilityRequirements: CapabilityManifest;
   runtime: ToolRuntimeRequirement;
   runtimeRequirements?: ToolRuntimeRequirementItem[];
+  compensationPolicy?: {
+    enabled: boolean;
+    autoRollback: boolean;
+  };
   metadata: Record<string, unknown>;
   createdAt: string;
+}
+
+/**
+ * Workflow validation output.
+ */
+export interface WorkflowValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+/**
+ * Workflow repair output.
+ */
+export interface WorkflowRepairResult {
+  plan: ToolPlan;
+  repaired: boolean;
+  iterations: number;
+  appliedFixes: string[];
+  remainingErrors?: string[];
 }
 
 /**
@@ -225,6 +261,18 @@ export interface CandidateRevision {
   modelId?: string;
   requestId?: string;
   createdAt: string;
+}
+
+/**
+ * Options for candidate planning.
+ */
+export interface CandidatePlanningOptions {
+  envelope?: CapabilityEnvelope;
+  targetType?: "single_tool" | "workflow";
+  forceWorkflow?: boolean;
+  version?: string;
+  tenantId?: string;
+  inferenceService?: InferenceService;
 }
 
 /**

@@ -12,25 +12,13 @@ import type { OpportunityDetection, WorkflowCluster } from "../opportunity/types
 import { CapabilityMapper } from "./capability-mapper.js";
 import { SchemaGenerator } from "./schema-generator.js";
 import type {
+  CandidatePlanningOptions,
   InvariantInputDefinition,
   ToolPlan,
   ToolRuntimeRequirementItem,
   VariableInputDefinition,
   WorkflowStep,
 } from "./types.js";
-
-/**
- * Options for candidate planning.
- */
-export interface CandidatePlanningOptions {
-  envelope?: CapabilityEnvelope;
-  targetType?: "single_tool" | "workflow";
-  forceWorkflow?: boolean;
-  version?: string;
-  tenantId?: string;
-  inferenceService?: InferenceService;
-}
-
 /**
  * Plans tool evolution candidates from detected opportunities using structured inference and deterministic mapping.
  */
