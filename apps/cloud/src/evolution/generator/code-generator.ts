@@ -13,30 +13,28 @@ import { WorkflowGenerator } from "./workflow-generator.js";
  */
 export interface GeneratedSourceResult {
   sourceCode: string;
+  toolName?: string;
   provenance?: InferenceProvenance;
   usage?: ModelUsage;
 }
 
 /**
- * Generates TypeScript source code for single tools and workflow tools targeting @tool-evolver/runtime SDK.
+ * Generates production-ready, sandboxed TypeScript tool code adhering to Deno runtime contracts.
  */
 export class CodeGenerator {
   private readonly schemaGenerator: SchemaGenerator;
   private readonly workflowGenerator: WorkflowGenerator;
-  private readonly inferenceService?: InferenceService;
 
   constructor(
-    schemaGenerator?: SchemaGenerator,
-    workflowGenerator?: WorkflowGenerator,
-    inferenceService?: InferenceService,
+    schemaGenerator: SchemaGenerator = new SchemaGenerator(),
+    workflowGenerator: WorkflowGenerator = new WorkflowGenerator(),
   ) {
-    this.schemaGenerator = schemaGenerator ?? new SchemaGenerator();
-    this.workflowGenerator = workflowGenerator ?? new WorkflowGenerator(this.schemaGenerator);
-    this.inferenceService = inferenceService;
+    this.schemaGenerator = schemaGenerator;
+    this.workflowGenerator = workflowGenerator;
   }
 
   /**
-   * Generates TypeScript source code asynchronously using structured model synthesis when available.
+   * Generates TypeScript tool code asynchronously using structured inference when available.
    */
   async generateSourceAsync(
     plan: ToolPlan,
@@ -47,355 +45,402 @@ export class CodeGenerator {
     } = {},
   ): Promise<GeneratedSourceResult> {
     if (plan.targetType === "workflow") {
-      return {
-        sourceCode: this.workflowGenerator.generateWorkflowSource(plan),
-      };
+      const sourceCode = this.workflowGenerator.generateWorkflowSource(plan);
+      return { sourceCode };
     }
 
-    const inferService = options.inferenceService ?? this.inferenceService;
-    if (!inferService) {
-      return {
-        sourceCode: this.generateSingleToolSource(plan),
-      };
-    }
+    // 1. Structured Inference with prompt template
+    if (options.inferenceService) {
+      try {
+        const response = await options.inferenceService.infer<Record<string, unknown>, unknown>({
+          promptTemplateId: "tool_synthesis",
+          tenantId: options.tenantId || "system",
+          taskClass: "tool_synthesis",
+          inputs: {
+            planId: plan.planId || plan.id,
+            specification: JSON.stringify({
+              name: plan.name,
+              description: plan.description,
+              inputSchema: plan.inputSchema,
+              outputSchema: plan.outputSchema,
+              variableInputs: plan.variableInputs,
+              invariantInputs: plan.invariantInputs,
+              steps: plan.steps,
+              evidence: options.workflowEvidence,
+            }),
+            existingCode: "",
+            requiredCapabilities: JSON.stringify(plan.capabilities),
+          },
+        });
 
-    try {
-      const promptInput = {
-        planId: plan.id,
-        specification: `Tool Name: ${plan.name}\nDescription: ${plan.description}\nIntent: ${plan.intent}\nInput Schema: ${JSON.stringify(plan.inputSchema)}\nOutput Schema: ${JSON.stringify(plan.outputSchema)}`,
-        existingCode: "",
-        toolName: plan.name,
-        workflowEvidence: options.workflowEvidence ?? plan.intent,
-      };
+        if (response.output) {
+          const parsed = ToolSynthesisOutputSchema.parse(response.output);
+          const needsBroker =
+            plan.capabilities.fs.readPaths.length > 0 ||
+            plan.capabilities.fs.writePaths.length > 0 ||
+            plan.capabilities.net.allowOutbound ||
+            plan.capabilities.command.allowedCommands.length > 0;
 
-      const response = await inferService.infer<Record<string, unknown>, ToolSynthesisOutput>({
-        tenantId: options.tenantId ?? plan.workspaceId,
-        taskClass: "tool_synthesis",
-        promptTemplateId: "tool_synthesis",
-        inputs: promptInput,
-      });
+          const hasBrokerInCode =
+            parsed.code &&
+            (parsed.code.includes("broker.") ||
+              parsed.code.includes("context.fs") ||
+              parsed.code.includes("context.net") ||
+              parsed.code.includes("context.cmd"));
 
-      const parsed = ToolSynthesisOutputSchema.parse(response.output);
+          if (
+            parsed.code &&
+            parsed.code.includes("defineTool") &&
+            parsed.code.includes("export default defineTool") &&
+            (!needsBroker || hasBrokerInCode)
+          ) {
+            return {
+              sourceCode: parsed.code,
+              toolName: parsed.name,
+              provenance: response.provenance,
+              usage: response.provenance?.usage,
+            };
+          }
 
-      // If the model produced a full valid tool module with defineTool and imports
-      if (
-        parsed.code &&
-        parsed.code.includes("defineTool") &&
-        parsed.code.includes("export default defineTool")
-      ) {
-        return {
-          sourceCode: parsed.code,
-          provenance: response.provenance,
-          usage: response.provenance.usage,
-        };
-      }
-
-      // If the model produced transformation logic or helper code, embed into standard SDK structure
-      const inputZodSource = this.schemaGenerator.generateZodSource(plan.inputSchema);
-      const outputZodSource = this.schemaGenerator.generateOutputZodSource(plan.outputSchema);
-
-      const customLogic = parsed.transformationLogic || parsed.executionBody || parsed.code;
-      const helperCode = parsed.helperFunctions || "";
-
-      let executionBody = "";
-      if (customLogic && !customLogic.includes("defineTool")) {
-        executionBody = `
-    ${customLogic}
-    if (typeof resultData === "undefined") {
-      resultData = {
-        computed: true,
-        tool: ${JSON.stringify(plan.name)},
-        data: input,
-      };
-    }`;
-      } else {
-        executionBody = this.deriveTransformationBody(plan);
-      }
-
-      const sourceCode = `/**
- * Synthesized Tool: ${plan.name}
- * Description: ${plan.description}
- * Intent: ${plan.intent}
- */
-
-import { defineTool, type ToolContext } from "@tool-evolver/runtime";
+          const customLogic = parsed.executionBody || parsed.transformationLogic || parsed.code;
+          if (customLogic && !customLogic.includes("defineTool")) {
+            const zodInputSchemaSource = this.schemaGenerator.generateZodSource(plan.inputSchema);
+            const zodOutputSchemaSource = this.schemaGenerator.generateOutputZodSource(
+              plan.outputSchema,
+            );
+            const sourceCode = `import { defineTool, type ToolContext } from "@tool-evolver/runtime";
 import { z } from "zod";
 
-/**
- * Input validation schema.
- */
-export const InputSchema = ${inputZodSource};
+export const InputSchema = ${zodInputSchemaSource};
 
-/**
- * Output validation schema.
- */
-export const OutputSchema = ${outputZodSource};
+export const OutputSchema = ${zodOutputSchemaSource};
 
 export type ToolInput = z.infer<typeof InputSchema>;
 export type ToolOutput = z.infer<typeof OutputSchema>;
 
-${helperCode}
+export default defineTool<ToolInput, ToolOutput>({
+  name: ${JSON.stringify(plan.name)},
+  description: ${JSON.stringify(plan.description)},
+  inputSchema: InputSchema,
+  outputSchema: OutputSchema,
+  handler: async (input: ToolInput, context: ToolContext): Promise<ToolOutput> => {
+    const { broker, logger, progress } = context;
+    await progress(0, "Starting execution");
+    await logger.info("Executing tool", { toolName: ${JSON.stringify(plan.name)} });
+    let resultData: unknown;
 
-/**
- * Tool execution handler.
- */
-export default defineTool<ToolInput, ToolOutput>(async (context: ToolContext<ToolInput>): Promise<ToolOutput> => {
-  const { input, logger, broker, progress } = context;
-  await progress(0, "Starting execution", "running");
+    try {
+${customLogic}
+      await progress(100, "Execution finished successfully", "complete");
+      await logger.info("Tool finished successfully", { toolName: ${JSON.stringify(plan.name)} });
 
-  try {
-    let resultData: Record<string, unknown> | unknown[];
-${executionBody}
-
-    await progress(100, "Execution finished successfully", "complete");
-    await logger.info("Tool finished successfully", { toolName: ${JSON.stringify(plan.name)} });
-
-    return {
-      success: true,
-      data: resultData,
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    await logger.error("Tool execution failed", { error: errorMessage });
-    throw new Error(\`[\${${JSON.stringify(plan.name)}}] Execution error: \${errorMessage}\`);
-  }
+      return {
+        success: true,
+        data: resultData as Record<string, unknown>,
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      await logger.error("Tool execution failed", { error: errorMessage });
+      throw new Error(\`[${plan.name}] Execution error: \${errorMessage}\`);
+    }
+  },
 });
 `;
-
-      return {
-        sourceCode,
-        provenance: response.provenance,
-        usage: response.provenance.usage,
-      };
-    } catch {
-      return {
-        sourceCode: this.generateSingleToolSource(plan),
-      };
+            return {
+              sourceCode,
+              toolName: parsed.name,
+              provenance: response.provenance,
+              usage: response.provenance?.usage,
+            };
+          }
+        }
+      } catch {
+        // Fall back to deterministic code generation on inference error
+      }
     }
+
+    // 2. Deterministic Code Synthesis
+    const sourceCode = this.generateSource(plan);
+    return { sourceCode };
   }
 
   /**
-   * Generates TypeScript source for a single tool handler or workflow.
+   * Deterministically synthesizes TypeScript tool code.
    */
   generateSource(plan: ToolPlan): string {
     if (plan.targetType === "workflow") {
       return this.workflowGenerator.generateWorkflowSource(plan);
     }
 
-    return this.generateSingleToolSource(plan);
-  }
+    const zodInputSchemaSource = this.schemaGenerator.generateZodSource(plan.inputSchema);
+    const zodOutputSchemaSource = this.schemaGenerator.generateOutputZodSource(plan.outputSchema);
+    const executionBody = this.deriveExecutionBody(plan);
 
-  /**
-   * Generates TypeScript source for a single tool handler.
-   */
-  private generateSingleToolSource(plan: ToolPlan): string {
-    const inputZodSource = this.schemaGenerator.generateZodSource(plan.inputSchema);
-    const outputZodSource = this.schemaGenerator.generateOutputZodSource(plan.outputSchema);
-
-    const step = plan.steps[0];
-    const action = step?.action ?? "compute";
-    const toolClass = step?.toolClass ?? "compute";
-
-    let executionBody = "";
-
-    if (action === "fs.readFile" || toolClass === "file_read") {
-      executionBody = `
-    const filePath = (input as Record<string, unknown>).path as string ?? (input as Record<string, unknown>).filePath as string ?? ".";
-    await logger.debug("Reading file from filesystem broker", { filePath });
-    const content = await broker.fs.readFile(filePath, "utf-8");
-    resultData = {
-      path: filePath,
-      content,
-      size: typeof content === "string" ? content.length : 0,
-    };`;
-    } else if (action === "fs.writeFile" || toolClass === "file_edit") {
-      executionBody = `
-    const filePath = (input as Record<string, unknown>).path as string ?? (input as Record<string, unknown>).filePath as string ?? "./output.txt";
-    const content = (input as Record<string, unknown>).content as string ?? "";
-    await logger.debug("Writing file to filesystem broker", { filePath, byteLength: content.length });
-    await broker.fs.writeFile(filePath, content);
-    resultData = {
-      path: filePath,
-      written: true,
-      bytes: content.length,
-    };`;
-    } else if (
-      action === "cmd.exec" ||
-      toolClass === "command" ||
-      toolClass === "test_runner" ||
-      toolClass === "build_tool" ||
-      toolClass === "vcs"
-    ) {
-      executionBody = `
-    const command = (input as Record<string, unknown>).command as string ?? (input as Record<string, unknown>).cmd as string ?? ${JSON.stringify(step?.inputs.command ?? "echo 'done'")};
-    const args = ((input as Record<string, unknown>).args as string[]) ?? [];
-    await logger.debug("Executing command via command broker", { command, args });
-    const res = await broker.cmd.exec(command, args);
-    resultData = {
-      stdout: res.stdout,
-      stderr: res.stderr,
-      exitCode: res.exitCode,
-      durationMs: res.durationMs,
-    };`;
-    } else if (action === "net.fetch" || toolClass === "network") {
-      executionBody = `
-    const url = (input as Record<string, unknown>).url as string ?? ${JSON.stringify(step?.inputs.url ?? "https://api.example.com")};
-    await logger.debug("Fetching network resource", { url });
-    const response = await broker.net.fetch(url);
-    const json = await response.json();
-    resultData = {
-      status: response.status,
-      data: json,
-    };`;
-    } else {
-      executionBody = this.deriveTransformationBody(plan);
-    }
-
-    return `/**
- * Synthesized Tool: ${plan.name}
- * Description: ${plan.description}
- * Intent: ${plan.intent}
- */
-
-import { defineTool, type ToolContext } from "@tool-evolver/runtime";
+    return `import { defineTool, type ToolContext } from "@tool-evolver/runtime";
 import { z } from "zod";
 
-/**
- * Input validation schema.
- */
-export const InputSchema = ${inputZodSource};
+export const InputSchema = ${zodInputSchemaSource};
 
-/**
- * Output validation schema.
- */
-export const OutputSchema = ${outputZodSource};
+export const OutputSchema = ${zodOutputSchemaSource};
 
 export type ToolInput = z.infer<typeof InputSchema>;
 export type ToolOutput = z.infer<typeof OutputSchema>;
 
-/**
- * Tool execution handler.
- */
-export default defineTool<ToolInput, ToolOutput>(async (context: ToolContext<ToolInput>): Promise<ToolOutput> => {
-  const { input, logger, broker, progress } = context;
-  await logger.info("Executing tool", { toolName: ${JSON.stringify(plan.name)} });
-  await progress(0, "Starting execution", "running");
+export default defineTool<ToolInput, ToolOutput>({
+  name: ${JSON.stringify(plan.name)},
+  description: ${JSON.stringify(plan.description)},
+  inputSchema: InputSchema,
+  outputSchema: OutputSchema,
+  handler: async (input: ToolInput, context: ToolContext): Promise<ToolOutput> => {
+    const { broker, logger, progress } = context;
+    await progress(0, "Starting execution");
+    await logger.info("Executing tool", { toolName: ${JSON.stringify(plan.name)} });
+    let resultData: unknown;
 
-  try {
-    let resultData: Record<string, unknown> | unknown[];
+    try {
 ${executionBody}
+      await progress(100, "Execution finished successfully", "complete");
+      await logger.info("Tool finished successfully", { toolName: ${JSON.stringify(plan.name)} });
 
-    await progress(100, "Execution finished successfully", "complete");
-    await logger.info("Tool finished successfully", { toolName: ${JSON.stringify(plan.name)} });
-
-    return {
-      success: true,
-      data: resultData as Record<string, unknown>,
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    await logger.error("Tool execution failed", { error: errorMessage });
-    throw new Error(\`[\${${JSON.stringify(plan.name)}}] Execution error: \${errorMessage}\`);
-  }
+      return {
+        success: true,
+        data: resultData as Record<string, unknown>,
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      await logger.error("Tool execution failed", { error: errorMessage });
+      throw new Error(\`[${plan.name}] Execution error: \${errorMessage}\`);
+    }
+  },
 });
 `;
   }
 
   /**
-   * Derives workflow-specific pure transformation logic from plan variables and properties.
+   * Derives execution logic.
+   */
+  private deriveExecutionBody(plan: ToolPlan): string {
+    const step = plan.steps[0];
+    const action = step?.action?.toLowerCase() ?? "compute.transform";
+    const service = step?.service?.toLowerCase() ?? "";
+    const toolClass = (step?.toolClass ?? "").toLowerCase();
+    const name = plan.name.toLowerCase();
+    const desc = plan.description.toLowerCase();
+
+    // 1. Filesystem tools
+    if (
+      service === "fs" ||
+      action.startsWith("fs.") ||
+      toolClass === "filesystem" ||
+      toolClass === "file_read" ||
+      toolClass === "file_edit" ||
+      name.includes("file") ||
+      name.includes("read") ||
+      name.includes("write") ||
+      desc.includes("file")
+    ) {
+      if (
+        action.includes("write") ||
+        name.includes("write") ||
+        name.includes("save") ||
+        toolClass === "file_edit"
+      ) {
+        return `      const filePath = (input as Record<string, unknown>).filePath as string ?? (input as Record<string, unknown>).path as string ?? "./output.txt";
+      const content = (input as Record<string, unknown>).content as string ?? "";
+      await logger.debug("Writing file via filesystem broker", { filePath, size: content.length });
+      await broker.fs.writeFile(filePath, content);
+      resultData = {
+        filePath,
+        written: true,
+        bytes: content.length,
+      };`;
+      }
+
+      if (action.includes("list") || name.includes("list") || name.includes("dir")) {
+        return `      const filePath = (input as Record<string, unknown>).filePath as string ?? (input as Record<string, unknown>).path as string ?? ".";
+      await logger.debug("Listing directory via filesystem broker", { filePath });
+      const entries = await broker.fs.listDir(filePath);
+      resultData = {
+        filePath,
+        entries,
+        count: entries.length,
+      };`;
+      }
+
+      return `      const filePath = (input as Record<string, unknown>).filePath as string ?? (input as Record<string, unknown>).path as string ?? "./data.txt";
+      await logger.debug("Reading file via filesystem broker", { filePath });
+      const content = await broker.fs.readFile(filePath, "utf-8");
+      resultData = {
+        filePath,
+        content,
+        bytes: content.length,
+      };`;
+    }
+
+    // 2. Outbound HTTP / Network tools
+    if (
+      service === "net" ||
+      action.startsWith("net.") ||
+      action.startsWith("http.") ||
+      toolClass === "network" ||
+      toolClass === "http" ||
+      toolClass === "api" ||
+      name.includes("fetch") ||
+      name.includes("http") ||
+      name.includes("api") ||
+      desc.includes("api")
+    ) {
+      const secretName =
+        plan.capabilities.secrets.allowedSecretNames[0] ||
+        (plan.invariantInputs.find((i) => i.name === "authSecretName")?.value as
+          | string
+          | undefined);
+
+      const defaultHost =
+        plan.capabilities.net.allowedHosts[0] || plan.capabilities.net.allowedDomains[0];
+      const defaultUrl = defaultHost
+        ? `https://${defaultHost}/data`
+        : "https://api.example.com/data";
+
+      if (secretName) {
+        return `      const url = (input as Record<string, unknown>).url as string ?? (input as Record<string, unknown>).endpoint as string ?? ${JSON.stringify(defaultUrl)};
+      await logger.debug("Fetching authenticated network resource", { url });
+      const authRef = broker.secret.getSecretRef(${JSON.stringify(secretName)}, { mode: "bearer_token" });
+      const response = await broker.net.fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization: authRef,
+          Accept: "application/json",
+        },
+      });
+      if (!response.ok) {
+        throw new Error(\`HTTP \${response.status}: \${response.statusText}\`);
+      }
+      const json = await response.json();
+      resultData = {
+        status: response.status,
+        data: json,
+      };`;
+      }
+
+      return `      const url = (input as Record<string, unknown>).url as string ?? (input as Record<string, unknown>).endpoint as string ?? ${JSON.stringify(defaultUrl)};
+      await logger.debug("Fetching network resource", { url });
+      const response = await broker.net.fetch(url);
+      const json = await response.json();
+      resultData = {
+        status: response.status,
+        data: json,
+      };`;
+    }
+
+    // 3. Command execution tools
+    if (
+      service === "cmd" ||
+      action.startsWith("cmd.") ||
+      toolClass === "command" ||
+      toolClass === "test_runner" ||
+      toolClass === "build_tool" ||
+      toolClass === "vcs" ||
+      name.includes("cmd") ||
+      name.includes("exec") ||
+      name.includes("command")
+    ) {
+      const commandName =
+        plan.capabilities.command.allowedCommands[0] ||
+        (step?.inputs.command as string | undefined) ||
+        "echo 'done'";
+
+      const secretName = plan.capabilities.secrets.allowedSecretNames[0];
+
+      if (secretName) {
+        return `      const command = (input as Record<string, unknown>).command as string ?? (input as Record<string, unknown>).cmd as string ?? ${JSON.stringify(commandName)};
+      const args = ((input as Record<string, unknown>).args as string[]) ?? [];
+      await logger.debug("Executing command with secret env via cmd broker", { command, args });
+      const secretEnv = broker.secret.getSecretRef(${JSON.stringify(secretName)}, { mode: "command_env" });
+      const res = await broker.cmd.exec(command, args, {
+        env: { AUTH_TOKEN: secretEnv },
+      });
+      if (res.exitCode !== 0) {
+        throw new Error(\`Command '\${command}' failed with exit code \${res.exitCode}: \${res.stderr}\`);
+      }
+      resultData = {
+        stdout: res.stdout,
+        stderr: res.stderr,
+        exitCode: res.exitCode,
+      };`;
+      }
+
+      return `      const command = (input as Record<string, unknown>).command as string ?? (input as Record<string, unknown>).cmd as string ?? ${JSON.stringify(commandName)};
+      const args = ((input as Record<string, unknown>).args as string[]) ?? [];
+      await logger.debug("Executing command via command broker", { command, args });
+      const res = await broker.cmd.exec(command, args);
+      resultData = {
+        stdout: res.stdout,
+        stderr: res.stderr,
+        exitCode: res.exitCode,
+      };`;
+    }
+
+    // 4. Pure Compute / Transformation tools
+    return this.deriveTransformationBody(plan);
+  }
+
+  /**
+   * Derives pure compute transformation logic.
    */
   private deriveTransformationBody(plan: ToolPlan): string {
     const properties = plan.inputSchema.properties ?? {};
     const propNames = Object.keys(properties);
 
-    // Case 1: Array of numbers (e.g. statistical distribution or metric calculation)
     const arrayNumProp = propNames.find((k) => properties[k]?.type === "array");
     if (
       arrayNumProp ||
       plan.name.includes("stat") ||
       plan.name.includes("distribution") ||
-      plan.name.includes("metric")
+      plan.name.includes("metric") ||
+      plan.name.includes("calc")
     ) {
       const key = arrayNumProp ?? "values";
-      return `
-    await logger.debug("Executing pure mathematical transformation", { toolName: ${JSON.stringify(plan.name)} });
-    const rawArr = (input as Record<string, unknown>)[${JSON.stringify(key)}];
-    const nums: number[] = Array.isArray(rawArr)
-      ? rawArr.map((v) => Number(v)).filter((n) => !Number.isNaN(n))
-      : [];
+      return `      const rawArr = (input as Record<string, unknown>)[${JSON.stringify(key)}];
+      const nums: number[] = Array.isArray(rawArr)
+        ? rawArr.map((v) => Number(v)).filter((n) => !Number.isNaN(n))
+        : [];
+      const count = nums.length;
+      const sum = nums.reduce((acc, val) => acc + val, 0);
+      const mean = count > 0 ? sum / count : 0;
+      const sorted = [...nums].sort((a, b) => a - b);
+      const min = sorted.length > 0 ? sorted[0] : 0;
+      const max = sorted.length > 0 ? sorted[sorted.length - 1] : 0;
+      const median =
+        sorted.length === 0
+          ? 0
+          : sorted.length % 2 === 0
+            ? (sorted[sorted.length / 2 - 1]! + sorted[sorted.length / 2]!) / 2
+            : sorted[Math.floor(sorted.length / 2)]!;
+      const variance = count > 0 ? nums.reduce((acc, v) => acc + (v - mean) ** 2, 0) / count : 0;
+      const standardDeviation = Math.sqrt(variance);
 
-    const count = nums.length;
-    const sum = nums.reduce((acc, val) => acc + val, 0);
-    const mean = count > 0 ? sum / count : 0;
-    const sorted = [...nums].sort((a, b) => a - b);
-    const min = count > 0 ? sorted[0] : 0;
-    const max = count > 0 ? sorted[count - 1] : 0;
-    const median = count > 0 ? (count % 2 === 0 ? (sorted[count / 2 - 1] + sorted[count / 2]) / 2 : sorted[Math.floor(count / 2)]) : 0;
-    const variance = count > 0 ? nums.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / count : 0;
-    const stdDev = Math.sqrt(variance);
-
-    resultData = {
-      count,
-      sum,
-      mean,
-      min,
-      max,
-      median,
-      variance,
-      stdDev,
-      transformed: nums.map((n) => ({ original: n, normalized: stdDev > 0 ? (n - mean) / stdDev : 0 })),
-    };`;
+      resultData = {
+        count,
+        sum,
+        mean,
+        min,
+        max,
+        median,
+        variance,
+        standardDeviation,
+      };`;
     }
 
-    // Case 2: Array of objects or records (e.g. data filtering, transformation, mapping)
-    if (
-      plan.name.includes("filter") ||
-      plan.name.includes("transform") ||
-      plan.name.includes("map") ||
-      plan.name.includes("json")
-    ) {
-      return `
-    await logger.debug("Executing pure data transformation", { toolName: ${JSON.stringify(plan.name)} });
-    const inputRecord = input as Record<string, unknown>;
-    const rawItems = inputRecord.items ?? inputRecord.records ?? inputRecord.data;
-    const items = Array.isArray(rawItems) ? rawItems : Object.entries(inputRecord);
-
-    const filterMode = String(inputRecord.filterMode ?? "all");
-    const transformed = items.map((item, idx) => {
-      if (typeof item === "object" && item !== null) {
-        return { ...item, _index: idx };
+    return `      const inputEntries = Object.entries(input as Record<string, unknown>);
+      const processedMap: Record<string, unknown> = {};
+      for (const [k, v] of inputEntries) {
+        processedMap[k] = typeof v === "string" ? v.trim() : v;
       }
-      return { value: item, _index: idx };
-    });
-
-    resultData = {
-      count: transformed.length,
-      mode: filterMode,
-      transformed,
-      summary: \`Processed \${transformed.length} items with mode \${filterMode}\`,
-    };`;
-    }
-
-    // Case 3: Default pure transformation preserving inputs and producing structured result
-    return `
-    await logger.debug("Executing pure transformation tool", { toolName: ${JSON.stringify(plan.name)}, input });
-    const inputEntries = Object.entries(input as Record<string, unknown>);
-    const processedMap: Record<string, unknown> = {};
-    for (const [key, value] of inputEntries) {
-      if (typeof value === "string") {
-        processedMap[key] = value.trim();
-      } else if (Array.isArray(value)) {
-        processedMap[key] = value.slice();
-      } else {
-        processedMap[key] = value;
-      }
-    }
-
-    resultData = {
-      computed: true,
-      inputCount: inputEntries.length,
-      processed: processedMap,
-      processedCount: inputEntries.length,
-    };`;
+      resultData = {
+        computed: true,
+        inputCount: inputEntries.length,
+        processed: processedMap,
+      };`;
   }
 }

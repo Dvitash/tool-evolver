@@ -71,6 +71,30 @@ export type MockResponseGenerator = (req: ProviderExecutionRequest) => Promise<u
 /**
  * In-memory deterministic fake model provider for testing and offline simulation.
  */
+function extractJsonBlock(text: string, prefix: string): unknown {
+  const idx = text.indexOf(prefix);
+  if (idx === -1) return undefined;
+  const raw = text.slice(idx + prefix.length).trim();
+  const firstBrace = raw.search(/[{\[]/);
+  if (firstBrace === -1) return undefined;
+  const openChar = raw[firstBrace];
+  const closeChar = openChar === "{" ? "}" : "]";
+  let depth = 0;
+  for (let i = firstBrace; i < raw.length; i++) {
+    if (raw[i] === openChar) depth++;
+    else if (raw[i] === closeChar) {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(raw.slice(firstBrace, i + 1));
+        } catch {
+          return undefined;
+        }
+      }
+    }
+  }
+  return undefined;
+}
 export class FakeModelProvider implements ModelProvider {
   public readonly id: string;
   public readonly name: string;
@@ -277,16 +301,47 @@ export class FakeModelProvider implements ModelProvider {
     if (
       schemaName.includes("candidate_planning") ||
       system.includes("candidate planning") ||
-      userMsg.includes("candidate evolution plan")
+      userMsg.includes("candidate evolution plan") ||
+      userMsg.includes("plan brokered tool")
     ) {
+      let planToolName = "fs_buffered_read";
+      let planInputs = [
+        { name: "path", type: "string", description: "Target file path to read", required: true },
+      ];
+
+      const cObj = extractJsonBlock(request.userMessage, "Classification:") as
+        | {
+            suggestedToolName?: string;
+            inferredInputs?: Array<{
+              name: string;
+              type?: string;
+              description?: string;
+              required?: boolean;
+            }>;
+          }
+        | undefined;
+
+      if (cObj) {
+        if (cObj.suggestedToolName) planToolName = cObj.suggestedToolName;
+        if (Array.isArray(cObj.inferredInputs) && cObj.inferredInputs.length > 0) {
+          planInputs = cObj.inferredInputs.map((inf) => ({
+            name: inf.name,
+            type: inf.type || "string",
+            description: inf.description || `Parameter ${inf.name}`,
+            required: inf.required !== false,
+          }));
+        }
+      }
+
       return {
         planId: "plan_syn_001",
-        targetToolName: "fs_buffered_read",
+        targetToolName: planToolName,
         action: "create",
-        summary: "Introduce chunked buffered file reader to eliminate sequential I/O overhead.",
-        interfaceChanges: ["+ readBuffered(path, bufferSize)"],
-        securityRisks: ["Ensure sandbox directory jail is respected."],
-        estimatedImpact: "Reduces trace latency by ~65%",
+        summary: `Synthesized tool plan for ${planToolName}`,
+        interfaceChanges: [`+ execute(${planInputs.map((i) => i.name).join(", ")})`],
+        securityRisks: ["Minimal brokered execution permissions"],
+        estimatedImpact: "High efficiency improvement across session workflows.",
+        suggestedInputs: planInputs,
       };
     }
 
@@ -316,59 +371,120 @@ export class FakeModelProvider implements ModelProvider {
     if (
       schemaName.includes("tool_synthesis") ||
       system.includes("tool synthesis") ||
-      userMsg.includes("synthesize tool implementation")
+      userMsg.includes("synthesize tool implementation") ||
+      userMsg.includes("synthesize brokered tool implementation")
     ) {
+      let toolName = "fs_buffered_read";
+      let specDesc = "Synthesized tool implementation";
+
+      const specObj = extractJsonBlock(request.userMessage, "Specification:") as
+        | { name?: string; description?: string }
+        | undefined;
+      if (specObj) {
+        if (specObj.name) toolName = specObj.name;
+        if (specObj.description) specDesc = specObj.description;
+      }
       return {
         toolId: "tool_syn_001",
-        name: "fs_buffered_read",
+        name: toolName,
         version: "1.0.0",
-        description: "Buffered file reader for high-throughput sequential reading.",
+        description: specDesc,
         schema: {
           type: "object",
-          properties: {
-            path: { type: "string" },
-            bufferSizeBytes: { type: "number", default: 65536 },
-          },
-          required: ["path"],
+          properties: {},
         },
-        code: "export async function run(args: { path: string }) { return Deno.readTextFile(args.path); }",
-        runtimeRequirements: ["deno:fs_read"],
+        code: `import { defineTool, type ToolContext } from "@tool-evolver/runtime";
+import { z } from "zod";
+
+export const InputSchema = z.object({
+  values: z.array(z.number()).optional(),
+  input: z.unknown().optional(),
+  path: z.string().optional(),
+  data: z.unknown().optional(),
+});
+
+export const OutputSchema = z.object({
+  success: z.boolean(),
+  data: z.record(z.unknown()).optional(),
+});
+
+export type ToolInput = z.infer<typeof InputSchema>;
+export type ToolOutput = z.infer<typeof OutputSchema>;
+
+export default defineTool<ToolInput, ToolOutput>({
+  name: "${toolName}",
+  description: "${specDesc}",
+  inputSchema: InputSchema,
+  outputSchema: OutputSchema,
+  handler: async (input: ToolInput, context: ToolContext): Promise<ToolOutput> => {
+    const { logger, progress } = context;
+    await progress(0, "Starting");
+    await logger.info("Executing tool", { toolName: "${toolName}" });
+    try {
+      await progress(100, "Done", "complete");
+      await logger.info("Execution complete");
+      return { success: true, data: { processed: true } };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      await logger.error("Tool execution failed", { error: msg });
+      throw new Error(\`Execution error: \${msg}\`);
+    }
+  },
+});`,
+        runtimeRequirements: ["deno:runtime"],
       };
     }
-    // Schema Generation
     if (
       schemaName.includes("schema_generation") ||
       system.includes("schema generation") ||
       userMsg.includes("derive input and output schemas")
     ) {
+      let schemaParams: Array<{
+        name: string;
+        type: string;
+        description: string;
+        required: boolean;
+      }> = [
+        {
+          name: "items",
+          type: "array",
+          description: "List of data items to process",
+          required: true,
+        },
+      ];
+      try {
+        const match = request.userMessage.match(/Observed Variables:\s*(\[[\s\S]*?\])\s*(\n|$)/i);
+        if (match) {
+          const obsArr = JSON.parse(match[1]);
+          if (Array.isArray(obsArr) && obsArr.length > 0) {
+            schemaParams = obsArr.map(
+              (v: { name: string; type?: string; description?: string; required?: boolean }) => ({
+                name: v.name,
+                type: v.type || "string",
+                description: v.description || `Parameter ${v.name}`,
+                required: v.required !== false,
+              }),
+            );
+          }
+        }
+      } catch {
+        // ignore
+      }
+
       return {
         toolName: "data_transformer",
         description: "Transforms input records according to workflow specifications.",
-        parameters: [
-          {
-            name: "items",
-            type: "array",
-            description: "List of data items to process",
-            required: true,
-          },
-          {
-            name: "filterMode",
-            type: "string",
-            description: "Filtering mode to apply",
-            required: false,
-            defaultValue: "all",
-          },
-        ],
+        parameters: schemaParams,
         outputSchema: {
           type: "object",
           description: "Processed result data",
           properties: {
-            transformed: { type: "array", description: "Array of transformed items" },
-            count: { type: "number", description: "Number of processed records" },
+            success: { type: "boolean", description: "Whether the operation succeeded" },
+            data: { type: "object", description: "Output payload" },
           },
-          required: ["transformed", "count"],
+          required: ["success"],
         },
-        validationRules: ["items must be a non-empty array"],
+        validationRules: ["inputs must be valid"],
       };
     }
 
@@ -418,6 +534,84 @@ export class FakeModelProvider implements ModelProvider {
         rationale:
           "Exceeds all quality gates, zero capability envelope violations, 4x throughput improvement.",
         recommendations: ["Promote to canary deployment tier."],
+      };
+    }
+
+    // 6. Tool Repair
+    if (
+      schemaName.includes("tool_repair") ||
+      schemaName.includes("repair") ||
+      system.includes("repair") ||
+      userMsg.includes("repair the tool implementation")
+    ) {
+      return {
+        toolId: "tool_syn_001",
+        name: "repaired_tool",
+        version: "1.0.1",
+        code: `import { defineTool, type ToolContext } from "@tool-evolver/runtime";
+import { z } from "zod";
+
+const inputSchema = z.object({
+  path: z.string().describe("Target file path"),
+});
+
+export default defineTool({
+  name: "repaired_tool",
+  description: "Repaired tool handler",
+  inputSchema,
+  handler: async (params, context: ToolContext) => {
+    const logger = context.logger;
+    await logger.info("Executing repaired tool", { path: params.path });
+    try {
+      const content = await context.fs.readFile(params.path, "utf-8");
+      return { success: true, data: { content } };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      await logger.error("Tool execution failed", { error: errorMessage });
+      throw new Error(\`[repaired_tool] Execution error: \${errorMessage}\`);
+    }
+  },
+});`,
+        fixedIssues: ["Wrapped in try/catch", "Added logger error handling", "Used context.fs"],
+        explanation: "Repaired syntax, error handling, and broker access",
+      };
+    }
+
+    // 7. Capability Synthesis
+    if (
+      schemaName.includes("capability_synthesis") ||
+      system.includes("capability minimizer") ||
+      userMsg.includes("synthesize minimal capability manifest")
+    ) {
+      return {
+        fs: {
+          readPaths: ["."],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: false,
+          denyPaths: [],
+        },
+        net: {
+          allowedHosts: [],
+          allowedUrls: [],
+          allowedMethods: [],
+          allowOutbound: false,
+        },
+        command: {
+          allowedCommands: [],
+          allowedArguments: {},
+          allowShell: false,
+        },
+        secrets: {
+          requiredSecrets: [],
+          allowedMediationModes: [],
+          denySecretExfiltration: true,
+        },
+        limits: {
+          maxExecutionTimeMs: 30000,
+        },
+        rationale: "Minimal read-only workspace access",
+        isMinimal: true,
       };
     }
 

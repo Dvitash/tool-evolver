@@ -154,6 +154,7 @@ export function mapRowToRevision(row: Record<string, unknown>): CandidateRevisio
       inputSchema,
       outputSchema,
       steps: [],
+      capabilities: capabilities as unknown as CapabilityManifest,
       capabilityRequirements: capabilities as unknown as CapabilityManifest,
       runtime: {
         runtime: "deno",
@@ -179,10 +180,13 @@ export function mapRowToRevision(row: Record<string, unknown>): CandidateRevisio
     artifacts,
     selfReview,
     repairHistory,
+    capabilityDiff: provenance.capabilityDiff
+      ? (provenance.capabilityDiff as CandidateRevision["capabilityDiff"])
+      : undefined,
+    cost: provenance.cost ? (provenance.cost as CandidateRevision["cost"]) : undefined,
     storageUri: row.storage_uri ? String(row.storage_uri) : undefined,
     provenance,
     usage: usage as unknown as ModelUsage,
-    promptTemplateId: row.prompt_template_id ? String(row.prompt_template_id) : undefined,
     promptTemplateVersion: row.prompt_template_version
       ? String(row.prompt_template_version)
       : undefined,
@@ -415,7 +419,11 @@ export class CandidateRepository {
       revision.modelId || null,
       revision.requestId || null,
       JSON.stringify(revision.usage || {}),
-      JSON.stringify(revision.provenance || {}),
+      JSON.stringify({
+        ...revision.provenance,
+        capabilityDiff: revision.capabilityDiff,
+        cost: revision.cost,
+      }),
       JSON.stringify(revision.selfReview),
       JSON.stringify(revision.repairHistory || []),
       storageUri || null,

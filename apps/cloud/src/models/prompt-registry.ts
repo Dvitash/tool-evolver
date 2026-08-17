@@ -176,6 +176,156 @@ export const CandidateScoringOutputSchema = z.object({
   recommendations: z.array(z.string()),
 });
 export type CandidateScoringOutput = z.infer<typeof CandidateScoringOutputSchema>;
+
+export const BrokeredToolPlanningOutputSchema = z.object({
+  toolName: z.string(),
+  description: z.string(),
+  taskClass: z.string().default("tool_synthesis"),
+  toolCategory: z.enum(["fs", "net", "command", "compute", "composite"]).default("compute"),
+  variableInputs: z
+    .array(
+      z.object({
+        name: z.string(),
+        type: z.string(),
+        description: z.string(),
+        required: z.boolean().default(true),
+        defaultValue: z.unknown().optional(),
+      }),
+    )
+    .default([]),
+  invariants: z
+    .array(
+      z.object({
+        name: z.string(),
+        value: z.unknown(),
+        description: z.string().optional(),
+      }),
+    )
+    .default([]),
+  steps: z
+    .array(
+      z.object({
+        stepId: z.string(),
+        name: z.string(),
+        description: z.string(),
+        action: z.string(),
+        service: z.enum(["fs", "net", "cmd", "secret", "compute"]).optional(),
+        inputs: z.record(z.unknown()).default({}),
+        outputs: z.record(z.unknown()).default({}),
+      }),
+    )
+    .default([]),
+  requiredCapabilities: z
+    .object({
+      fs: z
+        .object({
+          readPaths: z.array(z.string()).default([]),
+          writePaths: z.array(z.string()).default([]),
+          allowWorkspaceRoot: z.boolean().default(false),
+          allowTemp: z.boolean().default(false),
+          denyPaths: z.array(z.string()).default([]),
+        })
+        .default({}),
+      net: z
+        .object({
+          allowedHosts: z.array(z.string()).default([]),
+          allowedUrls: z.array(z.string()).default([]),
+          allowedMethods: z.array(z.string()).default([]),
+          allowOutbound: z.boolean().default(false),
+        })
+        .default({}),
+      command: z
+        .object({
+          allowedCommands: z.array(z.string()).default([]),
+          allowedArguments: z.record(z.array(z.string())).default({}),
+          allowShell: z.boolean().default(false),
+        })
+        .default({}),
+      secrets: z
+        .object({
+          requiredSecrets: z.array(z.string()).default([]),
+          allowedMediationModes: z.array(z.string()).default([]),
+        })
+        .default({}),
+    })
+    .default({}),
+  secretsUsed: z
+    .array(
+      z.object({
+        secretName: z.string(),
+        mediationMode: z.enum([
+          "bearer_token",
+          "header_template",
+          "query_template",
+          "command_stdin",
+          "command_env",
+        ]),
+      }),
+    )
+    .default([]),
+  runtimeRequirements: z.array(z.string()).default([]),
+});
+export type BrokeredToolPlanningOutput = z.infer<typeof BrokeredToolPlanningOutputSchema>;
+
+export const CapabilitySynthesisOutputSchema = z.object({
+  fs: z
+    .object({
+      readPaths: z.array(z.string()).default([]),
+      writePaths: z.array(z.string()).default([]),
+      allowWorkspaceRoot: z.boolean().default(false),
+      allowTemp: z.boolean().default(false),
+      denyPaths: z.array(z.string()).default([]),
+      maxFileSizeBytes: z.number().optional(),
+    })
+    .default({}),
+  net: z
+    .object({
+      allowedHosts: z.array(z.string()).default([]),
+      allowedUrls: z.array(z.string()).default([]),
+      allowedMethods: z.array(z.string()).default([]),
+      allowOutbound: z.boolean().default(false),
+      maxRequestsPerRun: z.number().optional(),
+      maxResponseSizeBytes: z.number().optional(),
+    })
+    .default({}),
+  command: z
+    .object({
+      allowedCommands: z.array(z.string()).default([]),
+      allowedArguments: z.record(z.array(z.string())).default({}),
+      allowShell: z.boolean().default(false),
+      maxExecutionTimeMs: z.number().optional(),
+    })
+    .default({}),
+  secrets: z
+    .object({
+      requiredSecrets: z.array(z.string()).default([]),
+      allowedMediationModes: z.array(z.string()).default([]),
+      denySecretExfiltration: z.boolean().default(true),
+    })
+    .default({}),
+  limits: z
+    .object({
+      maxExecutionTimeMs: z.number().optional(),
+      maxMemoryBytes: z.number().optional(),
+      maxOutputSizeBytes: z.number().optional(),
+    })
+    .default({}),
+  rationale: z.string().optional(),
+  isMinimal: z.boolean().default(true),
+});
+export type CapabilitySynthesisOutput = z.infer<typeof CapabilitySynthesisOutputSchema>;
+
+export const ToolRepairOutputSchema = z.object({
+  toolId: z.string(),
+  name: z.string(),
+  version: z.string(),
+  code: z.string(),
+  fixedIssues: z.array(z.string()).default([]),
+  explanation: z.string().optional(),
+  capabilities: z.record(z.unknown()).optional(),
+  schemaChanges: z.record(z.unknown()).optional(),
+});
+export type ToolRepairOutput = z.infer<typeof ToolRepairOutputSchema>;
 /**
  * Versioned prompt template registry.
  */
@@ -367,7 +517,7 @@ export class PromptRegistry {
       systemInstruction:
         "You are the Tool Evolver Candidate Planning Engine. Plan candidate tool modifications or new tool additions based on detected opportunities. Provide interface specifications, risk evaluations, and impact summaries.",
       userTemplate:
-        "Opportunity ID: {{opportunityId}}\nOpportunity Details:\n{{opportunityDetails}}\nCurrent Tool Manifest:\n{{currentManifest}}\nGenerate candidate evolution plan.",
+        "Opportunity ID: {{opportunityId}}\nClassification:\n{{classification}}\nOpportunity Details:\n{{opportunityDetails}}\nEvidence:\n{{evidence}}\nCurrent Tool Manifest:\n{{currentManifest}}\nGenerate candidate evolution plan.",
       outputSchema: CandidatePlanningOutputSchema,
       jsonSchema: {
         type: "object",
@@ -554,6 +704,75 @@ export class PromptRegistry {
           "recommendations",
         ],
       },
+    });
+
+    // 6. Brokered Tool Planning (brokered_tool_planning v1.0.0)
+    this.register({
+      id: "brokered_tool_planning",
+      version: "1.0.0",
+      taskClass: "candidate_planning",
+      description:
+        "Plans brokered tool synthesis with explicit filesystem, network, command, and secret requirements.",
+      systemInstruction:
+        "You are the Tool Evolver Brokered Planning Engine. Analyze the detected opportunity and session evidence. Plan a secure, minimal-capability tool using hardened broker contracts (context.fs, context.net, context.cmd, context.secret). Authentication MUST use non-disclosing secret references without requesting raw values. Output structured JSON matching the BrokeredToolPlanningOutputSchema.",
+      userTemplate:
+        "Opportunity ID: {{opportunityId}}\nClassification: {{classification}}\nEvidence:\n{{evidence}}\nCapability Envelope:\n{{capabilityEnvelope}}\nPlan brokered tool candidate.",
+      outputSchema: BrokeredToolPlanningOutputSchema,
+    });
+
+    // 7. Capability Synthesis (capability_synthesis v1.0.0)
+    this.register({
+      id: "capability_synthesis",
+      version: "1.0.0",
+      taskClass: "candidate_planning",
+      description:
+        "Synthesizes minimal capability manifest strictly bounded by workspace envelope.",
+      systemInstruction:
+        "You are the Tool Evolver Capability Minimizer. Derive the strictly minimal CapabilityManifest required for the proposed tool steps. Every requested path, host, command, and secret must be necessary and proven to be a subset of the provided workspace capability envelope. Never grant unneeded permissions.",
+      userTemplate:
+        "Tool Plan:\n{{plan}}\nWorkspace Envelope:\n{{capabilityEnvelope}}\nSynthesize minimal capability manifest.",
+      outputSchema: CapabilitySynthesisOutputSchema,
+    });
+
+    // 8. Brokered Tool Synthesis (brokered_tool_synthesis v1.0.0)
+    this.register({
+      id: "brokered_tool_synthesis",
+      version: "1.0.0",
+      taskClass: "tool_synthesis",
+      description:
+        "Synthesizes production-ready, sandboxed TypeScript tool code using runtime broker SDKs and non-disclosing secrets.",
+      systemInstruction:
+        "You are the Tool Evolver Code Synthesizer. Generate safe, robust TypeScript tool code for execution in a Deno sandbox using @tool-evolver/runtime. Import { defineTool, type ToolContext } from '@tool-evolver/runtime' and { z } from 'zod'. Use context.fs, context.net, context.cmd, and context.secret. NEVER import forbidden modules (node:fs, child_process, http, net). Authentication MUST use context.secret.getSecretRef(...) without reading raw secret values. Always wrap execution in try/catch and log with context.logger.",
+      userTemplate:
+        "Plan ID: {{planId}}\nSpecification:\n{{specification}}\nRequired Capabilities:\n{{requiredCapabilities}}\nSynthesize brokered tool implementation.",
+      outputSchema: ToolSynthesisOutputSchema,
+    });
+
+    // 9. Tool Repair (tool_repair v1.0.0 / repair_prompting v1.0.0)
+    this.register({
+      id: "tool_repair",
+      version: "1.0.0",
+      taskClass: "tool_synthesis",
+      description:
+        "Repairs broken or non-compliant tool source code based on structured diagnostic review findings.",
+      systemInstruction:
+        "You are the Tool Evolver Repair Engine. Review the failed tool code and structured diagnostic findings (syntax, imports, broker usage, capabilities, schema alignment, error handling). Fix the code so it passes all review gates. Capabilities must remain minimal and bounded by the workspace envelope. Do not broaden capabilities beyond what is permitted. Output structured JSON matching ToolRepairOutputSchema.",
+      userTemplate:
+        "Tool Name: {{toolName}}\nPrevious Code:\n{{previousCode}}\nReview Issues:\n{{reviewIssues}}\nWorkspace Envelope:\n{{capabilityEnvelope}}\nRepair the tool implementation.",
+      outputSchema: ToolRepairOutputSchema,
+    });
+
+    this.register({
+      id: "repair_prompting",
+      version: "1.0.0",
+      taskClass: "tool_synthesis",
+      description:
+        "Repairs broken or non-compliant tool source code based on structured diagnostic review findings.",
+      systemInstruction:
+        "You are the Tool Evolver Repair Engine. Review the failed tool code and structured diagnostic findings. Fix the code so it passes all review gates. Capabilities must remain minimal and bounded by the workspace envelope. Do not broaden capabilities beyond what is permitted. Output structured JSON matching ToolRepairOutputSchema.",
+      userTemplate:
+        "Tool Name: {{toolName}}\nPrevious Code:\n{{previousCode}}\nReview Issues:\n{{reviewIssues}}\nWorkspace Envelope:\n{{capabilityEnvelope}}\nRepair the tool implementation.",
+      outputSchema: ToolRepairOutputSchema,
     });
   }
 }

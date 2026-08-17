@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { CapabilityEnvelope, ToolRuntimeRequirement } from "@tool-evolver/contracts";
 import {
+  type BrokeredToolPlanningOutput,
+  BrokeredToolPlanningOutputSchema,
   type CandidatePlanningOutput,
   CandidatePlanningOutputSchema,
 } from "../../models/prompt-registry.js";
@@ -12,6 +14,7 @@ import { SchemaGenerator } from "./schema-generator.js";
 import type {
   InvariantInputDefinition,
   ToolPlan,
+  ToolRuntimeRequirementItem,
   VariableInputDefinition,
   WorkflowStep,
 } from "./types.js";
@@ -19,109 +22,143 @@ import type {
 /**
  * Options for candidate planning.
  */
-export interface PlannerOptions {
+export interface CandidatePlanningOptions {
   envelope?: CapabilityEnvelope;
-  cluster?: WorkflowCluster;
   targetType?: "single_tool" | "workflow";
   forceWorkflow?: boolean;
-  inferenceService?: InferenceService;
+  version?: string;
   tenantId?: string;
+  inferenceService?: InferenceService;
 }
 
 /**
- * Candidate planner converting OpportunityDetection into structured ToolPlan.
+ * Plans tool evolution candidates from detected opportunities using structured inference and deterministic mapping.
  */
 export class CandidatePlanner {
-  private readonly schemaGenerator: SchemaGenerator;
   private readonly capabilityMapper: CapabilityMapper;
-  private readonly inferenceService?: InferenceService;
+  private readonly schemaGenerator: SchemaGenerator;
 
   constructor(
-    schemaGenerator?: SchemaGenerator,
-    capabilityMapper?: CapabilityMapper,
-    inferenceService?: InferenceService,
+    capabilityMapper: CapabilityMapper = new CapabilityMapper(),
+    schemaGenerator: SchemaGenerator = new SchemaGenerator(),
   ) {
-    this.schemaGenerator = schemaGenerator ?? new SchemaGenerator();
-    this.capabilityMapper = capabilityMapper ?? new CapabilityMapper();
-    this.inferenceService = inferenceService;
+    this.capabilityMapper = capabilityMapper;
+    this.schemaGenerator = schemaGenerator;
   }
 
   /**
-   * Plans a candidate tool or workflow asynchronously using structured inference when available.
+   * Plans candidate asynchronously (alias).
    */
   async planAsync(
     opportunity: OpportunityDetection,
-    options: PlannerOptions = {},
+    options: CandidatePlanningOptions = {},
   ): Promise<ToolPlan> {
-    const inferService = options.inferenceService ?? this.inferenceService;
-    if (!inferService) {
-      return this.plan(opportunity, options);
-    }
+    return this.planCandidateAsync(opportunity, options);
+  }
 
+  /**
+   * Plans candidate synchronously (alias).
+   */
+  plan(opportunity: OpportunityDetection, options: CandidatePlanningOptions = {}): ToolPlan {
+    return this.planCandidate(opportunity, options);
+  }
+
+  /**
+   * Plans a tool candidate from an opportunity detection asynchronously using inference when available.
+   */
+  async planCandidateAsync(
+    opportunity: OpportunityDetection,
+    options: CandidatePlanningOptions = {},
+  ): Promise<ToolPlan> {
     const classification = opportunity.classification;
-    const sanitizedWorkflowEvidence = JSON.stringify({
-      pattern: classification.pattern,
-      inferredInputs: classification.inferredInputs,
-      suggestedToolName: classification.suggestedToolName,
-      distinctSessions: opportunity.distinctSessionCount,
-      occurrenceCount: opportunity.occurrenceCount,
-      triggerReason: opportunity.triggerReason,
-    });
-
-    let inferenceOutput: CandidatePlanningOutput | undefined;
-    let planningProvenance: InferenceProvenance | undefined;
-
-    try {
-      const response = await inferService.infer<Record<string, unknown>, CandidatePlanningOutput>({
-        tenantId: options.tenantId ?? opportunity.workspaceId,
-        taskClass: "candidate_planning",
-        promptTemplateId: "candidate_planning",
-        inputs: {
-          opportunityId: opportunity.id,
-          opportunityDetails: `Title: ${classification.title}\nDescription: ${classification.description}\nPattern: ${classification.pattern}\nTrigger: ${opportunity.triggerReason}`,
-          workflowEvidence: sanitizedWorkflowEvidence,
-          currentManifest: JSON.stringify(options.envelope ?? {}),
-          targetType: options.targetType ?? "single_tool",
-        },
-      });
-      inferenceOutput = CandidatePlanningOutputSchema.parse(response.output);
-      planningProvenance = response.provenance;
-    } catch {
-      // Fallback cleanly to deterministic planning on inference error
-      return this.plan(opportunity, options);
-    }
-
-    // 1. Determine target type
-    const taskClass = classification.taskClass;
+    const taskClass = classification.taskClass.toLowerCase();
     const isWorkflow =
-      options.forceWorkflow ||
       options.targetType === "workflow" ||
+      options.forceWorkflow === true ||
       taskClass === "multi_step" ||
       taskClass === "multi_step_workflow" ||
       classification.pattern.includes("->") ||
       classification.pattern.includes("chained");
 
-    // 2. Derive sanitized name and description from model output if available, preserving safety
-    const targetName =
-      inferenceOutput?.targetToolName || classification.suggestedToolName || classification.title;
-    const name = this.sanitizeIdentifier(targetName || `tool_${opportunity.id.slice(0, 8)}`);
+    let inferenceOutput: CandidatePlanningOutput | BrokeredToolPlanningOutput | undefined;
+    let provenance: InferenceProvenance | undefined;
+
+    // 1. Inference-backed planning if inference service is supplied
+    if (options.inferenceService) {
+      try {
+        const infRes = await options.inferenceService.infer<Record<string, unknown>, unknown>({
+          promptTemplateId: "candidate_planning",
+          tenantId: options.tenantId || "system",
+          taskClass: "candidate_planning",
+          inputs: {
+            opportunityId: opportunity.id,
+            classification: JSON.stringify(classification),
+            evidence: JSON.stringify(opportunity.evidenceEventIds || []),
+            capabilityEnvelope: JSON.stringify(options.envelope || {}),
+          },
+        });
+
+        if (infRes.output) {
+          const parsed = CandidatePlanningOutputSchema.safeParse(infRes.output);
+          if (parsed.success) {
+            inferenceOutput = parsed.data;
+            provenance = infRes.provenance;
+          } else {
+            const brokeredParsed = BrokeredToolPlanningOutputSchema.safeParse(infRes.output);
+            if (brokeredParsed.success) {
+              inferenceOutput = brokeredParsed.data;
+              provenance = infRes.provenance;
+            }
+          }
+        }
+      } catch {
+        // Fallback to deterministic synthesis on inference failure
+      }
+    }
+
+    // 2. Derive sanitized name and description
+    const rawName =
+      classification.suggestedToolName ??
+      classification.title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+    const name = this.sanitizeIdentifier(rawName || `tool_${opportunity.id.slice(0, 8)}`);
     const description =
-      inferenceOutput?.summary ||
       classification.description ||
-      `Synthesized tool for pattern: ${classification.pattern}`;
-    const intent = classification.title || description;
+      `Synthesized tool for ${classification.title} (${classification.pattern})`;
 
     // 3. Extract variable and invariant inputs
-    const { variableInputs, invariantInputs } = this.extractInputs(opportunity);
-    if (inferenceOutput?.suggestedInputs) {
+    const { variableInputs, invariantInputs } = this.extractInputs(opportunity, options.envelope);
+    if (
+      inferenceOutput &&
+      "suggestedInputs" in inferenceOutput &&
+      inferenceOutput.suggestedInputs
+    ) {
       for (const suggested of inferenceOutput.suggestedInputs) {
         if (!variableInputs.some((v) => v.name === suggested.name)) {
           variableInputs.push({
             name: this.sanitizeIdentifier(suggested.name),
-            type: suggested.type,
+            type: suggested.type as VariableInputDefinition["type"],
             description: suggested.description,
             required: suggested.required,
             defaultValue: suggested.defaultValue,
+          });
+        }
+      }
+    } else if (
+      inferenceOutput &&
+      "variableInputs" in inferenceOutput &&
+      inferenceOutput.variableInputs
+    ) {
+      for (const vInput of inferenceOutput.variableInputs) {
+        if (!variableInputs.some((v) => v.name === vInput.name)) {
+          variableInputs.push({
+            name: this.sanitizeIdentifier(vInput.name),
+            type: vInput.type as VariableInputDefinition["type"],
+            description: vInput.description,
+            required: vInput.required,
+            defaultValue: vInput.defaultValue,
           });
         }
       }
@@ -129,7 +166,7 @@ export class CandidatePlanner {
 
     // 4. Construct workflow steps
     const targetType: "single_tool" | "workflow" = isWorkflow ? "workflow" : "single_tool";
-    const steps = this.constructSteps(opportunity, targetType, variableInputs);
+    const steps = this.constructSteps(opportunity, targetType, variableInputs, options.envelope);
 
     // 5. Derive schemas
     const inputSchema = this.schemaGenerator.deriveInputSchema(variableInputs);
@@ -139,55 +176,90 @@ export class CandidatePlanner {
       targetType,
     );
 
-    // 6. Derive capability requirements strictly bounded by envelope
-    const capabilityRequirements = this.capabilityMapper.mapRequiredCapabilities(
-      steps,
-      options.envelope,
-    );
+    // 6. Map required capabilities using CapabilityMapper
+    let capabilities = this.capabilityMapper.mapRequiredCapabilities(steps, options.envelope);
+    if (options.envelope) {
+      capabilities = this.capabilityMapper.minimizeCapabilities(capabilities, options.envelope);
+    }
 
-    // 7. Runtime configuration
+    // 7. Derive runtime requirements
+    const runtimeRequirements: ToolRuntimeRequirementItem[] = [];
+    if (capabilities.fs.readPaths.length > 0 || capabilities.fs.writePaths.length > 0) {
+      runtimeRequirements.push({
+        type: "permission",
+        name: "fs",
+        specifier: "deno:fs",
+        required: true,
+        reason: "Filesystem broker operations",
+      });
+    }
+    if (capabilities.net.allowOutbound) {
+      runtimeRequirements.push({
+        type: "permission",
+        name: "net",
+        specifier: "deno:net",
+        required: true,
+        reason: "Outbound network broker operations",
+      });
+    }
+    if (capabilities.command.allowedCommands.length > 0) {
+      runtimeRequirements.push({
+        type: "permission",
+        name: "cmd",
+        specifier: "deno:subprocess",
+        required: true,
+        reason: "Command execution broker operations",
+      });
+    }
+
+    // 8. Build complete ToolPlan
+    const planId = `plan-${randomUUID()}`;
     const runtime: ToolRuntimeRequirement = {
-      runtime: "deno",
+      runtime: isWorkflow ? "node" : "deno",
       memoryLimitMb: 128,
-      timeoutMs: isWorkflow ? 60000 : 30000,
+      timeoutMs: 30000,
       cpuLimitPercent: 100,
       maxOutputSizeBytes: 1048576,
     };
 
     return {
-      id: `plan_${opportunity.id}`,
+      id: planId,
+      planId,
       opportunityId: opportunity.id,
-      workspaceId: opportunity.workspaceId,
-      targetType: isWorkflow ? "workflow" : "single_tool",
-      intent,
+      workspaceId: options.tenantId || opportunity.workspaceId || "default",
+      targetType,
+      intent: classification.title || description,
       name,
       description,
+      version: options.version || "1.0.0",
       variableInputs,
       invariantInputs,
+      steps,
       inputSchema,
       outputSchema,
-      steps,
-      capabilityRequirements,
+      capabilities,
+      capabilityRequirements: capabilities,
       runtime,
+      runtimeRequirements,
       metadata: {
-        taskClass: classification.taskClass,
+        pattern: classification.pattern,
         confidenceScore: classification.confidenceScore,
-        priority: classification.priority,
         triggerReason: opportunity.triggerReason,
-        planningProvenance,
+        provenance,
       },
       createdAt: opportunity.createdAt || new Date().toISOString(),
     };
   }
 
   /**
-   * Plans a candidate tool or workflow from an opportunity detection record.
+   * Synchronous planning fallback.
    */
-  plan(opportunity: OpportunityDetection, options: PlannerOptions = {}): ToolPlan {
+  planCandidate(
+    opportunity: OpportunityDetection,
+    options: CandidatePlanningOptions = {},
+  ): ToolPlan {
     const classification = opportunity.classification;
-    const taskClass = classification.taskClass;
-
-    // 1. Determine targetType: single_tool vs workflow
+    const taskClass = classification.taskClass.toLowerCase();
     const isMultiStep =
       options.targetType === "workflow" ||
       options.forceWorkflow === true ||
@@ -198,7 +270,6 @@ export class CandidatePlanner {
 
     const targetType: "single_tool" | "workflow" = isMultiStep ? "workflow" : "single_tool";
 
-    // 2. Derive sanitized name and description
     const rawName =
       classification.suggestedToolName ??
       classification.title
@@ -206,18 +277,13 @@ export class CandidatePlanner {
         .replace(/[^a-z0-9]+/g, "_")
         .replace(/^_+|_+$/g, "");
     const name = this.sanitizeIdentifier(rawName || `tool_${opportunity.id.slice(0, 8)}`);
-    const intent = classification.title || "Automate repetitive developer workflow";
     const description =
       classification.description ||
-      `Tool automatically synthesized for pattern ${classification.pattern}`;
+      `Synthesized tool for ${classification.title} (${classification.pattern})`;
 
-    // 3. Extract variable and invariant inputs
-    const { variableInputs, invariantInputs } = this.extractInputs(opportunity);
+    const { variableInputs, invariantInputs } = this.extractInputs(opportunity, options.envelope);
+    const steps = this.constructSteps(opportunity, targetType, variableInputs, options.envelope);
 
-    // 4. Construct workflow steps
-    const steps = this.constructSteps(opportunity, targetType, variableInputs);
-
-    // 5. Derive schemas
     const inputSchema = this.schemaGenerator.deriveInputSchema(variableInputs);
     const outputSchema = this.schemaGenerator.deriveOutputSchema(
       classification.candidateOutputSchema,
@@ -225,16 +291,43 @@ export class CandidatePlanner {
       targetType,
     );
 
-    // 6. Map required capabilities
-    const capabilityRequirements = this.capabilityMapper.mapRequiredCapabilities(
-      steps,
-      options.envelope,
-    );
+    let capabilities = this.capabilityMapper.mapRequiredCapabilities(steps, options.envelope);
+    if (options.envelope) {
+      capabilities = this.capabilityMapper.minimizeCapabilities(capabilities, options.envelope);
+    }
 
-    // 7. Define runtime requirements
+    const runtimeRequirements: ToolRuntimeRequirementItem[] = [];
+    if (capabilities.fs.readPaths.length > 0 || capabilities.fs.writePaths.length > 0) {
+      runtimeRequirements.push({
+        type: "permission",
+        name: "fs",
+        specifier: "deno:fs",
+        required: true,
+        reason: "Filesystem broker operations",
+      });
+    }
+    if (capabilities.net.allowOutbound) {
+      runtimeRequirements.push({
+        type: "permission",
+        name: "net",
+        specifier: "deno:net",
+        required: true,
+        reason: "Outbound network broker operations",
+      });
+    }
+    if (capabilities.command.allowedCommands.length > 0) {
+      runtimeRequirements.push({
+        type: "permission",
+        name: "cmd",
+        specifier: "deno:subprocess",
+        required: true,
+        reason: "Command execution broker operations",
+      });
+    }
+
+    const planId = `plan-${randomUUID()}`;
     const runtime: ToolRuntimeRequirement = {
-      runtime: "node",
-      minRuntimeVersion: "20.0.0",
+      runtime: isMultiStep ? "node" : "deno",
       memoryLimitMb: 128,
       timeoutMs: 30000,
       cpuLimitPercent: 100,
@@ -242,31 +335,159 @@ export class CandidatePlanner {
     };
 
     return {
-      id: `plan-${randomUUID()}`,
+      id: planId,
+      planId,
       opportunityId: opportunity.id,
-      workspaceId: opportunity.workspaceId,
+      workspaceId: options.tenantId || opportunity.workspaceId || "default",
       targetType,
-      intent,
+      intent: classification.title || description,
       name,
       description,
+      version: options.version || "1.0.0",
       variableInputs,
       invariantInputs,
+      steps,
       inputSchema,
       outputSchema,
-      steps,
-      capabilityRequirements,
+      capabilities,
+      capabilityRequirements: capabilities,
       runtime,
+      runtimeRequirements,
       metadata: {
         pattern: classification.pattern,
         confidenceScore: classification.confidenceScore,
-        priority: classification.priority,
         triggerReason: opportunity.triggerReason,
       },
       createdAt: opportunity.createdAt || new Date().toISOString(),
     };
   }
 
-  private extractInputs(opportunity: OpportunityDetection): {
+  /**
+   * Plans a composite workflow candidate from a cluster of related opportunities.
+   */
+  planWorkflow(
+    cluster: WorkflowCluster,
+    opportunities: OpportunityDetection[],
+    options: CandidatePlanningOptions = {},
+  ): ToolPlan {
+    const clusterAny = cluster as unknown as { title?: string; description?: string; id?: string };
+    const rawName = (clusterAny.title || `wf_${cluster.clusterId.slice(0, 8)}`)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+    const name = this.sanitizeIdentifier(rawName);
+    const description =
+      clusterAny.description || `Synthesized multi-step workflow (${cluster.structuralHash})`;
+
+    const allVariableInputs: VariableInputDefinition[] = [];
+    const allInvariantInputs: InvariantInputDefinition[] = [];
+    const steps: WorkflowStep[] = [];
+
+    let stepIndex = 1;
+    for (const opp of opportunities) {
+      const { variableInputs, invariantInputs } = this.extractInputs(opp, options.envelope);
+      for (const v of variableInputs) {
+        if (!allVariableInputs.some((existing) => existing.name === v.name)) {
+          allVariableInputs.push(v);
+        }
+      }
+      for (const inv of invariantInputs) {
+        if (!allInvariantInputs.some((existing) => existing.name === inv.name)) {
+          allInvariantInputs.push(inv);
+        }
+      }
+
+      const oppSteps = this.constructSteps(opp, "single_tool", variableInputs, options.envelope);
+      for (const s of oppSteps) {
+        const stepId = `step_${stepIndex}_${s.id}`;
+        steps.push({
+          ...s,
+          id: stepId,
+          dependsOn: stepIndex > 1 ? [`step_${stepIndex - 1}_${oppSteps[0]?.id || "prev"}`] : [],
+        });
+        stepIndex++;
+      }
+    }
+
+    const inputSchema = this.schemaGenerator.deriveInputSchema(allVariableInputs);
+    const outputSchema = this.schemaGenerator.deriveOutputSchema(undefined, steps, "workflow");
+
+    let capabilities = this.capabilityMapper.mapRequiredCapabilities(steps, options.envelope);
+    if (options.envelope) {
+      capabilities = this.capabilityMapper.minimizeCapabilities(capabilities, options.envelope);
+    }
+
+    const runtimeRequirements: ToolRuntimeRequirementItem[] = [];
+    if (capabilities.fs.readPaths.length > 0 || capabilities.fs.writePaths.length > 0) {
+      runtimeRequirements.push({
+        type: "permission",
+        name: "fs",
+        specifier: "deno:fs",
+        required: true,
+        reason: "Filesystem broker operations",
+      });
+    }
+    if (capabilities.net.allowOutbound) {
+      runtimeRequirements.push({
+        type: "permission",
+        name: "net",
+        specifier: "deno:net",
+        required: true,
+        reason: "Network broker operations",
+      });
+    }
+    if (capabilities.command.allowedCommands.length > 0) {
+      runtimeRequirements.push({
+        type: "permission",
+        name: "cmd",
+        specifier: "deno:subprocess",
+        required: true,
+        reason: "Command broker operations",
+      });
+    }
+
+    const planId = `plan-wf-${randomUUID()}`;
+    const runtime: ToolRuntimeRequirement = {
+      runtime: "node",
+      memoryLimitMb: 128,
+      timeoutMs: 30000,
+      cpuLimitPercent: 100,
+      maxOutputSizeBytes: 1048576,
+    };
+
+    return {
+      id: planId,
+      planId,
+      opportunityId: cluster.clusterId,
+      workspaceId: options.tenantId || cluster.workspaceId || "default",
+      targetType: "workflow",
+      intent: clusterAny.title || description,
+      name,
+      description,
+      version: options.version || "1.0.0",
+      variableInputs: allVariableInputs,
+      invariantInputs: allInvariantInputs,
+      steps,
+      inputSchema,
+      outputSchema,
+      capabilities,
+      capabilityRequirements: capabilities,
+      runtime,
+      runtimeRequirements,
+      metadata: {
+        clusterId: cluster.clusterId,
+        pattern: cluster.structuralHash,
+        confidenceScore: 0.9,
+        opportunityCount: opportunities.length,
+      },
+      createdAt: cluster.firstSeenAt || new Date().toISOString(),
+    };
+  }
+
+  private extractInputs(
+    opportunity: OpportunityDetection,
+    envelope?: CapabilityEnvelope,
+  ): {
     variableInputs: VariableInputDefinition[];
     invariantInputs: InvariantInputDefinition[];
   } {
@@ -293,48 +514,122 @@ export class CandidatePlanner {
         });
       }
     } else {
-      // Derive default variable inputs based on task class or pattern
-      const pattern = opportunity.classification.pattern.toLowerCase();
-      if (pattern.includes("file") || pattern.includes("read") || pattern.includes("edit")) {
+      const pattern = (opportunity.classification.pattern || "").toLowerCase();
+      const desc = (opportunity.classification.description || "").toLowerCase();
+      const taskClass = (opportunity.classification.taskClass || "").toLowerCase();
+      if (
+        pattern.includes("file") ||
+        pattern.includes("read") ||
+        pattern.includes("edit") ||
+        pattern.includes("fs") ||
+        desc.includes("file") ||
+        desc.includes("read")
+      ) {
         variableInputs.push({
           name: "path",
           type: "string",
           description: "Target file path",
           required: true,
         });
+        if (pattern.includes("write") || desc.includes("write") || desc.includes("save")) {
+          variableInputs.push({
+            name: "content",
+            type: "string",
+            description: "Content to write",
+            required: true,
+          });
+        }
       }
-      if (pattern.includes("cmd") || pattern.includes("exec") || pattern.includes("command")) {
+      if (
+        pattern.includes("cmd") ||
+        pattern.includes("exec") ||
+        pattern.includes("command") ||
+        desc.includes("command") ||
+        desc.includes("exec") ||
+        taskClass === "command" ||
+        taskClass === "vcs"
+      ) {
         variableInputs.push({
           name: "command",
           type: "string",
           description: "Command to execute",
-          required: true,
+          required: false,
+          defaultValue: "git status",
+        });
+        variableInputs.push({
+          name: "args",
+          type: "array",
+          description: "Command arguments",
+          required: false,
+          defaultValue: [],
         });
       }
-      if (pattern.includes("fetch") || pattern.includes("http") || pattern.includes("api")) {
+      if (
+        pattern.includes("fetch") ||
+        pattern.includes("http") ||
+        pattern.includes("api") ||
+        pattern.includes("network") ||
+        desc.includes("api") ||
+        desc.includes("http") ||
+        desc.includes("fetch")
+      ) {
         variableInputs.push({
           name: "url",
           type: "string",
-          description: "Target URL",
+          description: "Target URL or endpoint",
           required: true,
         });
       }
+
       if (variableInputs.length === 0) {
         variableInputs.push({
-          name: "inputData",
+          name: "input",
           type: "string",
-          description: "Input payload for tool execution",
-          required: false,
-          defaultValue: "",
+          description: "Primary input data",
+          required: true,
         });
       }
     }
 
-    invariantInputs.push({
-      name: "timeoutMs",
-      value: 30000,
-      description: "Default execution timeout in milliseconds",
-    });
+    if (
+      opportunity.classification.taskClass === "multi_step" ||
+      opportunity.classification.pattern.includes("->")
+    ) {
+      invariantInputs.push({
+        name: "stopOnError",
+        value: true,
+        description: "Halt workflow execution on first step failure",
+      });
+    }
+
+    // Extract secret references if detected in classification or evidence
+    const descAndEv =
+      (opportunity.classification.description || "") +
+      JSON.stringify(opportunity.evidenceEventIds || []);
+
+    let secretName: string | undefined;
+    if (envelope && envelope.secrets.allowedSecretNames.length > 0) {
+      const matchingSecret = envelope.secrets.allowedSecretNames.find((s) =>
+        descAndEv.toLowerCase().includes(s.toLowerCase()),
+      );
+      secretName = matchingSecret || envelope.secrets.allowedSecretNames[0];
+    } else if (descAndEv.includes("GITHUB_TOKEN") || descAndEv.includes("github_token")) {
+      secretName = "GITHUB_TOKEN";
+    } else if (
+      descAndEv.includes("API_KEY") ||
+      descAndEv.includes("api_key") ||
+      descAndEv.includes("Bearer")
+    ) {
+      secretName = "API_KEY";
+    }
+
+    if (secretName) {
+      invariantInputs.push({
+        name: "authSecretName",
+        value: secretName,
+        description: `Non-disclosing secret reference for ${secretName} authentication`,
+      });
+    }
 
     return { variableInputs, invariantInputs };
   }
@@ -343,12 +638,13 @@ export class CandidatePlanner {
     opportunity: OpportunityDetection,
     targetType: "single_tool" | "workflow",
     variableInputs: VariableInputDefinition[],
+    envelope?: CapabilityEnvelope,
   ): WorkflowStep[] {
-    const pattern = opportunity.classification.pattern.toLowerCase();
-    const taskClass = opportunity.classification.taskClass.toLowerCase();
+    const pattern = (opportunity.classification.pattern || "").toLowerCase();
+    const desc = (opportunity.classification.description || "").toLowerCase();
+    const taskClass = (opportunity.classification.taskClass || "").toLowerCase();
 
     if (targetType === "workflow") {
-      // Multi-step workflow construction
       const step1Id = "step_1_inspect";
       const step2Id = "step_2_execute";
       const step3Id = "step_3_verify";
@@ -357,85 +653,145 @@ export class CandidatePlanner {
         {
           id: step1Id,
           name: "Inspect Workspace / Read Preconditions",
-          description: "Reads initial state or verifies file existence",
-          toolClass: "file_read",
+          description: "Read input state or verify preconditions",
+          toolClass: "filesystem",
           action: "fs.readFile",
-          inputs: {
-            path: variableInputs.find((v) => v.name === "path") ? "$input.path" : "package.json",
-          },
+          service: "fs",
+          inputs: { path: variableInputs.find((v) => v.name === "path")?.name || "./data" },
           dependsOn: [],
-          outputVar: "preconditionData",
+          outputVar: "preconditionState",
         },
         {
           id: step2Id,
-          name: "Apply Action / Write Modifications",
-          description: "Performs primary transformation or write",
-          toolClass: "file_edit",
-          action: "fs.writeFile",
-          inputs: {
-            path: variableInputs.find((v) => v.name === "path") ? "$input.path" : "output.tmp",
-            content: "synthesized_content",
-          },
+          name: "Execute Main Transformation",
+          description: "Perform primary processing action",
+          toolClass: "compute",
+          action: "transform",
+          service: "compute",
+          inputs: { data: "$preconditionState" },
           dependsOn: [step1Id],
-          outputVar: "writeResult",
-          compensation: {
-            action: "fs.removeFile",
-            inputs: {
-              path: variableInputs.find((v) => v.name === "path") ? "$input.path" : "output.tmp",
-            },
-            description: "Rolls back created file on failure",
-          },
+          outputVar: "processedResult",
         },
         {
           id: step3Id,
-          name: "Verify Results / Execute Diagnostics",
-          description: "Verifies state integrity after transformation",
-          toolClass: "command",
-          action: "cmd.exec",
+          name: "Persist / Verify Output",
+          description: "Write results or verify postconditions",
+          toolClass: "filesystem",
+          action: "fs.writeFile",
+          service: "fs",
           inputs: {
-            command: "git status --porcelain",
+            path: "./output.json",
+            content: "$processedResult",
           },
           dependsOn: [step2Id],
-          outputVar: "verificationResult",
+          outputVar: "finalOutput",
+          compensation: {
+            action: "fs.removeFile",
+            inputs: { path: "./output.json" },
+            description: "Remove partially written file on failure",
+          },
         },
       ];
     }
 
-    // Single tool step construction
-    let action = "compute";
+    // Single tool step
     let toolClass = "compute";
+    let action = "transform";
+    let service: "fs" | "net" | "cmd" | "secret" | "compute" = "compute";
     const inputs: Record<string, unknown> = {};
 
-    if (pattern.includes("file_read") || pattern.includes("read") || taskClass === "file_read") {
-      action = "fs.readFile";
-      toolClass = "file_read";
-      inputs.path = "$input.path";
+    for (const v of variableInputs) {
+      inputs[v.name] = `$${v.name}`;
+    }
+
+    const descAndEv =
+      (opportunity.classification.description || "") +
+      JSON.stringify(opportunity.evidenceEventIds || []);
+
+    let secretName: string | undefined;
+    if (envelope && envelope.secrets.allowedSecretNames.length > 0) {
+      const matchingSecret = envelope.secrets.allowedSecretNames.find((s) =>
+        descAndEv.toLowerCase().includes(s.toLowerCase()),
+      );
+      secretName = matchingSecret || envelope.secrets.allowedSecretNames[0];
+    } else if (descAndEv.includes("GITHUB_TOKEN") || descAndEv.includes("github_token")) {
+      secretName = "GITHUB_TOKEN";
     } else if (
-      pattern.includes("file_edit") ||
-      pattern.includes("write") ||
-      taskClass === "file_edit"
+      descAndEv.includes("API_KEY") ||
+      descAndEv.includes("api_key") ||
+      descAndEv.includes("Bearer")
     ) {
-      action = "fs.writeFile";
-      toolClass = "file_edit";
-      inputs.path = "$input.path";
-      inputs.content = "$input.content";
+      secretName = "API_KEY";
+    }
+
+    if (secretName) {
+      inputs.secretName = secretName;
+      inputs.requiredSecrets = [secretName];
+    }
+
+    if (
+      taskClass === "compute" ||
+      taskClass === "pure_compute" ||
+      pattern.startsWith("compute") ||
+      pattern === "pure_compute"
+    ) {
+      toolClass = "compute";
+      service = "compute";
+      action = "compute.transform";
     } else if (
-      pattern.includes("command") ||
-      pattern.includes("exec") ||
       taskClass === "command" ||
-      taskClass === "test_runner"
+      taskClass === "vcs" ||
+      taskClass === "build_tool" ||
+      taskClass === "test_runner" ||
+      pattern.startsWith("cmd") ||
+      pattern.startsWith("vcs") ||
+      pattern.includes("exec") ||
+      pattern.includes("command")
     ) {
-      action = "cmd.exec";
       toolClass = "command";
-      inputs.command = "$input.command";
-    } else if (pattern.includes("net") || pattern.includes("fetch") || pattern.includes("http")) {
-      action = "net.fetch";
+      service = "cmd";
+      action = "cmd.exec";
+      const defaultCmd =
+        envelope?.command.allowedCommands[0] || envelope?.command.allowedBinaries[0] || "echo";
+      inputs.command = inputs.command || defaultCmd;
+      inputs.toolClass = "command";
+    } else if (
+      taskClass === "network" ||
+      taskClass === "http" ||
+      taskClass === "api" ||
+      pattern.startsWith("http") ||
+      pattern.startsWith("net") ||
+      pattern.startsWith("fetch") ||
+      desc.includes("api") ||
+      desc.includes("http")
+    ) {
       toolClass = "network";
-      inputs.url = "$input.url";
-    } else if (pattern.includes("secret") || taskClass === "secrets") {
-      action = "secret.createReference";
-      toolClass = "secrets";
-      inputs.name = "$input.name";
+      service = "net";
+      action = "net.fetch";
+      const defaultHost = envelope?.net.allowedHosts[0] || envelope?.net.allowedDomains[0];
+      inputs.url =
+        inputs.url || (defaultHost ? `https://${defaultHost}` : "https://api.example.com");
+      inputs.toolClass = "network";
+    } else if (
+      taskClass === "file_read" ||
+      taskClass === "file_edit" ||
+      taskClass === "filesystem" ||
+      taskClass === "fs" ||
+      pattern.startsWith("file") ||
+      pattern.startsWith("fs") ||
+      desc.includes("file")
+    ) {
+      toolClass = "filesystem";
+      service = "fs";
+      action =
+        pattern.includes("write") ||
+        pattern.includes("edit") ||
+        desc.includes("write") ||
+        taskClass === "file_edit"
+          ? "fs.writeFile"
+          : "fs.readFile";
+      inputs.path = inputs.path || "./data.txt";
+      inputs.toolClass = "filesystem";
     }
 
     return [
@@ -445,6 +801,7 @@ export class CandidatePlanner {
         description: opportunity.classification.description,
         toolClass,
         action,
+        service,
         inputs,
         dependsOn: [],
         outputVar: "result",

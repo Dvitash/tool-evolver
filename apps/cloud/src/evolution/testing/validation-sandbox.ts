@@ -348,6 +348,20 @@ export class FakeSecretBroker implements SecretBrokerClient {
     });
   }
 
+  getSecretRef(
+    name: string,
+    options?: {
+      mode?: SecretMediationMode;
+      modes?: SecretMediationMode[];
+      workspaceId?: string;
+      toolId?: string;
+      expiresAt?: string;
+      metadata?: Record<string, unknown>;
+    },
+  ): SecretReference {
+    const modes = options?.mode ? [options.mode] : options?.modes;
+    return this.createReference(name, { ...options, modes });
+  }
   bearerToken(nameOrRef: string | SecretReference): SecretReference {
     return bearerToken(nameOrRef);
   }
@@ -857,10 +871,18 @@ export class ValidationSandbox {
         typeof (handler as { execute?: unknown }).execute === "function"
       ) {
         handler = (handler as { execute: unknown }).execute;
+      } else if (
+        handler &&
+        typeof handler === "object" &&
+        typeof (handler as { handler?: unknown }).handler === "function"
+      ) {
+        handler = (handler as { handler: unknown }).handler;
       }
       if (typeof handler !== "function") {
         if (typeof (moduleObj.exports as { execute?: unknown }).execute === "function") {
           handler = (moduleObj.exports as { execute: unknown }).execute;
+        } else if (typeof (moduleObj.exports as { handler?: unknown }).handler === "function") {
+          handler = (moduleObj.exports as { handler: unknown }).handler;
         } else if (typeof (moduleObj.exports as { run?: unknown }).run === "function") {
           handler = (moduleObj.exports as { run: unknown }).run;
         } else {
@@ -900,7 +922,14 @@ export class ValidationSandbox {
       };
       // Execute handler with timeout race
       const handlerPromise = (async () => {
-        return await fnHandler(context);
+        if (fnHandler.length === 1) {
+          try {
+            return await fnHandler(validatedInput);
+          } catch {
+            return await fnHandler(context);
+          }
+        }
+        return await fnHandler(validatedInput, context);
       })();
       const { promise: timeoutPromise, reject: timeoutReject } = Promise.withResolvers<never>();
       const timeoutId = setTimeout(() => {

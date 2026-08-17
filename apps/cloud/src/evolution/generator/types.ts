@@ -9,6 +9,7 @@ import {
   type ToolRuntimeRequirement,
 } from "@tool-evolver/contracts";
 import { z } from "zod";
+import type { InferenceService } from "../../models/service.js";
 
 /**
  * Variable input definition derived from observed variable parameters.
@@ -57,6 +58,7 @@ export interface WorkflowStep {
   description?: string;
   toolClass: string;
   action: string;
+  service?: "fs" | "net" | "cmd" | "secret" | "compute";
   inputs: Record<string, unknown>;
   dependsOn: string[];
   outputVar?: string;
@@ -64,25 +66,39 @@ export interface WorkflowStep {
   retryPolicy?: StepRetryPolicy;
   condition?: string;
 }
+/**
+ * Single runtime requirement item.
+ */
+export interface ToolRuntimeRequirementItem {
+  type: string;
+  name: string;
+  specifier: string;
+  required: boolean;
+  reason: string;
+}
 
 /**
  * High-level candidate plan derived from an opportunity.
  */
 export interface ToolPlan {
   id: string;
+  planId?: string;
   opportunityId: string;
-  workspaceId: string;
+  workspaceId?: string;
   targetType: "single_tool" | "workflow";
-  intent: string;
+  intent?: string;
   name: string;
   description: string;
+  version?: string;
   variableInputs: VariableInputDefinition[];
   invariantInputs: InvariantInputDefinition[];
   inputSchema: ToolParameterSchema;
   outputSchema: ToolOutputSchema;
   steps: WorkflowStep[];
+  capabilities: CapabilityManifest;
   capabilityRequirements: CapabilityManifest;
   runtime: ToolRuntimeRequirement;
+  runtimeRequirements?: ToolRuntimeRequirementItem[];
   metadata: Record<string, unknown>;
   createdAt: string;
 }
@@ -115,7 +131,9 @@ export interface GeneratedArtifactSet {
  */
 export type SelfReviewCategory =
   | "ast"
+  | "syntax"
   | "imports"
+  | "broker"
   | "capabilities"
   | "schema"
   | "error_handling"
@@ -143,6 +161,43 @@ export interface SelfReviewVerdict {
 }
 
 /**
+ * Structural capability difference between revisions.
+ */
+export interface CapabilityDiff {
+  hasChanges: boolean;
+  isBroadening: boolean;
+  fs: {
+    addedReadPaths: string[];
+    removedReadPaths: string[];
+    addedWritePaths: string[];
+    removedWritePaths: string[];
+    workspaceRootChanged?: boolean;
+    tempChanged?: boolean;
+  };
+  net: {
+    addedHosts: string[];
+    removedHosts: string[];
+    addedUrls: string[];
+    removedUrls: string[];
+    addedMethods: string[];
+    removedMethods: string[];
+    outboundChanged?: boolean;
+  };
+  command: {
+    addedCommands: string[];
+    removedCommands: string[];
+    shellChanged?: boolean;
+  };
+  secrets: {
+    addedSecrets: string[];
+    removedSecrets: string[];
+    addedModes: string[];
+    removedModes: string[];
+  };
+  summary: string[];
+}
+
+/**
  * Immutable candidate revision recording an iteration in the repair/evolution lineage.
  */
 export interface CandidateRevision {
@@ -158,9 +213,11 @@ export interface CandidateRevision {
     fixedIssues: string[];
     timestamp: string;
   }>;
+  capabilityDiff?: CapabilityDiff;
   storageUri?: string;
   provenance?: Record<string, unknown>;
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
+  cost?: { promptCostUsd?: number; completionCostUsd?: number; totalCostUsd?: number };
   promptTemplateId?: string;
   promptTemplateVersion?: string;
   promptDigest?: string;
@@ -179,6 +236,7 @@ export interface CandidateGenerationOptions {
   targetType?: "single_tool" | "workflow";
   version?: string;
   strictReview?: boolean;
+  inferenceService?: InferenceService;
 }
 
 /**

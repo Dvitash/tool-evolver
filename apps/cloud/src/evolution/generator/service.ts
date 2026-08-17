@@ -72,15 +72,13 @@ export class CandidateGenerationService {
     this.workflowGenerator =
       options.workflowGenerator ?? new WorkflowGenerator(this.schemaGenerator);
     this.planner =
-      options.planner ??
-      new CandidatePlanner(this.schemaGenerator, this.capabilityMapper, this.inferenceService);
+      options.planner ?? new CandidatePlanner(this.capabilityMapper, this.schemaGenerator);
     this.codeGenerator =
-      options.codeGenerator ??
-      new CodeGenerator(this.schemaGenerator, this.workflowGenerator, this.inferenceService);
+      options.codeGenerator ?? new CodeGenerator(this.schemaGenerator, this.workflowGenerator);
     this.selfReviewer = options.selfReviewer ?? new DeterministicSelfReviewer();
     this.repairOrchestrator =
-      options.repairOrchestrator ?? new RepairOrchestrator(this.selfReviewer);
-
+      options.repairOrchestrator ??
+      new RepairOrchestrator(this.selfReviewer, this.capabilityMapper);
     if (options.candidateRepo) {
       this.candidateRepo = options.candidateRepo;
     } else if (options.pool) {
@@ -132,7 +130,9 @@ export class CandidateGenerationService {
       workflowEvidence: opportunity.classification.description,
     });
     const sourceCode = codeResult.sourceCode;
-
+    if (codeResult.toolName) {
+      plan.name = codeResult.toolName;
+    }
     // 4. Construct initial ToolManifest with computed canonical digests
     const toolId = `tool_${hashCanonical({
       workspaceId: tenant.workspaceId,
@@ -199,14 +199,32 @@ export class CandidateGenerationService {
     }).slice(0, 16)}`;
 
     // 6. Perform Self-Review and Automated Repair Loop via RepairOrchestrator
-    const repairResult = this.repairOrchestrator.orchestrate(
+    const repairResult = await this.repairOrchestrator.orchestrateAsync(
       initialArtifacts,
       candidateId,
-      options,
+      {
+        ...options,
+        tenantId: tenant.workspaceId,
+        inferenceService: this.inferenceService,
+      },
     );
     const activeRevision = repairResult.activeRevision;
-    const finalState: CandidateState = repairResult.success ? "synthesized" : "failed";
-
+    const hasEnvelopeViolation =
+      !!options.envelope ||
+      activeRevision.selfReview.issues.some(
+        (i) => i.message.includes("envelope") || i.category === "capabilities",
+      );
+    const finalState: CandidateState = repairResult.success
+      ? "synthesized"
+      : hasEnvelopeViolation
+        ? "rejected"
+        : "failed";
+    const rejectionReason = !repairResult.success
+      ? (hasEnvelopeViolation
+          ? "Capability envelope violation: "
+          : "Repair iterations exhausted: ") +
+        activeRevision.selfReview.issues.map((i) => i.message).join("; ")
+      : undefined;
     // Attach inference provenance & metadata to active revision
     if (codeResult.provenance) {
       activeRevision.provenance = codeResult.provenance as Record<string, unknown>;
@@ -238,6 +256,7 @@ export class CandidateGenerationService {
       proposedTool: activeRevision.artifacts.manifest,
       requiredCapabilities: activeRevision.artifacts.capabilities,
       sourceCode: activeRevision.artifacts.sourceCode,
+      rejectionReason,
       createdAt: opportunity.createdAt || timestamp,
       updatedAt: timestamp,
     });
