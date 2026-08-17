@@ -9,7 +9,13 @@
   "include": ["src/**/*"],
   "references": [
     {
+      "path": "../../packages/contracts"
+    },
+    {
       "path": "../../packages/harness-contracts"
+    },
+    {
+      "path": "../../apps/observer"
     }
   ]
 }

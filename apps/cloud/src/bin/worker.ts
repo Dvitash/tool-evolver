@@ -9,6 +9,7 @@ import {
   StoreObservationBatchConsumer,
   type StoreObservationBatchPayload,
 } from "../storage/index.js";
+import { createOpportunityDetectionService } from "../evolution/opportunity/index.js";
 
 async function main() {
   const config = loadConfig();
@@ -22,6 +23,7 @@ async function main() {
   });
 
   const obsConsumer = new StoreObservationBatchConsumer(pool);
+  const opportunityService = createOpportunityDetectionService();
 
   // Register handlers
   worker.registerHandler("store-observation-batch", async (job) => {
@@ -39,6 +41,10 @@ async function main() {
 
   worker.registerHandler("artifact.sync", async (job) => {
     console.log(`[Worker] Syncing artifact for tenant ${job.tenantContext.accountId}`);
+  });
+
+  worker.registerHandler("opportunity.detect", async (job) => {
+    console.log(`[Worker] Running opportunity detection for tenant ${job.tenantContext.accountId}:${job.tenantContext.workspaceId}`);
   });
 
   console.log(`[Worker] Starting durable queue worker with concurrency ${config.queue.concurrency}...`);

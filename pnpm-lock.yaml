@@ -26,21 +26,48 @@ importers:
 
   adapters/claude-code:
     dependencies:
+      '@tool-evolver/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@tool-evolver/harness-contracts':
         specifier: workspace:*
         version: link:../../packages/harness-contracts
+      '@tool-evolver/observer':
+        specifier: workspace:*
+        version: link:../../apps/observer
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
   adapters/codex-cli:
     dependencies:
+      '@tool-evolver/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@tool-evolver/harness-contracts':
         specifier: workspace:*
         version: link:../../packages/harness-contracts
+      '@tool-evolver/observer':
+        specifier: workspace:*
+        version: link:../../apps/observer
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
   adapters/omp:
     dependencies:
+      '@tool-evolver/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@tool-evolver/harness-contracts':
         specifier: workspace:*
         version: link:../../packages/harness-contracts
+      '@tool-evolver/observer':
+        specifier: workspace:*
+        version: link:../../apps/observer
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
   apps/cli:
     dependencies:

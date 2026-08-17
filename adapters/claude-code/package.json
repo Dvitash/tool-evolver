@@ -20,6 +20,9 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@tool-evolver/harness-contracts": "workspace:*"
+    "@tool-evolver/contracts": "workspace:*",
+    "@tool-evolver/harness-contracts": "workspace:*",
+    "@tool-evolver/observer": "workspace:*",
+    "zod": "^3.25.76"
   }
 }

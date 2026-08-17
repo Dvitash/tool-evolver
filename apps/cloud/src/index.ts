@@ -4,6 +4,7 @@
  * Cloud service platform, persistence, queue, storage, and worker runtime.
  */
 
+import type { NormalizedSessionEvent } from "@tool-evolver/contracts";
 import { CloudConfig, RawCloudConfig, loadConfig } from "./config.js";
 import { DatabasePool, createDatabasePool } from "./db/client.js";
 import { runMigrations } from "./db/migrations.js";
@@ -29,6 +30,10 @@ import {
   createObservationIngestionService,
 } from "./ingestion/index.js";
 import { AuthService, createAuthService } from "./auth/index.js";
+import {
+  OpportunityDetectionService,
+  createOpportunityDetectionService,
+} from "./evolution/opportunity/index.js";
 
 // Configuration & Validation
 export * from "./config.js";
@@ -55,6 +60,9 @@ export * from "./ingestion/index.js";
 // HTTP API Server
 export * from "./server/index.js";
 
+// Evolution Opportunity Detection Engine
+export * from "./evolution/opportunity/index.js";
+
 /**
  * Unified Cloud Service container aggregating persistence, storage,
  * queue, server, and background workers.
@@ -77,6 +85,7 @@ export class CloudService {
   readonly observationConsumer: StoreObservationBatchConsumer;
   readonly retentionService: RetentionService;
   readonly exportService: ExportService;
+  readonly opportunityService: OpportunityDetectionService;
 
   private isInitialized = false;
 
@@ -116,6 +125,41 @@ export class CloudService {
       sessionRepo: this.sessionRepo,
       evidenceRepo: this.evidenceRepo,
       retentionRepo: this.retentionRepo,
+    });
+    this.opportunityService = createOpportunityDetectionService();
+
+    this.worker.registerHandler("opportunity.detect", async (job) => {
+      const tenant = job.tenantContext;
+      const payload = job.payload as { sessionIds?: string[] } | undefined;
+      if (payload?.sessionIds && payload.sessionIds.length > 0) {
+        for (const sessId of payload.sessionIds) {
+          const queryResult = await this.observationRepo.queryEvents({
+            accountId: tenant.accountId,
+            workspaceId: tenant.workspaceId,
+            sessionId: sessId,
+            limit: 500,
+          });
+          if (queryResult.events.length > 0) {
+            const sessionEvents: NormalizedSessionEvent[] = queryResult.events.map((entity) => ({
+              eventId: entity.id,
+              sessionId: entity.sessionId,
+              timestamp: entity.timestamp,
+              type: entity.eventType as NormalizedSessionEvent["type"],
+              schemaVersion: entity.schemaVersion,
+              causalRef: {
+                causalSequence: entity.causalSequence,
+                parentId: entity.parentId ?? undefined,
+                rootId: entity.rootId ?? undefined,
+                turnIndex: entity.turnIndex ?? undefined,
+                stepIndex: entity.stepIndex ?? undefined,
+              },
+              redaction: entity.redaction ?? { isRedacted: false, rulesApplied: [] },
+              ...entity.payload,
+            } as unknown as NormalizedSessionEvent));
+            await this.opportunityService.processSessionEvents(tenant, sessionEvents);
+          }
+        }
+      }
     });
 
     this.worker.registerHandler("store-observation-batch", async (job) => {

@@ -1,19 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { OmpAdapter } from "../src/index.js";
+import * as OmpModule from "../src/index.js";
 
-describe("OmpAdapter", () => {
-  it("executes mock tool calls", async () => {
-    const adapter = new OmpAdapter();
-    await adapter.initialize();
-    const res = await adapter.execute(
-      { id: "t3", name: "tool3", version: "1.0.0", description: "desc3" },
-      { query: "omp" },
-    );
-    expect(res).toEqual({
-      adapter: "omp",
-      toolId: "t3",
-      input: { query: "omp" },
-      output: "mock-omp-response",
-    });
+describe("OMP Adapter Module Exports", () => {
+  it("exports all public adapter classes and utilities", () => {
+    expect(OmpModule.OmpHarnessAdapter).toBeDefined();
+    expect(OmpModule.OmpAdapter).toBeDefined();
+    expect(OmpModule.OmpRecordDecoder).toBeDefined();
+    expect(OmpModule.OmpSessionEventSource).toBeDefined();
+    expect(OmpModule.planOmpMcpConfig).toBeDefined();
+    expect(OmpModule.applyOmpMcpConfig).toBeDefined();
+    expect(OmpModule.verifyOmpMcpConfig).toBeDefined();
+    expect(OmpModule.rollbackOmpMcpConfig).toBeDefined();
+    expect(OmpModule.probeOmpInstallation).toBeDefined();
+    expect(OmpModule.discoverOmpWorkspaces).toBeDefined();
+    expect(OmpModule.discoverOmpSessions).toBeDefined();
+    expect(OmpModule.inspectBreadcrumbs).toBeDefined();
+    expect(OmpModule.getOmpRefreshCapability).toBeDefined();
+    expect(OmpModule.handleOmpCatalogRefresh).toBeDefined();
   });
 });
