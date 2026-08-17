@@ -1,0 +1,27 @@
+{
+  "name": "@tool-evolver/gateway",
+  "version": "0.1.0",
+  "description": "Gateway application routing requests and dispatching runs.",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@tool-evolver/contracts": "workspace:*",
+    "@tool-evolver/protocol": "workspace:*",
+    "@tool-evolver/runtime": "workspace:*"
+  }
+}
