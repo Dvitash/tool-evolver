@@ -5,6 +5,7 @@ import {
   ToolParameterSchema,
   ToolRuntimeRequirementSchema,
 } from "@tool-evolver/contracts";
+import type { SafetyGateEvaluator } from "@tool-evolver/runtime";
 import type { ToolRegistry } from "../registry/registry.js";
 import type { RegistryTool } from "../registry/types.js";
 import { computeManifestDigest } from "../registry/validator.js";
@@ -295,6 +296,7 @@ export const MANAGE_TOOLS_MANIFEST: ToolManifest = {
 export function createSystemMetaTools(
   registry: ToolRegistry,
   invocationRouter?: ToolInvocationRouter,
+  safetyGateEvaluator?: SafetyGateEvaluator,
 ): RegistryTool[] {
   const router = invocationRouter ?? new DefaultToolInvocationRouter(registry);
 
@@ -336,7 +338,7 @@ export function createSystemMetaTools(
     description: INVOKE_TOOL_MANIFEST.description,
     parameters: INVOKE_TOOL_MANIFEST.parameters as Record<string, unknown>,
     manifest: INVOKE_TOOL_MANIFEST,
-    handler: createInvokeToolHandler(registry, router),
+    handler: createInvokeToolHandler(registry, router, safetyGateEvaluator),
     isSystem: true,
   };
 
@@ -350,9 +352,8 @@ export function createSystemMetaTools(
     description: MANAGE_TOOLS_MANIFEST.description,
     parameters: MANAGE_TOOLS_MANIFEST.parameters as Record<string, unknown>,
     manifest: MANAGE_TOOLS_MANIFEST,
-    handler: createManageToolsHandler(registry),
+    handler: createManageToolsHandler(registry, safetyGateEvaluator),
     isSystem: true,
   };
-
   return [searchTool, schemaTool, invokeTool, manageTool];
 }

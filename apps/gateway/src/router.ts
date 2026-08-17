@@ -1,3 +1,5 @@
+import { isSafetyGateBypassTool } from "@tool-evolver/contracts";
+import type { SafetyGateEvaluator } from "@tool-evolver/runtime";
 import type { ToolInvocationRouter } from "./meta/router-contract.js";
 import { MCP_ERROR_CODES, McpProtocolError } from "./protocol/errors.js";
 import type { CallToolResult, McpTool, McpToolInput } from "./protocol/types.js";
@@ -32,8 +34,8 @@ export interface RegisteredTool {
   tool: McpTool;
   handler: ToolHandler;
   workspaceId?: string;
+  isSystem?: boolean;
 }
-
 /**
  * Fake in-memory GatewayRouter implementation for testing and development.
  */
@@ -41,9 +43,15 @@ export class FakeGatewayRouter implements GatewayRouter {
   private readonly tools = new Map<string, RegisteredTool>();
   private readonly listeners = new Set<() => void>();
   private readonly delays = new Map<string, number>();
+  private safetyGateEvaluator?: SafetyGateEvaluator;
 
-  constructor() {
+  constructor(safetyGateEvaluator?: SafetyGateEvaluator) {
+    this.safetyGateEvaluator = safetyGateEvaluator;
     this.registerDefaultTools();
+  }
+
+  setSafetyGateEvaluator(evaluator: SafetyGateEvaluator): void {
+    this.safetyGateEvaluator = evaluator;
   }
 
   private registerDefaultTools(): void {
@@ -231,6 +239,20 @@ export class FakeGatewayRouter implements GatewayRouter {
     if (!entry) {
       throw new McpProtocolError(MCP_ERROR_CODES.TOOL_NOT_FOUND, `Tool '${name}' not found`);
     }
+    if (this.safetyGateEvaluator && !entry.isSystem && !isSafetyGateBypassTool(name)) {
+      const gateCheck = this.safetyGateEvaluator.canExecuteTool(
+        name,
+        name,
+        Boolean(entry.isSystem),
+      );
+      if (!gateCheck.allowed && gateCheck.refusal) {
+        return {
+          isError: true,
+          content: gateCheck.refusal.content,
+          _meta: { refusal: gateCheck.refusal },
+        };
+      }
+    }
 
     const delay = this.delays.get(name);
     if (delay && delay > 0) {
@@ -291,9 +313,18 @@ export class RegistryGatewayRouter implements GatewayRouter {
   private readonly registry: ToolRegistry;
   private readonly listeners = new Set<() => void>();
   private readonly unsubscribeEvents?: () => void;
+  private safetyGateEvaluator?: SafetyGateEvaluator;
 
-  constructor(registry: ToolRegistry, invocationRouter?: ToolInvocationRouter) {
+  constructor(
+    registry: ToolRegistry,
+    invocationRouter?: ToolInvocationRouter,
+    safetyGateEvaluator?: SafetyGateEvaluator,
+  ) {
     this.registry = registry;
+    this.safetyGateEvaluator = safetyGateEvaluator ?? registry.getSafetyGateEvaluator();
+    if (safetyGateEvaluator) {
+      this.registry.setSafetyGateEvaluator(safetyGateEvaluator);
+    }
     if (invocationRouter) {
       this.registry.setInvocationRouter(invocationRouter);
     }
@@ -302,6 +333,13 @@ export class RegistryGatewayRouter implements GatewayRouter {
     });
   }
 
+  setSafetyGateEvaluator(evaluator: SafetyGateEvaluator): void {
+    this.safetyGateEvaluator = evaluator;
+    this.registry.setSafetyGateEvaluator(evaluator);
+  }
+  getSafetyGateEvaluator(): SafetyGateEvaluator | undefined {
+    return this.safetyGateEvaluator;
+  }
   async listTools(context: WorkspaceContext): Promise<McpTool[]> {
     const snapshot = await this.registry.resolveCatalog(context.workspaceId, context.sessionId);
     const mcpTools: McpTool[] = [];
@@ -356,6 +394,26 @@ export class RegistryGatewayRouter implements GatewayRouter {
         MCP_ERROR_CODES.TOOL_NOT_FOUND,
         `Tool '${name}' is disabled in this workspace`,
       );
+    }
+    // Enforce production safety gate on non-system tools
+    if (
+      this.safetyGateEvaluator &&
+      !tool.isSystem &&
+      !isSafetyGateBypassTool(name) &&
+      !isSafetyGateBypassTool(tool.toolId)
+    ) {
+      const gateCheck = this.safetyGateEvaluator.canExecuteTool(
+        tool.toolId,
+        tool.name,
+        Boolean(tool.isSystem),
+      );
+      if (!gateCheck.allowed && gateCheck.refusal) {
+        return {
+          isError: true,
+          content: gateCheck.refusal.content,
+          _meta: { refusal: gateCheck.refusal },
+        };
+      }
     }
 
     if (tool.handler) {
@@ -413,6 +471,7 @@ export class RegistryGatewayRouter implements GatewayRouter {
 export function createRegistryGatewayRouter(
   registry: ToolRegistry,
   invocationRouter?: ToolInvocationRouter,
+  safetyGateEvaluator?: SafetyGateEvaluator,
 ): RegistryGatewayRouter {
-  return new RegistryGatewayRouter(registry, invocationRouter);
+  return new RegistryGatewayRouter(registry, invocationRouter, safetyGateEvaluator);
 }

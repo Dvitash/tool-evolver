@@ -1,5 +1,6 @@
 import child_process from "node:child_process";
 import process from "node:process";
+import { UNSAFE_ENV_PREFIX } from "@tool-evolver/contracts";
 import type { Logger } from "./lifecycle.js";
 
 export type WorkerStatus =
@@ -63,9 +64,12 @@ export function buildSanitizedEnv(
 ): Record<string, string> {
   const result: Record<string, string> = {};
 
+  const isBlocked = (k: string): boolean =>
+    SENSITIVE_ENV_KEYS.includes(k) || k.startsWith(UNSAFE_ENV_PREFIX);
+
   if (inherit) {
     for (const [k, v] of Object.entries(process.env)) {
-      if (v !== undefined && !SENSITIVE_ENV_KEYS.includes(k)) {
+      if (v !== undefined && !isBlocked(k)) {
         result[k] = v;
       }
     }
@@ -84,15 +88,22 @@ export function buildSanitizedEnv(
     ];
     for (const key of safeKeys) {
       const val = process.env[key];
-      if (val !== undefined) {
+      if (val !== undefined && !isBlocked(key)) {
         result[key] = val;
       }
     }
   }
 
   for (const [k, v] of Object.entries(customEnv)) {
-    if (v !== undefined) {
+    if (v !== undefined && !isBlocked(k)) {
       result[k] = v;
+    }
+  }
+
+  // Final defensive cleanup to guarantee no unsafe dev overrides leak
+  for (const key of Object.keys(result)) {
+    if (key.startsWith(UNSAFE_ENV_PREFIX)) {
+      delete result[key];
     }
   }
 

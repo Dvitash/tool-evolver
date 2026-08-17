@@ -1,3 +1,4 @@
+import type { SafetyGateEvaluator } from "@tool-evolver/runtime";
 import type { CallToolResult } from "../protocol/types.js";
 import type { ToolRegistry } from "../registry/registry.js";
 import type { ToolCallOptions, ToolHandler } from "../router.js";
@@ -43,7 +44,10 @@ function isSystemTool(toolIdOrName: string): boolean {
 /**
  * Factory for creating the manage_tools handler.
  */
-export function createManageToolsHandler(registry: ToolRegistry): ToolHandler {
+export function createManageToolsHandler(
+  registry: ToolRegistry,
+  safetyGateEvaluator?: SafetyGateEvaluator,
+): ToolHandler {
   return async (
     context: WorkspaceContext,
     rawParams: Record<string, unknown>,
@@ -204,6 +208,7 @@ export function createManageToolsHandler(registry: ToolRegistry): ToolHandler {
           activeVersion = latestVer ?? matching[0].version;
         }
 
+        const gateStatus = safetyGateEvaluator ? safetyGateEvaluator.getStatus() : undefined;
         return {
           content: [
             {
@@ -218,6 +223,7 @@ export function createManageToolsHandler(registry: ToolRegistry): ToolHandler {
                   isSystem: Boolean(primaryTool.isSystem),
                   installedVersions: matching.map((t) => t.version),
                   rollbacks: controls.rollbacks ?? [],
+                  ...(gateStatus ? { safetyGate: gateStatus } : {}),
                 },
                 null,
                 2,

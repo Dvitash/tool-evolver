@@ -10,6 +10,7 @@ import {
   type ToolVersion,
   ToolVersionSchema,
 } from "@tool-evolver/contracts";
+import type { SafetyGateEvaluator } from "@tool-evolver/runtime";
 import {
   type ToolInvocationRouter,
   createSystemMetaTools,
@@ -77,7 +78,7 @@ export class ToolRegistry {
   // toolId -> latest registered version string
   private readonly latestVersions = new Map<string, string>();
   private invocationRouter?: ToolInvocationRouter;
-
+  private safetyGateEvaluator?: SafetyGateEvaluator;
   // Scope activations: scopeKey -> Map<toolId, version>
   // System scope
   private readonly systemActiveTools = new Map<string, string>();
@@ -100,8 +101,8 @@ export class ToolRegistry {
     this.controls = new UserControlsManager(options?.db);
     this.events = new CatalogChangeEventEmitter({ debounceMs: options?.debounceMs });
     this.invocationRouter = options?.invocationRouter;
+    this.safetyGateEvaluator = options?.safetyGateEvaluator;
     this.initSystemMetaTools();
-
     if (options?.initialTools) {
       for (const tool of options.initialTools) {
         this.registerToolSync(tool);
@@ -117,8 +118,20 @@ export class ToolRegistry {
     this.initSystemMetaTools();
   }
 
+  /**
+   * Sets or updates the safety gate evaluator.
+   */
+  setSafetyGateEvaluator(evaluator: SafetyGateEvaluator): void {
+    this.safetyGateEvaluator = evaluator;
+    this.initSystemMetaTools();
+  }
+
+  getSafetyGateEvaluator(): SafetyGateEvaluator | undefined {
+    return this.safetyGateEvaluator;
+  }
+
   private initSystemMetaTools(): void {
-    const metaTools = createSystemMetaTools(this, this.invocationRouter);
+    const metaTools = createSystemMetaTools(this, this.invocationRouter, this.safetyGateEvaluator);
     for (const tool of metaTools) {
       this.registerToolSync(tool);
     }

@@ -10,6 +10,9 @@ export * from "./bundle/builder.js";
 // Bundle Cryptographic Signatures & Key Store
 export * from "./bundle/signature.js";
 
+// Production Readiness Safety Gate & Attestation Verification
+export * from "./safety-gate/index.js";
+
 // Loader Security & Path Traversal Checks
 export * from "./loader/security-checks.js";
 

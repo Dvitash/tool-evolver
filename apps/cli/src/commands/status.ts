@@ -4,6 +4,8 @@ import process from "node:process";
 import { probeClaudeInstallation, verifyClaudeMcpConfig } from "@tool-evolver/adapter-claude-code";
 import { probeCodexInstallation, verifyCodexMcpConfig } from "@tool-evolver/adapter-codex";
 import { probeOmpInstallation, verifyOmpMcpConfig } from "@tool-evolver/adapter-omp";
+import type { ProductionSafetyGateStatus, SafetyAttestationRecord } from "@tool-evolver/contracts";
+import { SafetyGateEvaluator } from "@tool-evolver/runtime";
 const SYSTEM_META_TOOL_NAMES = [
   "search_tools",
   "get_tool_schema",
@@ -52,8 +54,8 @@ export interface DaemonStatusSummary {
     metaTools: string[];
     activeCustomToolsCount: number;
   };
+  safetyGate?: ProductionSafetyGateStatus;
   harnesses: Array<{
-    id: string;
     name: string;
     installed: boolean;
     configured: boolean;
@@ -216,6 +218,28 @@ export async function collectStatus(options: {
     },
   ];
 
+  // Safety Gate Status Evaluation
+  let attestationRecord: SafetyAttestationRecord | null = null;
+  const attestationPaths = [
+    path.join(customHome, ".tool-evolver", "safety-attestation.json"),
+    path.join(daemonPaths.configDir, "safety-attestation.json"),
+  ];
+  for (const attPath of attestationPaths) {
+    const raw = await fsBridge.readFile(attPath);
+    if (raw) {
+      try {
+        attestationRecord = JSON.parse(raw);
+        break;
+      } catch {
+        // Ignore JSON parse error and keep searching or fail closed
+      }
+    }
+  }
+
+  const safetyEvaluator = new SafetyGateEvaluator({
+    attestation: attestationRecord,
+  });
+  const safetyGate = safetyEvaluator.getStatus();
   const metaToolNames = [...SYSTEM_META_TOOL_NAMES];
 
   return {
@@ -235,6 +259,7 @@ export async function collectStatus(options: {
       error: ipcConnected ? undefined : ipcError,
     },
     cloud: cloudStatus,
+    safetyGate,
     tools: {
       metaToolsCount: metaToolNames.length,
       metaTools: metaToolNames,
@@ -243,7 +268,6 @@ export async function collectStatus(options: {
     harnesses,
   };
 }
-
 export function formatStatusForTerminal(summary: DaemonStatusSummary): string {
   const lines: string[] = [];
 
@@ -277,7 +301,28 @@ export function formatStatusForTerminal(summary: DaemonStatusSummary): string {
     lines.push(`  IPC Status: Offline (${summary.ipc.error ?? "disconnected"})`);
   }
 
-  // Cloud Section
+  // Safety Gate Section
+  if (summary.safetyGate) {
+    lines.push("\n[Production Safety Gate]");
+    const gateState = summary.safetyGate.isOpen
+      ? summary.safetyGate.unsafeOverrideActive
+        ? "OVERRIDE (unsafe dev mode)"
+        : "PASS (open)"
+      : "BLOCKED (fail-closed)";
+    lines.push(`  Status:     ${gateState}`);
+    lines.push(
+      `  Versions:   Runtime v${summary.safetyGate.versions.runtimeVersion} | Broker v${summary.safetyGate.versions.brokerProtocolVersion} | Verifier v${summary.safetyGate.versions.bundleVerifierVersion} | Policy v${summary.safetyGate.versions.policyVersion}`,
+    );
+    if (summary.safetyGate.reasons.length > 0) {
+      lines.push(`  Details:    ${summary.safetyGate.reasons.join("; ")}`);
+    }
+    if (summary.safetyGate.unmetRequirements.length > 0) {
+      for (const unmet of summary.safetyGate.unmetRequirements) {
+        lines.push(`  Unmet:      [${unmet.code}] ${unmet.message}`);
+        lines.push(`  Remedy:     ${unmet.remediation}`);
+      }
+    }
+  }
   lines.push("\n[Cloud Authentication]");
   if (summary.cloud.authenticated) {
     const expText = summary.cloud.expired ? "EXPIRED" : "VALID";
