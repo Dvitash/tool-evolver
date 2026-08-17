@@ -224,3 +224,4 @@ describe("verify-binaries", () => {
     });
   });
 });
+// canary branch protection verification test
