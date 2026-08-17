@@ -92,6 +92,7 @@ export class FakeModelProvider implements ModelProvider {
     options: {
       id?: string;
       name?: string;
+      defaultModel?: string;
       capabilities?: ModelCapability[];
       simulatedLatencyMs?: number;
     } = {},
@@ -99,9 +100,10 @@ export class FakeModelProvider implements ModelProvider {
     this.id = options.id ?? "fake-provider";
     this.name = options.name ?? "Fake In-Memory Model Provider";
     this.simulatedLatencyMs = options.simulatedLatencyMs ?? 0;
+    const modelName = options.defaultModel ?? "fake-default-model";
     this.capabilities = options.capabilities ?? [
       {
-        name: "fake-default-model",
+        name: modelName,
         supportedTaskClasses: [
           "opportunity_detection",
           "candidate_planning",
@@ -140,6 +142,13 @@ export class FakeModelProvider implements ModelProvider {
     const genFn =
       typeof generator === "function" ? (generator as MockResponseGenerator) : () => generator;
     this.mockResponses.unshift({ matcher, generator: genFn });
+  }
+
+  registerMockResponse(
+    matcher: (req: ProviderExecutionRequest) => boolean,
+    generator: MockResponseGenerator | unknown,
+  ): void {
+    this.setMockResponse(matcher, generator);
   }
 
   /**
@@ -324,6 +333,42 @@ export class FakeModelProvider implements ModelProvider {
         },
         code: "export async function run(args: { path: string }) { return Deno.readTextFile(args.path); }",
         runtimeRequirements: ["deno:fs_read"],
+      };
+    }
+    // Schema Generation
+    if (
+      schemaName.includes("schema_generation") ||
+      system.includes("schema generation") ||
+      userMsg.includes("derive input and output schemas")
+    ) {
+      return {
+        toolName: "data_transformer",
+        description: "Transforms input records according to workflow specifications.",
+        parameters: [
+          {
+            name: "items",
+            type: "array",
+            description: "List of data items to process",
+            required: true,
+          },
+          {
+            name: "filterMode",
+            type: "string",
+            description: "Filtering mode to apply",
+            required: false,
+            defaultValue: "all",
+          },
+        ],
+        outputSchema: {
+          type: "object",
+          description: "Processed result data",
+          properties: {
+            transformed: { type: "array", description: "Array of transformed items" },
+            count: { type: "number", description: "Number of processed records" },
+          },
+          required: ["transformed", "count"],
+        },
+        validationRules: ["items must be a non-empty array"],
       };
     }
 

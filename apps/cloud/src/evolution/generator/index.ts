@@ -11,3 +11,4 @@ export * from "./self-reviewer.js";
 export * from "./repair-orchestrator.js";
 export * from "./planner.js";
 export * from "./service.js";
+export * from "./repositories/index.js";

@@ -44,19 +44,26 @@ export class RepairOrchestrator {
       ...initialArtifacts,
       manifest: {
         ...initialArtifacts.manifest,
-        digest: hashCanonical(initialArtifacts.manifest),
+        digest: initialArtifacts.manifest.digest,
       },
     };
 
     let reviewVerdict = this.selfReviewer.review(currentArtifacts, envelope);
+    const initialRevisionId = `rev-${hashCanonical({
+      candidateId,
+      sourceDigest: hashCanonical(currentArtifacts.sourceCode),
+      manifestDigest: currentArtifacts.manifest.digest,
+      iteration: 1,
+    }).slice(0, 16)}`;
+
     let currentRevision: CandidateRevision = {
-      revisionId: `rev-${randomUUID()}`,
+      revisionId: initialRevisionId,
       candidateId,
       revisionNumber: 1,
       artifacts: currentArtifacts,
       selfReview: reviewVerdict,
       repairHistory: [],
-      createdAt: new Date().toISOString(),
+      createdAt: initialArtifacts.generatedAt,
     };
     revisions.push(currentRevision);
 
@@ -86,14 +93,30 @@ export class RepairOrchestrator {
         manifest: {
           ...repairedArtifacts.manifest,
           capabilities: repairedArtifacts.capabilities,
-          digest: hashCanonical(repairedArtifacts.manifest),
+          digest: hashCanonical({
+            id: repairedArtifacts.manifest.id,
+            name: repairedArtifacts.manifest.name,
+            version: repairedArtifacts.manifest.version,
+            description: repairedArtifacts.manifest.description,
+            parameters: repairedArtifacts.manifest.parameters,
+            outputSchema: repairedArtifacts.manifest.outputSchema,
+            capabilities: repairedArtifacts.capabilities,
+            runtime: repairedArtifacts.manifest.runtime,
+          }),
         },
       };
 
       reviewVerdict = this.selfReviewer.review(currentArtifacts, envelope);
 
+      const nextRevisionId = `rev-${hashCanonical({
+        candidateId,
+        sourceDigest: hashCanonical(currentArtifacts.sourceCode),
+        manifestDigest: currentArtifacts.manifest.digest,
+        iteration,
+      }).slice(0, 16)}`;
+
       currentRevision = {
-        revisionId: `rev-${randomUUID()}`,
+        revisionId: nextRevisionId,
         candidateId,
         revisionNumber: iteration,
         parentRevisionId: previousRevisionId,
@@ -105,10 +128,10 @@ export class RepairOrchestrator {
             iteration,
             reason: `Repaired ${fixedIssues.length} issue(s) detected during self-review`,
             fixedIssues,
-            timestamp: new Date().toISOString(),
+            timestamp: initialArtifacts.generatedAt,
           },
         ],
-        createdAt: new Date().toISOString(),
+        createdAt: initialArtifacts.generatedAt,
       };
       revisions.push(currentRevision);
 

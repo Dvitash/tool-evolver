@@ -69,11 +69,63 @@ export const CandidatePlanningOutputSchema = z.object({
   targetToolName: z.string(),
   action: z.enum(["create", "modify", "deprecate"]),
   summary: z.string(),
-  interfaceChanges: z.array(z.string()),
-  securityRisks: z.array(z.string()),
+  interfaceChanges: z.array(z.string()).default([]),
+  securityRisks: z.array(z.string()).default([]),
   estimatedImpact: z.string(),
+  suggestedInputs: z
+    .array(
+      z.object({
+        name: z.string(),
+        type: z.enum(["string", "number", "boolean", "array", "object"]),
+        description: z.string(),
+        required: z.boolean().default(true),
+        defaultValue: z.unknown().optional(),
+      }),
+    )
+    .optional(),
+  suggestedOutputs: z
+    .array(
+      z.object({
+        name: z.string(),
+        type: z.string(),
+        description: z.string(),
+      }),
+    )
+    .optional(),
+  transformationRules: z.array(z.string()).optional(),
+  runtimeRequirements: z.array(z.string()).optional(),
 });
 export type CandidatePlanningOutput = z.infer<typeof CandidatePlanningOutputSchema>;
+
+export const SchemaGenerationOutputSchema = z.object({
+  toolName: z.string(),
+  description: z.string(),
+  parameters: z.array(
+    z.object({
+      name: z.string(),
+      type: z.enum(["string", "number", "boolean", "array", "object"]),
+      description: z.string(),
+      required: z.boolean().default(true),
+      defaultValue: z.unknown().optional(),
+      enumValues: z.array(z.string()).optional(),
+    }),
+  ),
+  outputSchema: z.object({
+    type: z.string().default("object"),
+    description: z.string().optional(),
+    properties: z
+      .record(
+        z.object({
+          type: z.string(),
+          description: z.string().optional(),
+        }),
+      )
+      .optional(),
+    required: z.array(z.string()).optional(),
+  }),
+  validationRules: z.array(z.string()).optional(),
+});
+export type SchemaGenerationOutput = z.infer<typeof SchemaGenerationOutputSchema>;
 
 export const ToolSynthesisOutputSchema = z.object({
   toolId: z.string(),
@@ -83,6 +135,9 @@ export const ToolSynthesisOutputSchema = z.object({
   schema: z.record(z.unknown()),
   code: z.string(),
   runtimeRequirements: z.array(z.string()),
+  helperFunctions: z.string().optional(),
+  transformationLogic: z.string().optional(),
+  executionBody: z.string().optional(),
 });
 export type ToolSynthesisOutput = z.infer<typeof ToolSynthesisOutputSchema>;
 
@@ -334,6 +389,49 @@ export class PromptRegistry {
           "securityRisks",
           "estimatedImpact",
         ],
+      },
+    });
+    // Schema Generation
+    this.register({
+      id: "schema_generation",
+      version: "1.0.0",
+      taskClass: "candidate_planning",
+      description: "Generates input/output parameter schemas and types from workflow evidence.",
+      systemInstruction:
+        "You are the Tool Evolver Schema Generation Engine. Analyze the sanitized workflow evidence, observed parameter types, and intent. Synthesize precise MCP-compatible parameter schemas and return types. Output structured JSON matching the specified schema.",
+      userTemplate:
+        "Tool Name: {{toolName}}\nDescription: {{description}}\nWorkflow Evidence:\n{{workflowEvidence}}\nObserved Variables:\n{{observedVariables}}\nDerive input and output schemas.",
+      outputSchema: SchemaGenerationOutputSchema,
+      jsonSchema: {
+        type: "object",
+        properties: {
+          toolName: { type: "string" },
+          description: { type: "string" },
+          parameters: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                type: { type: "string", enum: ["string", "number", "boolean", "array", "object"] },
+                description: { type: "string" },
+                required: { type: "boolean" },
+              },
+              required: ["name", "type", "description", "required"],
+            },
+          },
+          outputSchema: {
+            type: "object",
+            properties: {
+              type: { type: "string" },
+              description: { type: "string" },
+              properties: { type: "object" },
+              required: { type: "array", items: { type: "string" } },
+            },
+            required: ["type"],
+          },
+        },
+        required: ["toolName", "description", "parameters", "outputSchema"],
       },
     });
 

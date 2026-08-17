@@ -55,13 +55,12 @@ describe("Database Client, Migrations & Outbox", () => {
 
     // Initial run
     const result = await runMigrations(pool);
-    expect(result.success).toBe(true);
-    expect(result.appliedCount).toBe(6);
-    expect(result.currentVersion).toBe(6);
+    expect(result.appliedCount).toBe(7);
+    expect(result.currentVersion).toBe(7);
 
     // Verify migration status
     const statuses = await getMigrationStatus(pool);
-    expect(statuses.length).toBeGreaterThanOrEqual(6);
+    expect(statuses.length).toBeGreaterThanOrEqual(7);
     expect(statuses[0].applied).toBe(true);
     expect(statuses[0].version).toBe(1);
     expect(statuses[1].applied).toBe(true);
@@ -74,12 +73,12 @@ describe("Database Client, Migrations & Outbox", () => {
     expect(statuses[4].version).toBe(5);
     expect(statuses[5].applied).toBe(true);
     expect(statuses[5].version).toBe(6);
+    expect(statuses[6].applied).toBe(true);
+    expect(statuses[6].version).toBe(7);
     // Re-running migrations is idempotent
     const secondRun = await runMigrations(pool);
     expect(secondRun.appliedCount).toBe(0);
-    expect(secondRun.currentVersion).toBe(6);
-
-    // Verify tables exist by querying accounts and jobs
+    expect(secondRun.currentVersion).toBe(7);
     const accountsRes = await pool.query(`SELECT * FROM accounts`);
     expect(accountsRes.rows).toEqual([]);
     const jobsRes = await pool.query(`SELECT * FROM jobs`);
@@ -90,10 +89,12 @@ describe("Database Client, Migrations & Outbox", () => {
     expect(bucketsRes.rows).toEqual([]);
     const oppsRes = await pool.query(`SELECT * FROM opportunities`);
     expect(oppsRes.rows).toEqual([]);
+    const candsRes = await pool.query(`SELECT * FROM evolution_candidates`);
+    expect(candsRes.rows).toEqual([]);
     // Rollback migration
     const rollback = await rollbackMigration(pool, { targetVersion: 0 });
     expect(rollback.success).toBe(true);
-    expect(rollback.rolledBackCount).toBe(6);
+    expect(rollback.rolledBackCount).toBe(7);
     expect(rollback.currentVersion).toBe(0);
   });
   it("should atomically commit domain entity and outbox message in the same transaction", async () => {

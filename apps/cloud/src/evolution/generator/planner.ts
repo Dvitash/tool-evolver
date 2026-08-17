@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { CapabilityEnvelope, ToolRuntimeRequirement } from "@tool-evolver/contracts";
+import {
+  type CandidatePlanningOutput,
+  CandidatePlanningOutputSchema,
+} from "../../models/prompt-registry.js";
+import type { InferenceService } from "../../models/service.js";
+import type { InferenceProvenance } from "../../models/types.js";
 import type { OpportunityDetection, WorkflowCluster } from "../opportunity/types.js";
 import { CapabilityMapper } from "./capability-mapper.js";
 import { SchemaGenerator } from "./schema-generator.js";
@@ -18,6 +24,8 @@ export interface PlannerOptions {
   cluster?: WorkflowCluster;
   targetType?: "single_tool" | "workflow";
   forceWorkflow?: boolean;
+  inferenceService?: InferenceService;
+  tenantId?: string;
 }
 
 /**
@@ -26,10 +34,150 @@ export interface PlannerOptions {
 export class CandidatePlanner {
   private readonly schemaGenerator: SchemaGenerator;
   private readonly capabilityMapper: CapabilityMapper;
+  private readonly inferenceService?: InferenceService;
 
-  constructor(schemaGenerator?: SchemaGenerator, capabilityMapper?: CapabilityMapper) {
+  constructor(
+    schemaGenerator?: SchemaGenerator,
+    capabilityMapper?: CapabilityMapper,
+    inferenceService?: InferenceService,
+  ) {
     this.schemaGenerator = schemaGenerator ?? new SchemaGenerator();
     this.capabilityMapper = capabilityMapper ?? new CapabilityMapper();
+    this.inferenceService = inferenceService;
+  }
+
+  /**
+   * Plans a candidate tool or workflow asynchronously using structured inference when available.
+   */
+  async planAsync(
+    opportunity: OpportunityDetection,
+    options: PlannerOptions = {},
+  ): Promise<ToolPlan> {
+    const inferService = options.inferenceService ?? this.inferenceService;
+    if (!inferService) {
+      return this.plan(opportunity, options);
+    }
+
+    const classification = opportunity.classification;
+    const sanitizedWorkflowEvidence = JSON.stringify({
+      pattern: classification.pattern,
+      inferredInputs: classification.inferredInputs,
+      suggestedToolName: classification.suggestedToolName,
+      distinctSessions: opportunity.distinctSessionCount,
+      occurrenceCount: opportunity.occurrenceCount,
+      triggerReason: opportunity.triggerReason,
+    });
+
+    let inferenceOutput: CandidatePlanningOutput | undefined;
+    let planningProvenance: InferenceProvenance | undefined;
+
+    try {
+      const response = await inferService.infer<Record<string, unknown>, CandidatePlanningOutput>({
+        tenantId: options.tenantId ?? opportunity.workspaceId,
+        taskClass: "candidate_planning",
+        promptTemplateId: "candidate_planning",
+        inputs: {
+          opportunityId: opportunity.id,
+          opportunityDetails: `Title: ${classification.title}\nDescription: ${classification.description}\nPattern: ${classification.pattern}\nTrigger: ${opportunity.triggerReason}`,
+          workflowEvidence: sanitizedWorkflowEvidence,
+          currentManifest: JSON.stringify(options.envelope ?? {}),
+          targetType: options.targetType ?? "single_tool",
+        },
+      });
+      inferenceOutput = CandidatePlanningOutputSchema.parse(response.output);
+      planningProvenance = response.provenance;
+    } catch {
+      // Fallback cleanly to deterministic planning on inference error
+      return this.plan(opportunity, options);
+    }
+
+    // 1. Determine target type
+    const taskClass = classification.taskClass;
+    const isWorkflow =
+      options.forceWorkflow ||
+      options.targetType === "workflow" ||
+      taskClass === "multi_step" ||
+      taskClass === "multi_step_workflow" ||
+      classification.pattern.includes("->") ||
+      classification.pattern.includes("chained");
+
+    // 2. Derive sanitized name and description from model output if available, preserving safety
+    const targetName =
+      inferenceOutput?.targetToolName || classification.suggestedToolName || classification.title;
+    const name = this.sanitizeIdentifier(targetName || `tool_${opportunity.id.slice(0, 8)}`);
+    const description =
+      inferenceOutput?.summary ||
+      classification.description ||
+      `Synthesized tool for pattern: ${classification.pattern}`;
+    const intent = classification.title || description;
+
+    // 3. Extract variable and invariant inputs
+    const { variableInputs, invariantInputs } = this.extractInputs(opportunity);
+    if (inferenceOutput?.suggestedInputs) {
+      for (const suggested of inferenceOutput.suggestedInputs) {
+        if (!variableInputs.some((v) => v.name === suggested.name)) {
+          variableInputs.push({
+            name: this.sanitizeIdentifier(suggested.name),
+            type: suggested.type,
+            description: suggested.description,
+            required: suggested.required,
+            defaultValue: suggested.defaultValue,
+          });
+        }
+      }
+    }
+
+    // 4. Construct workflow steps
+    const targetType: "single_tool" | "workflow" = isWorkflow ? "workflow" : "single_tool";
+    const steps = this.constructSteps(opportunity, targetType, variableInputs);
+
+    // 5. Derive schemas
+    const inputSchema = this.schemaGenerator.deriveInputSchema(variableInputs);
+    const outputSchema = this.schemaGenerator.deriveOutputSchema(
+      classification.candidateOutputSchema,
+      steps,
+      targetType,
+    );
+
+    // 6. Derive capability requirements strictly bounded by envelope
+    const capabilityRequirements = this.capabilityMapper.mapRequiredCapabilities(
+      steps,
+      options.envelope,
+    );
+
+    // 7. Runtime configuration
+    const runtime: ToolRuntimeRequirement = {
+      runtime: "deno",
+      memoryLimitMb: 128,
+      timeoutMs: isWorkflow ? 60000 : 30000,
+      cpuLimitPercent: 100,
+      maxOutputSizeBytes: 1048576,
+    };
+
+    return {
+      id: `plan_${opportunity.id}`,
+      opportunityId: opportunity.id,
+      workspaceId: opportunity.workspaceId,
+      targetType: isWorkflow ? "workflow" : "single_tool",
+      intent,
+      name,
+      description,
+      variableInputs,
+      invariantInputs,
+      inputSchema,
+      outputSchema,
+      steps,
+      capabilityRequirements,
+      runtime,
+      metadata: {
+        taskClass: classification.taskClass,
+        confidenceScore: classification.confidenceScore,
+        priority: classification.priority,
+        triggerReason: opportunity.triggerReason,
+        planningProvenance,
+      },
+      createdAt: opportunity.createdAt || new Date().toISOString(),
+    };
   }
 
   /**
@@ -114,7 +262,7 @@ export class CandidatePlanner {
         priority: classification.priority,
         triggerReason: opportunity.triggerReason,
       },
-      createdAt: new Date().toISOString(),
+      createdAt: opportunity.createdAt || new Date().toISOString(),
     };
   }
 

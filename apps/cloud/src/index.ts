@@ -35,6 +35,7 @@ import {
 } from "./evolution/evaluation/index.js";
 import {
   type CandidateGenerationService,
+  CandidateRepository,
   createCandidateGenerationService,
 } from "./evolution/generator/index.js";
 import {
@@ -72,6 +73,7 @@ import {
   createCloudCatalogService,
   createCloudMcpServer,
 } from "./mcp/index.js";
+import { type InferenceService, createInferenceService } from "./models/index.js";
 import type { JobEnvelope } from "./queue/envelope.js";
 import { type DurableQueue, createDurableQueue } from "./queue/queue.js";
 import { JobScheduler } from "./queue/scheduler.js";
@@ -137,6 +139,7 @@ export * from "./evolution/evaluation/index.js";
 export * from "./evolution/artifacts/index.js";
 export * from "./evolution/rollout/index.js";
 export * from "./analytics/index.js";
+export * from "./models/index.js";
 
 /**
  * Unified Cloud Service container aggregating persistence, storage,
@@ -161,6 +164,8 @@ export class CloudService {
   readonly retentionService: RetentionService;
   readonly exportService: ExportService;
   readonly opportunityService: OpportunityDetectionService;
+  readonly candidateRepo: CandidateRepository;
+  readonly inferenceService: InferenceService;
   readonly candidateGenerationService: CandidateGenerationService;
   readonly candidateValidationService: CandidateValidationService;
 
@@ -216,7 +221,14 @@ export class CloudService {
       retentionRepo: this.retentionRepo,
     });
     this.opportunityService = createOpportunityDetectionService({ pool: this.dbPool });
-    this.candidateGenerationService = createCandidateGenerationService();
+    this.inferenceService = createInferenceService();
+    this.candidateRepo = new CandidateRepository(this.dbPool, this.objectStore);
+    this.candidateGenerationService = createCandidateGenerationService({
+      inferenceService: this.inferenceService,
+      pool: this.dbPool,
+      objectStore: this.objectStore,
+      candidateRepo: this.candidateRepo,
+    });
     this.candidateValidationService = createCandidateValidationService();
     this.historicalReplayService = createHistoricalReplayService({
       evidenceRepo: this.evidenceRepo,

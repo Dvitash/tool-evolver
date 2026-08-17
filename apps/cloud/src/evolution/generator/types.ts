@@ -158,6 +158,15 @@ export interface CandidateRevision {
     fixedIssues: string[];
     timestamp: string;
   }>;
+  storageUri?: string;
+  provenance?: Record<string, unknown>;
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
+  promptTemplateId?: string;
+  promptTemplateVersion?: string;
+  promptDigest?: string;
+  modelProvider?: string;
+  modelId?: string;
+  requestId?: string;
   createdAt: string;
 }
 
