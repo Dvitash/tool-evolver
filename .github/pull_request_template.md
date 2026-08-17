@@ -29,6 +29,7 @@ Closes #<!-- Issue Number -->
 - [ ] Verification summary:
   - ADR verification: `pnpm run check:adrs` (PASS)
   - Package boundaries: `pnpm run check:boundaries` (PASS)
+  - Secret scanning: `pnpm run check:secrets` (PASS)
   - Biome linting: `pnpm run lint` (PASS)
   - TypeScript typecheck: `pnpm run typecheck` (PASS)
   - Monorepo build: `pnpm run build` (PASS)
