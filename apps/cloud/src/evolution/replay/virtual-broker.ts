@@ -7,8 +7,11 @@ import type {
   FsBrokerClient,
   NetBrokerClient,
   SecretBrokerClient,
+  SecretMediationMode,
+  SecretReference,
   ToolBrokerClient,
 } from "@tool-evolver/runtime";
+import { bearerToken, createSecretReference, formatSecretTemplate } from "@tool-evolver/runtime";
 import type { ResolvedEvidenceSet } from "../../storage/models/evidence.js";
 import type { Episode } from "../opportunity/types.js";
 import type { EvidenceSource, ExecutedBrokerOperation, VirtualBrokerState } from "./types.js";
@@ -550,6 +553,35 @@ export class VirtualSecretBroker implements SecretBrokerClient {
       timestamp: Date.now(),
       durationMs,
     });
+  }
+
+  createReference(
+    name: string,
+    options?: {
+      modes?: SecretMediationMode[];
+      workspaceId?: string;
+      toolId?: string;
+      expiresAt?: string;
+      metadata?: Record<string, unknown>;
+    },
+  ): SecretReference {
+    this.recordOp("createReference", [name, options], `sec_ref_${name}`);
+    return createSecretReference({
+      name,
+      permittedModes: options?.modes,
+      workspaceId: options?.workspaceId,
+      toolId: options?.toolId,
+      expiresAt: options?.expiresAt,
+      metadata: options?.metadata,
+    });
+  }
+
+  bearerToken(nameOrRef: string | SecretReference): SecretReference {
+    return bearerToken(nameOrRef);
+  }
+
+  template(nameOrRef: string | SecretReference): string {
+    return formatSecretTemplate(nameOrRef);
   }
 
   async getSecret(name: string): Promise<string | null> {

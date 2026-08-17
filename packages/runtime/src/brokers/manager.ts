@@ -9,7 +9,7 @@ import {
 } from "./base.js";
 import { CommandBroker } from "./cmd-broker.js";
 import { FilesystemBroker } from "./fs-broker.js";
-import { NetworkBroker } from "./net-broker.js";
+import { type NetRequestParams, NetworkBroker } from "./net-broker.js";
 import { SecretBroker } from "./secret-broker.js";
 
 export interface CapabilityBrokerManagerOptions extends BaseCapabilityBrokerOptions {
@@ -39,9 +39,6 @@ export class CapabilityBrokerManager {
     this.auditEmitter = options.auditEmitter ?? defaultBrokerAuditEmitter;
     const baseOpts = { auditEmitter: this.auditEmitter, requireGrant: options.requireGrant };
 
-    this.fs = options.fsBroker ?? new FilesystemBroker(baseOpts);
-    this.net = options.netBroker ?? new NetworkBroker(baseOpts);
-    this.cmd = options.cmdBroker ?? new CommandBroker(baseOpts);
     this.secret =
       options.secretBroker ??
       (options.secrets instanceof SecretBroker
@@ -54,6 +51,17 @@ export class CapabilityBrokerManager {
             vaultPath: options.vaultPath,
             passphrase: options.passphrase,
           }));
+
+    this.fs = options.fsBroker ?? new FilesystemBroker(baseOpts);
+    this.net = options.netBroker ?? new NetworkBroker({ ...baseOpts, secretBroker: this.secret });
+    this.cmd = options.cmdBroker ?? new CommandBroker({ ...baseOpts, secretBroker: this.secret });
+
+    if (options.netBroker) {
+      this.net.setSecretBroker(this.secret);
+    }
+    if (options.cmdBroker) {
+      this.cmd.setSecretBroker(this.secret);
+    }
   }
 
   /**
@@ -82,13 +90,21 @@ export class CapabilityBrokerManager {
     }
   }
 
-  /**
-   * Creates a bound request handler function suitable for SDK clients or worker processes.
-   */
   createRequestHandler(context: BrokerContext): BrokerRequestHandlerFn {
-    return (service, action, payload) => this.handleRequest(service, action, payload, context);
+    return async (
+      service: "fs" | "net" | "cmd" | "secret",
+      action: string,
+      payload: Record<string, unknown> = {},
+    ) => {
+      const enrichedContext: BrokerContext = {
+        ...context,
+        secretBroker: this.secret,
+        isWorker: true,
+        source: "worker",
+      };
+      return this.handleRequest(service, action, payload, enrichedContext);
+    };
   }
-
   /**
    * Cleans up all per-invocation state across all brokers.
    */
@@ -195,23 +211,16 @@ export class CapabilityBrokerManager {
     context: BrokerContext,
   ): Promise<unknown> {
     switch (action) {
-      case "fetch": {
-        let headers = payload.headers as Record<string, string> | undefined;
-        let url = String(payload.url ?? "");
-
-        if (headers) {
-          headers = await this.secret.mediateHeaders(headers, context);
-        }
-        if (url.includes("{{")) {
-          url = await this.secret.mediateUrl(url, context);
-        }
-
+      case "fetch":
+      case "request": {
         return this.net.request(
           {
-            url,
+            url: String(payload.url ?? ""),
             method: payload.method as string | undefined,
-            headers,
-            body: payload.body as string | undefined,
+            headers: payload.headers as Record<string, string> | undefined,
+            body: payload.body as string | Uint8Array | undefined,
+            auth: payload.auth as NetRequestParams["auth"],
+            secretReferences: payload.secretReferences as NetRequestParams["secretReferences"],
             timeoutMs: payload.timeoutMs as number | undefined,
             redirect: payload.redirect as "follow" | "error" | "manual" | undefined,
             maxRedirects: payload.maxRedirects as number | undefined,
@@ -275,6 +284,11 @@ export class CapabilityBrokerManager {
     payload: Record<string, unknown>,
     context: BrokerContext,
   ): Promise<unknown> {
-    return this.secret.handleRequest(action, payload, context);
+    const workerContext: BrokerContext = {
+      ...context,
+      isWorker: true,
+      source: "worker",
+    };
+    return this.secret.handleRequest(action, payload, workerContext);
   }
 }

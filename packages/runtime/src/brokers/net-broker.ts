@@ -1,7 +1,11 @@
 import dns from "node:dns";
 import http from "node:http";
 import https from "node:https";
-import type { NetCapability } from "@tool-evolver/contracts";
+import {
+  type NetCapability,
+  type SecretReference,
+  isSecretReference,
+} from "@tool-evolver/contracts";
 import {
   canonicalizeHost,
   isPrivateOrReservedIp,
@@ -14,6 +18,7 @@ import {
   type BrokerContext,
   BrokerSecurityError,
 } from "./base.js";
+import type { SecretBroker } from "./secret-broker.js";
 
 /**
  * Standard parameters for brokered network requests.
@@ -21,36 +26,70 @@ import {
 export interface NetRequestParams {
   url: string;
   method?: string;
-  headers?: Record<string, string>;
-  body?: string;
+  headers?: Record<string, string | SecretReference>;
+  body?: string | Uint8Array;
   timeoutMs?: number;
-  redirect?: "follow" | "error" | "manual";
   maxRedirects?: number;
+  redirect?: "follow" | "error" | "manual";
+  auth?: SecretReference | { bearer: SecretReference | string };
+  secretReferences?: Record<string, SecretReference>;
 }
 
 /**
- * Standard response result for brokered network requests.
+ * Result of a brokered network request.
  */
 export interface NetResponseResult {
   status: number;
   statusText: string;
   headers: Record<string, string>;
   body: string;
-  url: string;
-  redirected: boolean;
   bytesReceived: number;
+  redirected: boolean;
+  finalUrl: string;
+  durationMs: number;
+}
+
+/**
+ * Options for configuring NetworkBroker.
+ */
+export interface NetworkBrokerOptions extends BaseCapabilityBrokerOptions {
+  secretBroker?: SecretBroker;
+}
+
+/**
+ * Helper to check if a hostname or IP is loopback/localhost.
+ */
+function isLoopbackHost(host: string): boolean {
+  const norm = host.toLowerCase();
+  return (
+    norm === "localhost" ||
+    norm === "127.0.0.1" ||
+    norm === "::1" ||
+    norm.startsWith("127.") ||
+    norm === "0.0.0.0"
+  );
 }
 
 /**
  * Capability broker for outbound network operations.
  * Enforces allowed protocols, ports, domain/host allowlists, private/loopback IP blocking,
  * DNS pre-resolution against rebinding, redirect containment, and response size limits.
+ * Integrates with SecretBroker to mediate Authorization headers and URL templates host-side.
  */
 export class NetworkBroker extends BaseCapabilityBroker {
   readonly serviceName = "net" as const;
+  private secretBroker?: SecretBroker;
 
-  constructor(options: BaseCapabilityBrokerOptions = {}) {
+  constructor(options: NetworkBrokerOptions = {}) {
     super(options);
+    this.secretBroker = options.secretBroker;
+  }
+
+  /**
+   * Sets or updates the secret broker for credential mediation.
+   */
+  setSecretBroker(broker: SecretBroker): void {
+    this.secretBroker = broker;
   }
 
   /**
@@ -63,6 +102,14 @@ export class NetworkBroker extends BaseCapabilityBroker {
     } catch {
       throw new BrokerSecurityError("INVALID_PATH", `Invalid URL format: ${targetUrl}`);
     }
+    // 0. Outbound access check
+    if (netCap.allowOutbound === false) {
+      throw new BrokerSecurityError(
+        "OUTBOUND_NETWORK_DISABLED",
+        "Outbound network access is disabled by capability grant",
+        { allowOutbound: false },
+      );
+    }
 
     // 1. Protocol check
     const protocol = parsed.protocol.replace(":", "").toLowerCase();
@@ -71,79 +118,61 @@ export class NetworkBroker extends BaseCapabilityBroker {
       throw new BrokerSecurityError(
         "DISALLOWED_PROTOCOL",
         `Protocol '${protocol}' is not permitted by capability policy (allowed: ${allowedProtocols.join(", ")})`,
-        { url: targetUrl, protocol, allowedProtocols },
+        { protocol, allowedProtocols },
       );
     }
 
     // 2. Port check
     const defaultPort = protocol === "https" || protocol === "wss" ? 443 : 80;
     const port = parsed.port ? Number.parseInt(parsed.port, 10) : defaultPort;
-    const allowedPorts = netCap.allowedPorts ?? [];
-    if (allowedPorts.length > 0 && !allowedPorts.includes(port)) {
-      throw new BrokerSecurityError(
-        "DISALLOWED_PORT",
-        `Port ${port} is not permitted by capability policy`,
-        { url: targetUrl, port, allowedPorts },
-      );
+    if (netCap.allowedPorts && netCap.allowedPorts.length > 0) {
+      if (!netCap.allowedPorts.includes(port)) {
+        throw new BrokerSecurityError(
+          "DISALLOWED_PORT",
+          `Port '${port}' is not permitted by capability policy (allowed: ${netCap.allowedPorts.join(", ")})`,
+          { port, allowedPorts: netCap.allowedPorts },
+        );
+      }
     }
 
-    // 3. Host / Domain matching
+    // 3. Domain / Host allowlist
     const rawHostname = parsed.hostname;
     const normHostname = canonicalizeHost(rawHostname);
 
     const allowedDomains = netCap.allowedDomains ?? [];
     const allowedHosts = netCap.allowedHosts ?? [];
-    const hasExplicitAllowlist = allowedDomains.length > 0 || allowedHosts.length > 0;
 
-    if (hasExplicitAllowlist) {
-      let isHostAllowed = false;
+    if (allowedDomains.length > 0 || allowedHosts.length > 0) {
+      let isAllowed = false;
 
-      for (const hostPattern of allowedHosts) {
-        if (normHostname === canonicalizeHost(hostPattern)) {
-          isHostAllowed = true;
+      // Exact host match or wildcard pattern match
+      for (const pattern of allowedHosts) {
+        if (matchesHostPattern(normHostname, pattern)) {
+          isAllowed = true;
           break;
         }
       }
 
-      if (!isHostAllowed) {
-        for (const domainPattern of allowedDomains) {
-          if (matchesHostPattern(normHostname, domainPattern)) {
-            isHostAllowed = true;
+      // Domain match (exact or suffix match on .domain.com)
+      if (!isAllowed) {
+        for (const dom of allowedDomains) {
+          const normDom = canonicalizeHost(dom);
+          if (normHostname === normDom || normHostname.endsWith(`.${normDom}`)) {
+            isAllowed = true;
             break;
           }
         }
       }
-
-      if (!isHostAllowed) {
+      if (!isAllowed) {
         throw new BrokerSecurityError(
           "DISALLOWED_HOST",
-          `Host '${rawHostname}' is not in allowed domains/hosts list`,
+          `Domain/Host '${rawHostname}' is not permitted by capability policy`,
           { host: rawHostname, allowedDomains, allowedHosts },
         );
       }
-    } else if (!netCap.allowOutbound) {
-      throw new BrokerSecurityError(
-        "OUTBOUND_NETWORK_DISABLED",
-        "Outbound network access is disabled by capability policy",
-        { url: targetUrl },
-      );
     }
 
     // 4. Localhost check
-    const isLoopbackHost = (h: string): boolean => {
-      return (
-        h === "localhost" ||
-        h.endsWith(".localhost") ||
-        h === "127.0.0.1" ||
-        h.startsWith("127.") ||
-        h === "::1" ||
-        h === "0.0.0.0" ||
-        h === "0" ||
-        h === "[::1]" ||
-        h === "::ffff:127.0.0.1"
-      );
-    };
-
     if (!netCap.allowLocalhost) {
       if (isLoopbackHost(normHostname)) {
         throw new BrokerSecurityError(
@@ -164,23 +193,23 @@ export class NetworkBroker extends BaseCapabilityBroker {
         return isPrivateOrReservedIp(ip);
       };
 
-      // Direct IP check
+      // If hostname is directly an IP address
       if (isBlocked(normHostname)) {
         throw new BrokerSecurityError(
           "BLOCKED_IP_RANGE",
-          `Access to private, loopback, link-local, or cloud metadata IP is denied: ${rawHostname}`,
+          `Access to private/reserved IP address '${normHostname}' is prohibited`,
           { host: rawHostname },
         );
       }
 
-      // DNS Resolution check (prevent DNS rebinding)
+      // Resolve DNS pre-flight to prevent DNS rebinding attacks to private IPs
       try {
-        const addresses = await dns.promises.lookup(normHostname, { all: true });
+        const addresses = await dns.promises.lookup(rawHostname, { all: true });
         for (const addr of addresses) {
           if (isBlocked(addr.address)) {
             throw new BrokerSecurityError(
               "BLOCKED_IP_RANGE",
-              `DNS resolution for host '${rawHostname}' resolved to private/reserved IP '${addr.address}'`,
+              `Host '${rawHostname}' resolved to blocked private/reserved IP: ${addr.address}`,
               { host: rawHostname, resolvedIp: addr.address },
             );
           }
@@ -201,6 +230,7 @@ export class NetworkBroker extends BaseCapabilityBroker {
 
   /**
    * Executes a brokered network request with redirect validation, size limits, and timeout enforcement.
+   * Mediates secret references for Authorization headers and URL parameters host-side.
    */
   async request(params: NetRequestParams, context: BrokerContext): Promise<NetResponseResult> {
     const startTime = Date.now();
@@ -217,7 +247,51 @@ export class NetworkBroker extends BaseCapabilityBroker {
       limits?.maxExecutionTimeMs ?? 30000,
     );
 
+    const secretBroker = this.secretBroker ?? (context.secretBroker as SecretBroker | undefined);
+    const redactor = secretBroker?.getRedactor();
+
     let currentUrl = params.url;
+
+    // 1. Host-side URL mediation
+    if (secretBroker) {
+      try {
+        currentUrl = await secretBroker.mediateUrl(currentUrl, context, params.secretReferences);
+      } catch (err) {
+        const errMsg = redactor ? redactor.redact((err as Error).message) : (err as Error).message;
+        throw new BrokerSecurityError("MEDIATION_FAILED", `URL secret mediation failed: ${errMsg}`);
+      }
+    }
+
+    // 2. Host-side header and auth mediation
+    let outgoingHeaders: Record<string, string> = {};
+    const rawHeaders: Record<string, string | SecretReference> = { ...(params.headers ?? {}) };
+
+    if (params.auth) {
+      if (isSecretReference(params.auth) || typeof params.auth === "string") {
+        rawHeaders.Authorization = params.auth;
+      } else if (typeof params.auth === "object" && "bearer" in params.auth) {
+        rawHeaders.Authorization = params.auth.bearer;
+      }
+    }
+
+    if (secretBroker) {
+      try {
+        outgoingHeaders = await secretBroker.mediateHeaders(rawHeaders, context);
+      } catch (err) {
+        const errMsg = redactor ? redactor.redact((err as Error).message) : (err as Error).message;
+        throw new BrokerSecurityError(
+          "MEDIATION_FAILED",
+          `Header secret mediation failed: ${errMsg}`,
+        );
+      }
+    } else {
+      for (const [k, v] of Object.entries(rawHeaders)) {
+        if (typeof v === "string") {
+          outgoingHeaders[k] = v;
+        }
+      }
+    }
+
     let redirectCount = 0;
     let redirected = false;
 
@@ -228,24 +302,23 @@ export class NetworkBroker extends BaseCapabilityBroker {
         const response = await this.executeHttpRequest({
           url: parsedUrl,
           method,
-          headers: params.headers ?? {},
-          body: params.body,
+          headers: outgoingHeaders,
+          body: typeof params.body === "string" ? params.body : undefined,
           timeoutMs,
           maxResponseBytes,
         });
 
-        // Track response bytes against output limits
-        this.trackOutputBytes(context.invocationId, response.bytesReceived, limits);
-
-        // Check for redirects (301, 302, 303, 307, 308)
+        // Handle Redirects
         const isRedirect = [301, 302, 303, 307, 308].includes(response.status);
         const locationHeader = response.headers.location;
 
         if (isRedirect && locationHeader && redirectMode === "follow") {
           redirectCount++;
+          redirected = true;
+
           if (redirectCount > maxRedirects) {
             throw new BrokerSecurityError(
-              "MAX_REDIRECTS_EXCEEDED",
+              "TOO_MANY_REDIRECTS",
               `Maximum redirect limit of ${maxRedirects} exceeded`,
               { redirectCount, maxRedirects },
             );
@@ -254,31 +327,24 @@ export class NetworkBroker extends BaseCapabilityBroker {
           // Resolve relative redirect URL
           const nextUrl = new URL(locationHeader, currentUrl).toString();
 
-          // Validate next URL
+          // Re-validate target redirect destination
           await this.validateAndAuthorizeUrl(nextUrl, netCap);
-
           currentUrl = nextUrl;
-          redirected = true;
-          continue; // Follow redirect
-        }
-        if (isRedirect && redirectMode === "error") {
-          throw new BrokerSecurityError(
-            "DISALLOWED_REDIRECT",
-            `Redirect encountered with redirectMode='error': ${locationHeader}`,
-            { status: response.status, location: locationHeader },
-          );
+          continue;
         }
 
+        // Track Output Budget
+        this.trackOutputBytes(context.invocationId, response.bytesReceived, limits);
         this.recordAudit(
           "request",
           context,
           "allowed",
           {
-            url: currentUrl,
+            url: redactor ? redactor.redact(currentUrl) : currentUrl,
             method,
             status: response.status,
             bytesReceived: response.bytesReceived,
-            redirected,
+            redirectCount,
           },
           { durationMs: Date.now() - startTime },
         );
@@ -288,31 +354,39 @@ export class NetworkBroker extends BaseCapabilityBroker {
           statusText: response.statusText,
           headers: response.headers,
           body: response.body,
-          url: currentUrl,
-          redirected,
           bytesReceived: response.bytesReceived,
+          redirected,
+          finalUrl: redactor ? redactor.redact(currentUrl) : currentUrl,
+          durationMs: Date.now() - startTime,
         };
-      } catch (error) {
-        const err =
-          error instanceof BrokerSecurityError
-            ? error
-            : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
-
+      } catch (err) {
+        const isSecErr = err instanceof BrokerSecurityError;
+        const errCode = isSecErr ? err.code : "NETWORK_ERROR";
+        const rawErrMsg = (err as Error).message;
+        const errMsg = redactor ? redactor.redact(rawErrMsg) : rawErrMsg;
         this.recordAudit(
           "request",
           context,
           "denied",
           {
-            url: currentUrl,
+            url: redactor ? redactor.redact(currentUrl) : currentUrl,
             method,
+            reason: errMsg,
           },
           {
-            error: { code: err.code, message: err.message },
+            error: { code: errCode, message: errMsg },
             durationMs: Date.now() - startTime,
           },
         );
 
-        throw err;
+        if (isSecErr) {
+          throw new BrokerSecurityError(
+            err.code,
+            errMsg,
+            redactor && err.details ? redactor.redactObject(err.details) : err.details,
+          );
+        }
+        throw new BrokerSecurityError("NETWORK_ERROR", errMsg);
       }
     }
   }
@@ -345,73 +419,74 @@ export class NetworkBroker extends BaseCapabilityBroker {
     const isHttps = options.url.protocol === "https:";
     const transport = isHttps ? https : http;
 
-    const reqHeaders: Record<string, string> = { ...options.headers };
-    if (options.body && !reqHeaders["content-length"] && !reqHeaders["Content-Length"]) {
-      reqHeaders["Content-Length"] = String(Buffer.byteLength(options.body));
-    }
+    const reqOptions: http.RequestOptions = {
+      method: options.method,
+      hostname: options.url.hostname,
+      port: options.url.port || (isHttps ? 443 : 80),
+      path: `${options.url.pathname}${options.url.search}`,
+      headers: options.headers,
+      timeout: options.timeoutMs,
+    };
 
-    const req = transport.request(
-      options.url,
-      {
-        method: options.method,
-        headers: reqHeaders,
-        timeout: options.timeoutMs,
-        rejectUnauthorized: true, // Strict TLS
-      },
-      (res) => {
-        let bytesReceived = 0;
-        const chunks: Buffer[] = [];
+    let bytesReceived = 0;
+    let responseBody = "";
+    let timedOut = false;
 
-        res.on("data", (chunk: Buffer) => {
-          bytesReceived += chunk.length;
-          if (bytesReceived > options.maxResponseBytes) {
-            req.destroy();
-            reject(
-              new BrokerSecurityError(
-                "RESPONSE_TOO_LARGE",
-                `Response payload size ${bytesReceived} bytes exceeded limit ${options.maxResponseBytes} bytes`,
-                { bytesReceived, maxBytes: options.maxResponseBytes },
-              ),
-            );
-            return;
-          }
-          chunks.push(chunk);
-        });
+    const req = transport.request(reqOptions, (res) => {
+      const status = res.statusCode ?? 0;
+      const statusText = res.statusMessage ?? "";
+      const resHeaders: Record<string, string> = {};
 
-        res.on("end", () => {
-          const bodyBuffer = Buffer.concat(chunks);
-          const bodyText = bodyBuffer.toString("utf-8");
+      for (const [k, v] of Object.entries(res.headers)) {
+        if (v !== undefined) {
+          resHeaders[k] = Array.isArray(v) ? v.join(", ") : v;
+        }
+      }
 
-          const normalizedHeaders: Record<string, string> = {};
-          for (const [key, val] of Object.entries(res.headers)) {
-            if (val !== undefined) {
-              normalizedHeaders[key.toLowerCase()] = Array.isArray(val)
-                ? val.join(", ")
-                : String(val);
-            }
-          }
+      res.setEncoding("utf-8");
 
-          resolve({
-            status: res.statusCode ?? 200,
-            statusText: res.statusMessage ?? "OK",
-            headers: normalizedHeaders,
-            body: bodyText,
-            bytesReceived,
-          });
-        });
-
-        res.on("error", (err) => {
+      res.on("data", (chunk: string) => {
+        bytesReceived += Buffer.byteLength(chunk, "utf-8");
+        if (bytesReceived > options.maxResponseBytes) {
+          res.destroy();
+          req.destroy();
           reject(
             new BrokerSecurityError(
-              "OPERATION_NOT_PERMITTED",
-              `Response stream error: ${err.message}`,
+              "RESPONSE_TOO_LARGE",
+              `Response size exceeded maximum allowed limit of ${options.maxResponseBytes} bytes`,
+              { bytesReceived, maxResponseBytes: options.maxResponseBytes },
             ),
           );
-        });
-      },
-    );
+          return;
+        }
+        responseBody += chunk;
+      });
+
+      res.on("end", () => {
+        if (!timedOut) {
+          resolve({
+            status,
+            statusText,
+            headers: resHeaders,
+            body: responseBody,
+            bytesReceived,
+          });
+        }
+      });
+
+      res.on("error", (err) => {
+        reject(new BrokerSecurityError("NETWORK_ERROR", `HTTP stream error: ${err.message}`));
+      });
+    });
+
+    req.on("socket", (socket) => {
+      socket.on("error", () => {
+        // Handled through req error or timeout
+      });
+    });
 
     req.on("timeout", () => {
+      timedOut = true;
       req.destroy();
       reject(
         new BrokerSecurityError(
@@ -423,22 +498,15 @@ export class NetworkBroker extends BaseCapabilityBroker {
     });
 
     req.on("error", (err) => {
-      if (
-        err.message.includes("CERT_") ||
-        err.message.includes("certificate") ||
-        err.message.includes("TLS")
-      ) {
-        reject(new BrokerSecurityError("TLS_ERROR", `TLS verification failed: ${err.message}`));
-      } else {
-        reject(
-          new BrokerSecurityError("OPERATION_NOT_PERMITTED", `Request failed: ${err.message}`),
-        );
+      if (!timedOut) {
+        reject(new BrokerSecurityError("NETWORK_ERROR", `Network request failed: ${err.message}`));
       }
     });
 
     if (options.body) {
       req.write(options.body);
     }
+
     req.end();
 
     return promise;

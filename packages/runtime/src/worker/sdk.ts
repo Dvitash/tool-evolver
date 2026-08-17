@@ -1,4 +1,24 @@
+import {
+  type OpaqueSecretRef,
+  type SecretMediationMode,
+  type SecretReference,
+  createOpaqueSecretRef,
+  createSecretReference,
+  formatSecretTemplate,
+  isSecretReference,
+} from "@tool-evolver/contracts";
 import type { WorkerMessageType } from "./protocol.js";
+
+// Re-export secret reference types and helpers for tool authors
+export {
+  type SecretReference,
+  type OpaqueSecretRef,
+  type SecretMediationMode,
+  createSecretReference,
+  createOpaqueSecretRef,
+  isSecretReference,
+  formatSecretTemplate,
+};
 
 /**
  * Brokered file system client interface.
@@ -41,8 +61,13 @@ export interface NetBrokerClient {
     url: string,
     init?: {
       method?: string;
-      headers?: Record<string, string>;
+      headers?: Record<string, string | SecretReference>;
       body?: string;
+      auth?: SecretReference | { bearer: SecretReference | string };
+      secretReferences?: Record<string, SecretReference>;
+      timeoutMs?: number;
+      redirect?: "follow" | "error" | "manual";
+      maxRedirects?: number;
     },
   ): Promise<BrokeredFetchResponse>;
 }
@@ -56,17 +81,95 @@ export interface CmdBrokerClient {
     args?: string[],
     options?: {
       cwd?: string;
-      env?: Record<string, string>;
+      env?: Record<string, string | SecretReference>;
+      stdin?: string | SecretReference;
       timeoutMs?: number;
+      maxOutputSizeBytes?: number;
+      secretEnv?: Record<string, SecretReference | string>;
     },
   ): Promise<{ exitCode: number; stdout: string; stderr: string }>;
 }
 
 /**
  * Brokered secret and credential client interface.
+ * Exposes non-disclosing secret references and template builders.
  */
 export interface SecretBrokerClient {
+  /**
+   * Creates an opaque, non-disclosing secret reference for use with net/cmd brokers.
+   */
+  createReference(
+    name: string,
+    options?: {
+      modes?: SecretMediationMode[];
+      workspaceId?: string;
+      toolId?: string;
+      expiresAt?: string;
+      metadata?: Record<string, unknown>;
+    },
+  ): SecretReference;
+
+  /**
+   * Creates a bearer token reference.
+   */
+  bearerToken(nameOrRef: string | SecretReference): SecretReference;
+
+  /**
+   * Formats a query parameter or header template placeholder.
+   */
+  template(nameOrRef: string | SecretReference): string;
+
+  /**
+   * Legacy direct-read method.
+   * Denied from worker contexts with structured non-disclosing error.
+   */
   getSecret(name: string): Promise<string | null>;
+}
+
+/**
+ * Helper to build an opaque Bearer Authorization secret reference.
+ */
+export function bearerToken(nameOrRef: string | SecretReference): SecretReference {
+  if (isSecretReference(nameOrRef)) {
+    return nameOrRef;
+  }
+  return createSecretReference({
+    name: nameOrRef,
+    permittedModes: ["bearer_token", "header_template"],
+  });
+}
+
+/**
+ * Helper to build an opaque URL query parameter secret template string.
+ */
+export function querySecret(nameOrRef: string | SecretReference): string {
+  return formatSecretTemplate(nameOrRef);
+}
+
+/**
+ * Helper to build an opaque command stdin secret reference.
+ */
+export function stdinSecret(nameOrRef: string | SecretReference): SecretReference {
+  if (isSecretReference(nameOrRef)) {
+    return nameOrRef;
+  }
+  return createSecretReference({
+    name: nameOrRef,
+    permittedModes: ["command_stdin"],
+  });
+}
+
+/**
+ * Helper to build an opaque environment variable secret reference.
+ */
+export function envSecret(nameOrRef: string | SecretReference): SecretReference {
+  if (isSecretReference(nameOrRef)) {
+    return nameOrRef;
+  }
+  return createSecretReference({
+    name: nameOrRef,
+    permittedModes: ["command_env"],
+  });
 }
 
 /**
@@ -102,16 +205,19 @@ export interface ToolContext<TInput = unknown> {
   readonly invocationId: string;
   readonly workspaceRoot: string;
   readonly scratchDir: string;
-  readonly metadata: Record<string, unknown>;
-
-  progress(percentage: number, message?: string, stage?: string): Promise<void>;
-  log(level: "debug" | "info" | "warn" | "error", message: string, data?: unknown): Promise<void>;
+  readonly metadata?: Record<string, unknown>;
+  readonly progress: (percent: number, message?: string, stage?: string) => Promise<void>;
+  readonly log: (
+    level: "debug" | "info" | "warn" | "error",
+    message: string,
+    data?: unknown,
+  ) => Promise<void>;
   readonly logger: ToolLogger;
   readonly broker: ToolBrokerClient;
-  readonly fs?: FsBrokerClient;
-  readonly net?: NetBrokerClient;
-  readonly cmd?: CmdBrokerClient;
-  readonly secret?: SecretBrokerClient;
+  readonly fs: FsBrokerClient;
+  readonly net: NetBrokerClient;
+  readonly cmd: CmdBrokerClient;
+  readonly secret: SecretBrokerClient;
 }
 
 /**
@@ -133,23 +239,8 @@ export function defineTool<TInput = unknown, TOutput = unknown>(
 export type BrokerRequestHandlerFn = (
   service: "fs" | "net" | "cmd" | "secret",
   action: string,
-  payload: Record<string, unknown>,
+  payload?: Record<string, unknown>,
 ) => Promise<unknown>;
-
-export interface ToolContextOptions<TInput = unknown> {
-  input: TInput;
-  invocationId: string;
-  workspaceRoot?: string;
-  scratchDir?: string;
-  metadata?: Record<string, unknown>;
-  onProgress?: (percentage: number, message?: string, stage?: string) => void | Promise<void>;
-  onLog?: (
-    level: "debug" | "info" | "warn" | "error",
-    message: string,
-    data?: unknown,
-  ) => void | Promise<void>;
-  brokerHandler: BrokerRequestHandlerFn;
-}
 
 /**
  * Concrete implementation of ToolBrokerClient backed by a request handler function.
@@ -167,26 +258,14 @@ export class DefaultToolBrokerClient implements ToolBrokerClient {
 
   readonly fs: FsBrokerClient = {
     readFile: async (filePath: string, encoding: "utf-8" | "base64" | "buffer" = "utf-8") => {
-      const res = await this.request<{ content: string; encoding: string }>("fs", "readFile", {
+      const res = await this.request<{ content: string | Uint8Array }>("fs", "readFile", {
         path: filePath,
         encoding,
       });
-      if (encoding === "buffer") {
-        return typeof Buffer !== "undefined"
-          ? Buffer.from(res.content, "base64")
-          : new TextEncoder().encode(res.content);
-      }
       return res.content;
     },
     writeFile: async (filePath: string, content: string | Uint8Array) => {
-      const serialized =
-        typeof content === "string"
-          ? content
-          : typeof Buffer !== "undefined"
-            ? Buffer.from(content).toString("base64")
-            : btoa(String.fromCharCode(...content));
-      const encoding = typeof content === "string" ? "utf-8" : "base64";
-      await this.request("fs", "writeFile", { path: filePath, content: serialized, encoding });
+      await this.request("fs", "writeFile", { path: filePath, content });
     },
     exists: async (filePath: string) => {
       const res = await this.request<{ exists: boolean }>("fs", "exists", { path: filePath });
@@ -212,21 +291,58 @@ export class DefaultToolBrokerClient implements ToolBrokerClient {
   readonly net: NetBrokerClient = {
     fetch: async (
       url: string,
-      init?: { method?: string; headers?: Record<string, string>; body?: string },
-    ) => {
-      const res = await this.request<{
+      init?: {
+        method?: string;
+        headers?: Record<string, string | SecretReference>;
+        body?: string;
+        auth?: SecretReference | { bearer: SecretReference | string };
+        secretReferences?: Record<string, SecretReference>;
+        timeoutMs?: number;
+        redirect?: "follow" | "error" | "manual";
+        maxRedirects?: number;
+      },
+    ): Promise<BrokeredFetchResponse> => {
+      const raw = await this.request<{
         status: number;
         statusText: string;
         headers: Record<string, string>;
         body: string;
-      }>("net", "fetch", { url, ...init });
+        bytesReceived: number;
+        redirected: boolean;
+        finalUrl: string;
+      }>("net", "fetch", {
+        url,
+        method: init?.method,
+        headers: init?.headers,
+        body: init?.body,
+        auth: init?.auth,
+        secretReferences: init?.secretReferences,
+        timeoutMs: init?.timeoutMs,
+        redirect: init?.redirect,
+        maxRedirects: init?.maxRedirects,
+      });
 
       return {
-        status: res.status,
-        statusText: res.statusText,
-        headers: res.headers,
-        text: async () => res.body,
-        json: async <T = unknown>() => JSON.parse(res.body) as T,
+        status: raw.status,
+        statusText: raw.statusText,
+        headers: raw.headers,
+        ok: raw.status >= 200 && raw.status < 300,
+        url: raw.finalUrl,
+        redirected: raw.redirected,
+        text: async () => raw.body,
+        json: async <T = unknown>() => JSON.parse(raw.body) as T,
+        arrayBuffer: async () => {
+          const buf =
+            typeof Buffer !== "undefined"
+              ? Buffer.from(raw.body, "utf-8")
+              : new TextEncoder().encode(raw.body);
+          return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+        },
+        bytes: async () => {
+          return typeof Buffer !== "undefined"
+            ? new Uint8Array(Buffer.from(raw.body, "utf-8"))
+            : new TextEncoder().encode(raw.body);
+        },
       };
     },
   };
@@ -235,7 +351,14 @@ export class DefaultToolBrokerClient implements ToolBrokerClient {
     exec: async (
       command: string,
       args: string[] = [],
-      options: { cwd?: string; env?: Record<string, string>; timeoutMs?: number } = {},
+      options: {
+        cwd?: string;
+        env?: Record<string, string | SecretReference>;
+        stdin?: string | SecretReference;
+        timeoutMs?: number;
+        maxOutputSizeBytes?: number;
+        secretEnv?: Record<string, SecretReference | string>;
+      } = {},
     ) => {
       return await this.request<{ exitCode: number; stdout: string; stderr: string }>(
         "cmd",
@@ -250,20 +373,106 @@ export class DefaultToolBrokerClient implements ToolBrokerClient {
   };
 
   readonly secret: SecretBrokerClient = {
+    createReference: (
+      name: string,
+      options?: {
+        modes?: SecretMediationMode[];
+        workspaceId?: string;
+        toolId?: string;
+        expiresAt?: string;
+        metadata?: Record<string, unknown>;
+      },
+    ): SecretReference => {
+      return createSecretReference({
+        name,
+        permittedModes: options?.modes,
+        workspaceId: options?.workspaceId,
+        toolId: options?.toolId,
+        expiresAt: options?.expiresAt,
+        metadata: options?.metadata,
+      });
+    },
+
+    bearerToken: (nameOrRef: string | SecretReference): SecretReference => {
+      return bearerToken(nameOrRef);
+    },
+
+    template: (nameOrRef: string | SecretReference): string => {
+      return formatSecretTemplate(nameOrRef);
+    },
+
     getSecret: async (name: string) => {
-      const res = await this.request<{ secret: string | null }>("secret", "getSecret", { name });
+      const res = await this.request<{ secret: string | null }>("secret", "getSecret", {
+        name,
+      });
       return res.secret;
     },
   };
 }
 
+export interface CreateToolContextOptions<TInput = unknown> {
+  input: TInput;
+  invocationId: string;
+  workspaceRoot: string;
+  scratchDir?: string;
+  metadata?: Record<string, unknown>;
+  onProgress?: (percent: number, message?: string, stage?: string) => void | Promise<void>;
+  onLog?: (
+    level: "debug" | "info" | "warn" | "error",
+    message: string,
+    data?: unknown,
+  ) => void | Promise<void>;
+  brokerHandler?: BrokerRequestHandlerFn;
+  requestHandler?: BrokerRequestHandlerFn;
+  onMessage?: (type: WorkerMessageType, payload: unknown) => void;
+}
+
 /**
- * Creates a fully functional ToolContext instance.
+ * Creates a standard ToolContext object for executing a tool.
  */
 export function createToolContext<TInput = unknown>(
-  options: ToolContextOptions<TInput>,
+  optionsOrInput: CreateToolContextOptions<TInput> | TInput,
+  legacyOptions?: {
+    invocationId: string;
+    workspaceRoot: string;
+    scratchDir?: string;
+    requestHandler?: BrokerRequestHandlerFn;
+    brokerHandler?: BrokerRequestHandlerFn;
+    onMessage?: (type: WorkerMessageType, payload: unknown) => void;
+  },
 ): ToolContext<TInput> {
-  const brokerClient = new DefaultToolBrokerClient(options.brokerHandler);
+  const isOptionsObject =
+    legacyOptions === undefined &&
+    optionsOrInput !== null &&
+    typeof optionsOrInput === "object" &&
+    "invocationId" in optionsOrInput &&
+    "workspaceRoot" in optionsOrInput;
+
+  const options: CreateToolContextOptions<TInput> = isOptionsObject
+    ? (optionsOrInput as CreateToolContextOptions<TInput>)
+    : {
+        input: optionsOrInput as TInput,
+        invocationId: legacyOptions?.invocationId ?? "",
+        workspaceRoot: legacyOptions?.workspaceRoot ?? process.cwd(),
+        scratchDir: legacyOptions?.scratchDir,
+        requestHandler: legacyOptions?.requestHandler ?? legacyOptions?.brokerHandler,
+        onMessage: legacyOptions?.onMessage,
+      };
+
+  const handler =
+    options.requestHandler ??
+    options.brokerHandler ??
+    (async () => {
+      throw new Error("No broker handler configured for sandbox");
+    });
+  const brokerClient = new DefaultToolBrokerClient(handler);
+
+  const progressFn = async (percent: number, message?: string, stage?: string) => {
+    if (options.onProgress) {
+      await options.onProgress(percent, message, stage);
+    }
+    options.onMessage?.("progress", { percent, message, stage });
+  };
 
   const logFn = async (
     level: "debug" | "info" | "warn" | "error",
@@ -273,27 +482,22 @@ export function createToolContext<TInput = unknown>(
     if (options.onLog) {
       await options.onLog(level, message, data);
     }
-  };
-
-  const progressFn = async (percentage: number, message?: string, stage?: string) => {
-    if (options.onProgress) {
-      await options.onProgress(percentage, message, stage);
-    }
+    options.onMessage?.("log", { level, message, data });
   };
 
   const logger: ToolLogger = {
-    debug: (msg, data) => logFn("debug", msg, data),
-    info: (msg, data) => logFn("info", msg, data),
-    warn: (msg, data) => logFn("warn", msg, data),
-    error: (msg, data) => logFn("error", msg, data),
+    debug: async (msg, data) => logFn("debug", msg, data),
+    info: async (msg, data) => logFn("info", msg, data),
+    warn: async (msg, data) => logFn("warn", msg, data),
+    error: async (msg, data) => logFn("error", msg, data),
   };
 
   return {
     input: options.input,
     invocationId: options.invocationId,
-    workspaceRoot: options.workspaceRoot ?? process.cwd(),
-    scratchDir: options.scratchDir ?? "",
-    metadata: options.metadata ?? {},
+    workspaceRoot: options.workspaceRoot,
+    scratchDir: options.scratchDir ?? options.workspaceRoot,
+    metadata: options.metadata,
     progress: progressFn,
     log: logFn,
     logger,

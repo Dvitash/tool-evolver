@@ -9,9 +9,12 @@ import type {
   FsBrokerClient,
   NetBrokerClient,
   SecretBrokerClient,
+  SecretMediationMode,
+  SecretReference,
   ToolBrokerClient,
   ToolContext,
 } from "@tool-evolver/runtime";
+import { bearerToken, createSecretReference, formatSecretTemplate } from "@tool-evolver/runtime";
 import ts from "typescript";
 import { z } from "zod";
 import {
@@ -323,6 +326,34 @@ export class FakeSecretBroker implements SecretBrokerClient {
       SECRET_KEY: "mock_secret_key_456",
     };
     this.denyAccess = options.denyAccess ?? false;
+  }
+
+  createReference(
+    name: string,
+    options?: {
+      modes?: SecretMediationMode[];
+      workspaceId?: string;
+      toolId?: string;
+      expiresAt?: string;
+      metadata?: Record<string, unknown>;
+    },
+  ): SecretReference {
+    return createSecretReference({
+      name,
+      permittedModes: options?.modes,
+      workspaceId: options?.workspaceId,
+      toolId: options?.toolId,
+      expiresAt: options?.expiresAt,
+      metadata: options?.metadata,
+    });
+  }
+
+  bearerToken(nameOrRef: string | SecretReference): SecretReference {
+    return bearerToken(nameOrRef);
+  }
+
+  template(nameOrRef: string | SecretReference): string {
+    return formatSecretTemplate(nameOrRef);
   }
 
   async getSecret(name: string): Promise<string | null> {
@@ -726,10 +757,10 @@ export class ValidationSandbox {
       },
     };
 
-    const progress = async (percent: number, message: string, stage?: string) => {
+    const progress = async (percent: number, message?: string, stage?: string) => {
       logs.push({
         level: "progress",
-        message: `[${stage ?? "exec"}] ${percent}%: ${message}`,
+        message: `[${stage ?? "exec"}] ${percent}%: ${message ?? ""}`,
         timestamp: new Date().toISOString(),
       });
     };
@@ -862,8 +893,11 @@ export class ValidationSandbox {
           await logger.info(msg);
         },
         broker,
+        fs: broker.fs,
+        net: broker.net,
+        cmd: broker.cmd,
+        secret: broker.secret,
       };
-
       // Execute handler with timeout race
       const handlerPromise = (async () => {
         return await fnHandler(context);

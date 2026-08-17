@@ -1,4 +1,11 @@
-import type { SecretCapability } from "@tool-evolver/contracts";
+import {
+  type SecretCapability,
+  type SecretMediationMode,
+  type SecretReference,
+  createSecretReference,
+  isSecretReference,
+  validateSecretReferenceScope,
+} from "@tool-evolver/contracts";
 import {
   type MediationMode,
   SecretManager,
@@ -10,6 +17,7 @@ import {
   BaseCapabilityBroker,
   type BaseCapabilityBrokerOptions,
   type BrokerContext,
+  type BrokerErrorCode,
   BrokerSecurityError,
 } from "./base.js";
 
@@ -31,6 +39,7 @@ export interface SecretBrokerOptions extends BaseCapabilityBrokerOptions {
 export class SecretBroker extends BaseCapabilityBroker {
   readonly serviceName = "secret" as const;
   readonly manager: SecretManager;
+  private readonly references = new Map<string, SecretReference>();
 
   constructor(options: SecretBrokerOptions = {}) {
     super(options);
@@ -68,6 +77,121 @@ export class SecretBroker extends BaseCapabilityBroker {
   }
 
   /**
+   * Creates an opaque, non-disclosing secret reference for an authorized secret.
+   * Can be safely passed to generated workers and tools.
+   */
+  createSecretReference(
+    name: string,
+    context?: BrokerContext,
+    options: {
+      modes?: SecretMediationMode[];
+      expiresAt?: string;
+      toolId?: string;
+      accountId?: string;
+      installationId?: string;
+      metadata?: Record<string, unknown>;
+    } = {},
+  ): SecretReference {
+    if (context?.grant) {
+      const grant = this.validateGrant(context);
+      const secretCap: SecretCapability = grant.capabilities.secrets ?? {};
+      if (!this.isSecretAuthorized(name, secretCap)) {
+        throw new BrokerSecurityError(
+          "SECRET_NOT_AUTHORIZED",
+          `Secret '${name}' is not authorized by capability grant`,
+          { secretName: name },
+        );
+      }
+    }
+
+    const workspaceId = context?.workspaceId ?? context?.grant?.workspaceId ?? "default";
+    const ref = createSecretReference({
+      name,
+      workspaceId,
+      toolId: options.toolId ?? context?.toolId ?? context?.grant?.toolId,
+      accountId: options.accountId ?? (context?.accountId as string | undefined),
+      installationId: options.installationId ?? (context?.installationId as string | undefined),
+      grantId: context?.grant?.grantId,
+      permittedModes: options.modes,
+      expiresAt: options.expiresAt,
+      metadata: options.metadata,
+    });
+
+    this.references.set(ref.ref, ref);
+    return ref;
+  }
+
+  /**
+   * Resolves a SecretReference or template string into plaintext in trusted broker memory.
+   * Enforces grant authorization, workspace scoping, tool scoping, expiration, and mediation modes.
+   */
+  async resolveSecretReference(
+    refOrName: SecretReference | string,
+    context: BrokerContext,
+    mode: MediationMode,
+  ): Promise<string> {
+    if (typeof refOrName === "string") {
+      // Check if it's a template like {{secret:NAME}}
+      const templateMatch = refOrName.match(/^\{\{(?:secret:)?([A-Za-z0-9_\-\.]+)\}\}$/);
+      if (templateMatch) {
+        return this.authorizeSecretAccess(templateMatch[1], context, mode);
+      }
+
+      // Check if it's a known reference handle
+      const registeredRef = this.references.get(refOrName);
+      if (registeredRef) {
+        return this.resolveSecretReference(registeredRef, context, mode);
+      }
+
+      return this.authorizeSecretAccess(refOrName, context, mode);
+    }
+
+    if (!isSecretReference(refOrName)) {
+      throw new BrokerSecurityError(
+        "INVALID_SECRET_REFERENCE",
+        "Provided object is not a valid SecretReference",
+      );
+    }
+
+    // 1. Validate scope (workspace, tool, account, installation, grant, expiry)
+    const scopeResult = validateSecretReferenceScope(refOrName, {
+      workspaceId: context.workspaceId ?? context.grant?.workspaceId,
+      toolId: context.toolId ?? context.grant?.toolId,
+      accountId: context.accountId as string | undefined,
+      installationId: context.installationId as string | undefined,
+      grantId: context.grant?.grantId,
+      currentTimestamp: context.currentTimestamp,
+    });
+
+    if (!scopeResult.valid) {
+      const code = (scopeResult.code as BrokerErrorCode) ?? "SECRET_SCOPE_MISMATCH";
+      throw new BrokerSecurityError(code, scopeResult.reason ?? "Secret scope mismatch", {
+        referenceName: refOrName.name,
+        referenceWorkspace: refOrName.workspaceId,
+      });
+    }
+
+    // 2. Validate permitted mediation modes
+    if (
+      refOrName.permittedModes &&
+      !refOrName.permittedModes.includes(mode as SecretMediationMode)
+    ) {
+      throw new BrokerSecurityError(
+        "OPERATION_NOT_PERMITTED",
+        `Mediation mode '${mode}' is not permitted for secret reference '${refOrName.name}' (permitted: ${refOrName.permittedModes.join(", ")})`,
+        {
+          secretName: refOrName.name,
+          requestedMode: mode,
+          permittedModes: refOrName.permittedModes,
+        },
+      );
+    }
+
+    // 3. Authorize and retrieve value host-side
+    return this.authorizeSecretAccess(refOrName.name, context, mode);
+  }
+
+  /**
    * Resolves a secret value for a specific mediation mode after verifying grant authorization.
    */
   async authorizeSecretAccess(
@@ -92,14 +216,15 @@ export class SecretBroker extends BaseCapabilityBroker {
         {
           durationMs: Date.now() - startTime,
           error: {
-            code: "OPERATION_NOT_PERMITTED",
+            code: "SECRET_NOT_AUTHORIZED",
             message: `Secret '${secretNameOrAlias}' is not authorized by capability grant`,
           },
         },
       );
       throw new BrokerSecurityError(
-        "OPERATION_NOT_PERMITTED",
+        "SECRET_NOT_AUTHORIZED",
         `Secret '${secretNameOrAlias}' is not authorized by capability grant`,
+        { secretName: secretNameOrAlias },
       );
     }
 
@@ -136,75 +261,96 @@ export class SecretBroker extends BaseCapabilityBroker {
         },
         {
           durationMs: Date.now() - startTime,
-          error: { code: "OPERATION_NOT_PERMITTED", message: (err as Error).message },
+          error: { code: "SECRET_NOT_FOUND", message: (err as Error).message },
         },
       );
-      throw new BrokerSecurityError("OPERATION_NOT_PERMITTED", (err as Error).message);
+      throw new BrokerSecurityError("SECRET_NOT_FOUND", (err as Error).message);
     }
   }
 
   /**
-   * Mediates network headers by replacing secret template placeholders (e.g. {{secret:ALIAS}} or {{ALIAS}}).
+   * Mediates network headers by replacing secret references and template placeholders.
    */
   async mediateHeaders(
-    headers: Record<string, string>,
+    headers: Record<string, string | SecretReference>,
     context: BrokerContext,
   ): Promise<Record<string, string>> {
     if (!headers || typeof headers !== "object") {
-      return headers;
+      return {};
     }
 
     const mediatedHeaders: Record<string, string> = {};
     const placeholderRegex = /\{\{(?:secret:)?([A-Za-z0-9_\-\.]+)\}\}/g;
 
-    for (const [key, rawValue] of Object.entries(headers)) {
-      if (typeof rawValue !== "string" || !rawValue.includes("{{")) {
-        mediatedHeaders[key] = rawValue;
+    for (const [key, value] of Object.entries(headers)) {
+      if (isSecretReference(value)) {
+        // Direct SecretReference passed as header value
+        const isAuthHeader = key.toLowerCase() === "authorization";
+        const mode = isAuthHeader ? "bearer_token" : "header_template";
+        const secretVal = await this.resolveSecretReference(value, context, mode);
+        mediatedHeaders[key] = isAuthHeader ? `Bearer ${secretVal}` : secretVal;
         continue;
       }
 
-      let mediatedValue = rawValue;
-      const matches = Array.from(rawValue.matchAll(placeholderRegex));
-
-      for (const match of matches) {
-        const fullPlaceholder = match[0];
-        const secretAlias = match[1];
-
-        // Authorize and retrieve secret
-        const mode: MediationMode =
-          key.toLowerCase() === "authorization" && rawValue.startsWith("Bearer ")
-            ? "bearer_token"
-            : "header_template";
-
-        const secretValue = await this.authorizeSecretAccess(secretAlias, context, mode);
-        mediatedValue = mediatedValue.replaceAll(fullPlaceholder, secretValue);
+      if (typeof value !== "string") {
+        mediatedHeaders[key] = String(value ?? "");
+        continue;
       }
 
-      mediatedHeaders[key] = mediatedValue;
+      // Check for Bearer <ref> or Bearer {{secret:...}}
+      const bearerRefMatch = value.match(/^Bearer\s+(sec_ref_[A-Za-z0-9_]+)$/i);
+      if (bearerRefMatch) {
+        const secretVal = await this.resolveSecretReference(
+          bearerRefMatch[1],
+          context,
+          "bearer_token",
+        );
+        mediatedHeaders[key] = `Bearer ${secretVal}`;
+        continue;
+      }
+
+      // String header with potential placeholders
+      let resolvedHeader = value;
+      const matches = Array.from(value.matchAll(placeholderRegex));
+
+      for (const match of matches) {
+        const secretName = match[1];
+        const isBearerAuth =
+          key.toLowerCase() === "authorization" && value.toLowerCase().startsWith("bearer ");
+        const mode = isBearerAuth ? "bearer_token" : "header_template";
+        const secretValue = await this.authorizeSecretAccess(secretName, context, mode);
+        resolvedHeader = resolvedHeader.replace(match[0], secretValue);
+      }
+
+      mediatedHeaders[key] = resolvedHeader;
     }
 
     return mediatedHeaders;
   }
 
   /**
-   * Mediates a Bearer token authorization header directly for a secret alias.
+   * Mediates an Authorization bearer token header directly.
    */
   async mediateBearerToken(
-    secretAlias: string,
+    secretNameOrRef: string | SecretReference,
     context: BrokerContext,
-  ): Promise<{ headerName: "Authorization"; headerValue: string }> {
-    const secretValue = await this.authorizeSecretAccess(secretAlias, context, "bearer_token");
+  ): Promise<{ headerName: string; headerValue: string }> {
+    const token = await this.resolveSecretReference(secretNameOrRef, context, "bearer_token");
     return {
       headerName: "Authorization",
-      headerValue: `Bearer ${secretValue}`,
+      headerValue: `Bearer ${token}`,
     };
   }
 
   /**
-   * Mediates URLs by resolving query parameter or path template placeholders (e.g. {{secret:ALIAS}} or {{ALIAS}}).
+   * Mediates a URL by substituting query parameter placeholders with resolved secrets.
    */
-  async mediateUrl(url: string, context: BrokerContext): Promise<string> {
-    if (!url || typeof url !== "string" || !url.includes("{{")) {
+  async mediateUrl(
+    url: string,
+    context: BrokerContext,
+    secretReferences?: Record<string, SecretReference>,
+  ): Promise<string> {
+    if (!url || typeof url !== "string") {
       return url;
     }
 
@@ -213,83 +359,112 @@ export class SecretBroker extends BaseCapabilityBroker {
     const matches = Array.from(url.matchAll(placeholderRegex));
 
     for (const match of matches) {
-      const fullPlaceholder = match[0];
-      const secretAlias = match[1];
+      const secretName = match[1];
+      const secretValue = await this.authorizeSecretAccess(secretName, context, "query_template");
+      mediatedUrl = mediatedUrl.replace(match[0], encodeURIComponent(secretValue));
+    }
 
-      const secretValue = await this.authorizeSecretAccess(secretAlias, context, "query_template");
-      mediatedUrl = mediatedUrl.replaceAll(fullPlaceholder, encodeURIComponent(secretValue));
+    // Substitute explicit secret references in query params if provided
+    if (secretReferences && typeof secretReferences === "object") {
+      for (const [paramName, secretRef] of Object.entries(secretReferences)) {
+        const secretValue = await this.resolveSecretReference(secretRef, context, "query_template");
+        const encodedVal = encodeURIComponent(secretValue);
+        // Replace or append param
+        const paramRegex = new RegExp(`([?&])${paramName}=([^&#]*)`, "g");
+        if (paramRegex.test(mediatedUrl)) {
+          mediatedUrl = mediatedUrl.replace(paramRegex, `$1${paramName}=${encodedVal}`);
+        } else {
+          const separator = mediatedUrl.includes("?") ? "&" : "?";
+          mediatedUrl = `${mediatedUrl}${separator}${paramName}=${encodedVal}`;
+        }
+      }
     }
 
     return mediatedUrl;
   }
 
   /**
-   * Mediates command execution stdin by injecting secret templates or resolving aliases.
+   * Mediates a string payload for stdin command execution.
    */
   async mediateCommandStdin(
-    secretAliasOrTemplate: string,
+    templateOrRef: string | SecretReference,
     context: BrokerContext,
   ): Promise<string> {
-    if (!secretAliasOrTemplate || typeof secretAliasOrTemplate !== "string") {
-      return secretAliasOrTemplate;
+    if (isSecretReference(templateOrRef)) {
+      return this.resolveSecretReference(templateOrRef, context, "command_stdin");
+    }
+
+    if (!templateOrRef || typeof templateOrRef !== "string") {
+      return "";
     }
 
     const placeholderRegex = /\{\{(?:secret:)?([A-Za-z0-9_\-\.]+)\}\}/g;
-    if (secretAliasOrTemplate.includes("{{")) {
-      let mediated = secretAliasOrTemplate;
-      const matches = Array.from(secretAliasOrTemplate.matchAll(placeholderRegex));
+    let mediated = templateOrRef;
+    const matches = Array.from(templateOrRef.matchAll(placeholderRegex));
 
+    if (matches.length > 0) {
       for (const match of matches) {
-        const fullPlaceholder = match[0];
-        const secretAlias = match[1];
-
-        const secretValue = await this.authorizeSecretAccess(secretAlias, context, "command_stdin");
-        mediated = mediated.replaceAll(fullPlaceholder, secretValue);
+        const secretName = match[1];
+        const secretValue = await this.authorizeSecretAccess(secretName, context, "command_stdin");
+        mediated = mediated.replace(match[0], secretValue);
       }
-
       return mediated;
     }
 
-    // Direct secret alias name passed
-    return this.authorizeSecretAccess(secretAliasOrTemplate, context, "command_stdin");
+    // Direct secret alias name or reference handle passed
+    const registeredRef = this.references.get(templateOrRef);
+    if (registeredRef) {
+      return this.resolveSecretReference(registeredRef, context, "command_stdin");
+    }
+
+    return this.authorizeSecretAccess(templateOrRef, context, "command_stdin");
   }
 
   /**
-   * Mediates command environment variables by resolving secret templates and applying injectAsEnv policy.
+   * Mediates environment variables for command execution.
    */
   async mediateCommandEnv(
-    envTemplate: Record<string, string>,
+    env: Record<string, string | SecretReference>,
     context: BrokerContext,
   ): Promise<Record<string, string>> {
-    const grant = this.validateGrant(context);
-    const secretCap: SecretCapability = grant.capabilities.secrets ?? {};
-
-    const mediatedEnv: Record<string, string> = { ...(envTemplate ?? {}) };
+    const mediatedEnv: Record<string, string> = {};
     const placeholderRegex = /\{\{(?:secret:)?([A-Za-z0-9_\-\.]+)\}\}/g;
 
-    // 1. Resolve any explicit template values in envTemplate
-    for (const [key, rawValue] of Object.entries(mediatedEnv)) {
-      if (typeof rawValue !== "string" || !rawValue.includes("{{")) {
+    for (const [key, value] of Object.entries(env)) {
+      if (isSecretReference(value)) {
+        const secretValue = await this.resolveSecretReference(value, context, "command_env");
+        mediatedEnv[key] = secretValue;
         continue;
       }
 
-      let mediatedValue = rawValue;
-      const matches = Array.from(rawValue.matchAll(placeholderRegex));
-
-      for (const match of matches) {
-        const fullPlaceholder = match[0];
-        const secretAlias = match[1];
-
-        const secretValue = await this.authorizeSecretAccess(secretAlias, context, "command_env");
-        mediatedValue = mediatedValue.replaceAll(fullPlaceholder, secretValue);
+      if (typeof value !== "string") {
+        mediatedEnv[key] = String(value ?? "");
+        continue;
       }
 
-      mediatedEnv[key] = mediatedValue;
+      let resolvedVal = value;
+      const matches = Array.from(value.matchAll(placeholderRegex));
+
+      for (const match of matches) {
+        const secretName = match[1];
+        const secretValue = await this.authorizeSecretAccess(secretName, context, "command_env");
+        resolvedVal = resolvedVal.replace(match[0], secretValue);
+      }
+
+      mediatedEnv[key] = resolvedVal;
     }
 
-    // 2. Automatically inject authorized secrets if injectAsEnv is enabled
+    // Automatically inject permitted secrets into env if injectAsEnv is set on capability grant
+    const grant = context.grant ? this.validateGrant(context) : undefined;
+    const secretCap: SecretCapability = grant?.capabilities?.secrets ?? {
+      allowedSecretNames: [],
+      allowedPrefixes: [],
+      denyDirectRead: true,
+      injectAsEnv: true,
+    };
+
     if (secretCap.injectAsEnv && secretCap.allowedSecretNames) {
-      const workspaceId = context.workspaceId ?? grant.workspaceId;
+      const workspaceId = context.workspaceId ?? grant?.workspaceId;
       for (const name of secretCap.allowedSecretNames) {
         if (mediatedEnv[name] === undefined) {
           try {
@@ -310,10 +485,37 @@ export class SecretBroker extends BaseCapabilityBroker {
   }
 
   /**
-   * Resolves raw secret directly only when denyDirectRead is explicitly false and authorized.
+   * Direct secret read - only permitted for direct host callers when denyDirectRead is explicitly false.
+   * Generated workers are always denied direct secret reads.
    */
   async getSecret(secretName: string, context: BrokerContext): Promise<{ secret: string | null }> {
     const startTime = Date.now();
+
+    // Worker contexts are strictly denied direct secret reads regardless of envelope configuration
+    if (context.isWorker || context.source === "worker") {
+      this.recordAudit(
+        "getSecret",
+        context,
+        "denied",
+        {
+          secretName,
+          reason: "DIRECT_READ_DENIED_FOR_WORKER",
+        },
+        {
+          durationMs: Date.now() - startTime,
+          error: {
+            code: "DIRECT_READ_DENIED",
+            message:
+              "Direct reading of secrets is strictly prohibited from worker contexts. Use trusted broker mediation.",
+          },
+        },
+      );
+      throw new BrokerSecurityError(
+        "DIRECT_READ_DENIED",
+        "Direct reading of secrets is strictly prohibited from worker contexts. Use trusted broker mediation.",
+      );
+    }
+
     const grant = this.validateGrant(context);
     const secretCap: SecretCapability = grant.capabilities.secrets ?? {};
 
@@ -321,15 +523,15 @@ export class SecretBroker extends BaseCapabilityBroker {
       throw new BrokerSecurityError("OPERATION_NOT_PERMITTED", "Secret name must be specified");
     }
 
-    // Direct read is denied by policy by default
-    if (secretCap.denyDirectRead) {
+    // Direct read is denied by policy when denyDirectRead is true (default)
+    if (secretCap.denyDirectRead !== false) {
       this.recordAudit(
         "getSecret",
         context,
         "denied",
         {
           secretName,
-          reason: "DIRECT_READ_DENIED",
+          reason: "DENY_DIRECT_READ",
         },
         {
           durationMs: Date.now() - startTime,
@@ -345,7 +547,7 @@ export class SecretBroker extends BaseCapabilityBroker {
       );
     }
 
-    // Check authorization
+    // Check if secret is authorized
     if (!this.isSecretAuthorized(secretName, secretCap)) {
       this.recordAudit(
         "getSecret",
@@ -370,53 +572,20 @@ export class SecretBroker extends BaseCapabilityBroker {
     }
 
     const workspaceId = context.workspaceId ?? grant.workspaceId;
-    const value = await this.manager.getStore().getSecret(secretName, workspaceId);
-
+    const val = await this.manager.getStore().getSecret(secretName, workspaceId);
     this.recordAudit(
       "getSecret",
       context,
       "allowed",
-      {
-        secretName,
-        found: value !== null,
-      },
+      { secretName },
       { durationMs: Date.now() - startTime },
     );
 
-    return { secret: value };
+    return { secret: val };
   }
 
   /**
-   * Lists secret metadata authorized under the current grant context.
-   */
-  async listMetadata(context: BrokerContext): Promise<SecretMetadata[]> {
-    const startTime = Date.now();
-    const grant = this.validateGrant(context);
-    const secretCap: SecretCapability = grant.capabilities.secrets ?? {};
-    const workspaceId = context.workspaceId ?? grant.workspaceId;
-
-    const allMetadata = await this.manager.listMetadata(workspaceId);
-
-    // Filter to only authorized secrets if allowlists are configured
-    const filtered = allMetadata.filter(
-      (meta) =>
-        this.isSecretAuthorized(meta.name, secretCap) ||
-        (meta.alias && this.isSecretAuthorized(meta.alias, secretCap)),
-    );
-
-    this.recordAudit(
-      "listMetadata",
-      context,
-      "allowed",
-      { count: filtered.length },
-      { durationMs: Date.now() - startTime },
-    );
-
-    return filtered;
-  }
-
-  /**
-   * Adds a new named secret to the store.
+   * Adds or updates a secret (host-side management API).
    */
   async addSecret(
     name: string,
@@ -427,7 +596,18 @@ export class SecretBroker extends BaseCapabilityBroker {
   }
 
   /**
-   * Rotates a secret.
+   * Adds or updates a secret (host-side management API).
+   */
+  async setSecret(
+    name: string,
+    value: string,
+    options?: SetSecretOptions,
+  ): Promise<SecretMetadata> {
+    return this.manager.addSecret(name, value, options);
+  }
+
+  /**
+   * Rotates a secret to a new value (host-side management API).
    */
   async rotateSecret(
     name: string,
@@ -438,17 +618,27 @@ export class SecretBroker extends BaseCapabilityBroker {
   }
 
   /**
+   * Lists non-sensitive secret metadata.
+   */
+  async listMetadata(contextOrWorkspaceId?: BrokerContext | string): Promise<SecretMetadata[]> {
+    const workspaceId =
+      typeof contextOrWorkspaceId === "string"
+        ? contextOrWorkspaceId
+        : contextOrWorkspaceId?.workspaceId;
+    return this.manager.listMetadata(workspaceId);
+  }
+
+  /**
+   * Lists non-sensitive secret metadata.
+   */
+  async listSecrets(contextOrWorkspaceId?: BrokerContext | string): Promise<SecretMetadata[]> {
+    return this.listMetadata(contextOrWorkspaceId);
+  }
+  /**
    * Deletes a secret.
    */
   async deleteSecret(name: string, workspaceId?: string): Promise<boolean> {
     return this.manager.deleteSecret(name, workspaceId);
-  }
-
-  /**
-   * Purges secrets.
-   */
-  async purgeSecrets(workspaceId?: string): Promise<number> {
-    return this.manager.purgeSecrets(workspaceId);
   }
 
   /**
@@ -459,61 +649,102 @@ export class SecretBroker extends BaseCapabilityBroker {
   }
 
   /**
-   * Unified dispatcher for secret broker operations.
+   * Unified dispatcher for worker RPC requests.
+   * Strictly enforces that worker contexts cannot perform direct-read operations.
    */
   async handleRequest(
     action: string,
     payload: Record<string, unknown>,
     context: BrokerContext,
   ): Promise<unknown> {
+    // Flag this context as a worker call
+    const workerContext: BrokerContext = { ...context, isWorker: true, source: "worker" };
+
     switch (action) {
       case "getSecret":
       case "read":
       case "resolve":
-        return this.getSecret(String(payload.name ?? ""), context);
+      case "raw":
+      case "getRawSecret": {
+        this.recordAudit(
+          "getSecret",
+          workerContext,
+          "denied",
+          {
+            action,
+            secretName: String(payload.name ?? payload.alias ?? ""),
+            reason: "DIRECT_READ_DENIED_FOR_WORKER",
+          },
+          {
+            error: {
+              code: "DIRECT_READ_DENIED",
+              message:
+                "Direct reading of secrets is strictly prohibited from worker contexts. Use trusted broker mediation.",
+            },
+          },
+        );
+        throw new BrokerSecurityError(
+          "DIRECT_READ_DENIED",
+          "Direct reading of secrets is strictly prohibited from worker contexts. Use trusted broker mediation.",
+        );
+      }
+
+      case "createReference":
+      case "createSecretReference": {
+        const name = String(payload.name ?? payload.alias ?? "");
+        const options = (payload.options ?? {}) as {
+          modes?: SecretMediationMode[];
+          expiresAt?: string;
+          toolId?: string;
+          accountId?: string;
+          installationId?: string;
+          metadata?: Record<string, unknown>;
+        };
+        return this.createSecretReference(name, workerContext, options);
+      }
+
+      case "listReferences": {
+        const grant = this.validateGrant(workerContext);
+        const secretCap: SecretCapability = grant.capabilities.secrets ?? {};
+        const allowedNames = secretCap.allowedSecretNames ?? [];
+        return allowedNames.map((name) => this.createSecretReference(name, workerContext));
+      }
 
       case "mediateHeaders":
-        return this.mediateHeaders((payload.headers as Record<string, string>) ?? {}, context);
+        return this.mediateHeaders(
+          (payload.headers as Record<string, string | SecretReference>) ?? {},
+          context,
+        );
 
       case "mediateBearerToken":
         return this.mediateBearerToken(String(payload.alias ?? payload.name ?? ""), context);
 
       case "mediateUrl":
-        return this.mediateUrl(String(payload.url ?? ""), context);
+        return this.mediateUrl(
+          String(payload.url ?? ""),
+          context,
+          payload.secretReferences as Record<string, SecretReference> | undefined,
+        );
 
       case "mediateCommandStdin":
         return this.mediateCommandStdin(
-          String(payload.template ?? payload.alias ?? payload.name ?? ""),
+          (payload.template ?? payload.alias ?? payload.name ?? "") as string | SecretReference,
           context,
         );
 
       case "mediateCommandEnv":
-        return this.mediateCommandEnv((payload.env as Record<string, string>) ?? {}, context);
-
-      case "listMetadata":
-      case "list":
-        return this.listMetadata(context);
-
-      case "addSecret":
-        return this.addSecret(
-          String(payload.name ?? ""),
-          String(payload.value ?? ""),
-          payload.options as SetSecretOptions | undefined,
+        return this.mediateCommandEnv(
+          (payload.env as Record<string, string | SecretReference>) ?? {},
+          context,
         );
 
-      case "rotateSecret":
-        return this.rotateSecret(
-          String(payload.name ?? ""),
-          String(payload.value ?? ""),
-          payload.workspaceId as string | undefined,
+      case "setSecret":
+      case "deleteSecret": {
+        throw new BrokerSecurityError(
+          "OPERATION_NOT_PERMITTED",
+          `Administrative action '${action}' is not permitted from worker RPC`,
         );
-
-      case "deleteSecret":
-        return this.deleteSecret(
-          String(payload.name ?? ""),
-          payload.workspaceId as string | undefined,
-        );
-
+      }
       default:
         throw new BrokerSecurityError(
           "OPERATION_NOT_PERMITTED",

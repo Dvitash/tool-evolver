@@ -14,6 +14,8 @@ export * from "./tools.js";
 
 // Capabilities & Envelopes
 export * from "./capabilities.js";
+// Secret References & Mediation
+export * from "./secrets.js";
 
 // Evolution Candidates
 export * from "./candidates.js";

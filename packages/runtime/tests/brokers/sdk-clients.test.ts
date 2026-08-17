@@ -140,10 +140,20 @@ describe("Broker SDK Clients & ToolRuntime Integration", () => {
 
     const clients = createBrokerClients(handler);
 
-    const secret = await clients.secret.getSecret("DATABASE_API_KEY");
-    expect(secret).toBe("secret_db_key_999");
-  });
+    // Direct read from worker handler is strictly denied by non-disclosure policy
+    await expect(clients.secret.getSecret("DATABASE_API_KEY")).rejects.toThrow();
 
+    // Secret references and template building
+    const ref = clients.secret.createReference("DATABASE_API_KEY");
+    expect(ref.name).toBe("DATABASE_API_KEY");
+    expect(ref.ref).toBeDefined();
+
+    const bearer = clients.secret.bearerToken("DATABASE_API_KEY");
+    expect(bearer.name).toBe("DATABASE_API_KEY");
+
+    const tmpl = clients.secret.template("DATABASE_API_KEY");
+    expect(tmpl).toBe("{{secret:DATABASE_API_KEY}}");
+  });
   it("integrates capability brokers with ToolRuntime and DeterministicWorkerSandbox", async () => {
     const runtime = new ToolRuntime({}, manager);
     const grant = createGrant({ toolId: "broker_demo_tool" });
