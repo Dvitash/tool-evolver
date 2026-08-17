@@ -63,6 +63,12 @@ import {
   type PublishCandidateOptions,
   createToolArtifactRegistryService,
 } from "./evolution/artifacts/index.js";
+import {
+  CloudCatalogService,
+  createCloudCatalogService,
+  CloudMcpServer,
+  createCloudMcpServer,
+} from "./mcp/index.js";
 
 // Configuration & Validation
 export * from "./config.js";
@@ -105,6 +111,9 @@ export * from "./evolution/testing/index.js";
 export * from "./evolution/replay/index.js";
 
 // Evolution Candidate Scoring, Evaluation & Eligibility Decisions
+
+// Cloud MCP Subsystem & Catalog
+export * from "./mcp/index.js";
 export * from "./evolution/evaluation/index.js";
 
 /**
@@ -136,6 +145,8 @@ export class CloudService {
   readonly historicalReplayService: HistoricalReplayService;
   readonly candidateEvaluationService: CandidateEvaluationService;
   readonly artifactRegistryService: ToolArtifactRegistryService;
+  readonly catalogService: CloudCatalogService;
+  readonly mcpServer: CloudMcpServer;
   private isInitialized = false;
 
   constructor(options: { config?: Partial<RawCloudConfig> } = {}) {
@@ -188,6 +199,15 @@ export class CloudService {
       { outboxPublisher: this.outboxPublisher },
     );
 
+
+    this.catalogService = createCloudCatalogService({
+      dbPool: this.dbPool,
+      toolRegistryRepo: this.artifactRegistryService.toolRegistryRepo,
+      outboxPublisher: this.outboxPublisher,
+    });
+    this.mcpServer = createCloudMcpServer({
+      catalogService: this.catalogService,
+    });
     this.candidateEvaluationService = createCandidateEvaluationService();
     this.worker.registerHandler("opportunity.detect", async (job) => {
       const tenant = job.tenantContext;
@@ -300,6 +320,8 @@ export class CloudService {
       objectStore: this.objectStore,
       queue: this.queue,
       outboxPublisher: this.outboxPublisher,
+      catalogService: this.catalogService,
+      mcpServer: this.mcpServer,
     });
   }
 

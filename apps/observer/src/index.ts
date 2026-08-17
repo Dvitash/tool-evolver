@@ -25,7 +25,6 @@ export * from "./ipc/client.js";
 // Worker Process Supervision & Isolation
 export * from "./worker-supervisor.js";
 
-
 // Transcript Tailing, Checkpointing, and Source Recovery
 export * from "./tailing/index.js";
 
@@ -34,6 +33,9 @@ export * from "./normalization/index.js";
 
 // Local Observability, Audit Trail, Kill Switches, Health & Recovery
 export * from "./observability/index.js";
+
+// Deployment Synchronization & Transactional Local Activation
+export * from "./sync/index.js";
 // Backward Compatibility Observer Service
 export interface ObserverService {
   recordEvent(message: ProtocolMessage): void;

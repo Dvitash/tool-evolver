@@ -161,6 +161,9 @@ importers:
       '@tool-evolver/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@tool-evolver/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
       '@tool-evolver/db':
         specifier: workspace:*
         version: link:../../packages/db

@@ -27,6 +27,12 @@ import {
   createObservationIngestionService,
   handleObservationBatchRoute,
 } from "../ingestion/index.js";
+import {
+  CloudCatalogService,
+  createCloudCatalogService,
+  CloudMcpServer,
+  createCloudMcpServer,
+} from "../mcp/index.js";
 
 /**
  * Health check status response.
@@ -53,6 +59,8 @@ export interface CloudServerOptions {
   outboxPublisher?: OutboxPublisher;
   authService?: AuthService;
   ingestionService?: ObservationIngestionService;
+  catalogService?: CloudCatalogService;
+  mcpServer?: CloudMcpServer;
 }
 /**
  * Cloud API Server shell providing HTTP endpoints, health checks,
@@ -65,9 +73,11 @@ export class CloudServer {
   private queue: DurableQueue;
   private outboxPublisher: OutboxPublisher;
   private server: Server | null = null;
+  private authService: AuthService;
+  private ingestionService: ObservationIngestionService;
+  private catalogService: CloudCatalogService;
+  private mcpServer: CloudMcpServer;
   private startTime: number;
-  readonly authService: AuthService;
-  readonly ingestionService: ObservationIngestionService;
 
   constructor(options: CloudServerOptions = {}) {
     this.config = options.config ?? loadConfig();
@@ -86,6 +96,18 @@ export class CloudServer {
       createObservationIngestionService({
         dbPool: this.dbPool,
         consentManager: this.authService.consentManager,
+      });
+    this.catalogService =
+      options.catalogService ??
+      createCloudCatalogService({
+        dbPool: this.dbPool,
+        outboxPublisher: this.outboxPublisher,
+      });
+
+    this.mcpServer =
+      options.mcpServer ??
+      createCloudMcpServer({
+        catalogService: this.catalogService,
       });
   }
 
@@ -111,6 +133,14 @@ export class CloudServer {
 
   getConfig(): CloudConfig {
     return this.config;
+  }
+
+  getCatalogService(): CloudCatalogService {
+    return this.catalogService;
+  }
+
+  getMcpServer(): CloudMcpServer {
+    return this.mcpServer;
   }
 
   /**
@@ -315,7 +345,8 @@ export class CloudServer {
     }
 
     // 3. For all other /v1/* endpoints, authenticate and establish tenant context
-    if (path.startsWith("/v1/")) {
+    // 3. For all other /v1/* endpoints, /mcp, or /mcp/sse, authenticate and establish tenant context
+    if (path.startsWith("/v1/") || path === "/mcp" || path === "/mcp/sse") {
       const isPublicRegistration = path === "/v1/accounts" && req.method === "POST";
       let activeContext: TenantContext;
       let authContext: AuthContext;
@@ -406,6 +437,30 @@ export class CloudServer {
         (r, status, data, h) => this.sendJson(r, status, data, h),
         headers,
       );
+      return;
+    }
+
+    // Cloud MCP Protocol Endpoint (JSON-RPC)
+    if ((path === "/v1/mcp" || path === "/mcp") && req.method === "POST") {
+      await this.mcpServer.handleHttpJsonRpc(req, res, authContext);
+      return;
+    }
+
+    // Cloud MCP SSE Streaming Transport
+    if ((path === "/v1/mcp/sse" || path === "/mcp/sse") && req.method === "GET") {
+      await this.mcpServer.handleSseStream(req, res, authContext);
+      return;
+    }
+
+    // Cloud MCP Tool Invocation (Gateway Proxy compatibility)
+    if (path === "/v1/tools/invoke" && req.method === "POST") {
+      await this.mcpServer.handleToolInvoke(req, res, authContext);
+      return;
+    }
+
+    // Cloud Catalog Snapshot
+    if (path === "/v1/catalog/snapshot" && (req.method === "GET" || req.method === "POST")) {
+      await this.mcpServer.handleCatalogSnapshot(req, res, authContext);
       return;
     }
 

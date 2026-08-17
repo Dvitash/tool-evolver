@@ -13,6 +13,9 @@
       "path": "../../packages/contracts"
     },
     {
+      "path": "../../packages/crypto"
+    },
+    {
       "path": "../../packages/protocol"
     },
     {
