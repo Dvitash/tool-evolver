@@ -9,3 +9,4 @@ export * from "./scorer.js";
 export * from "./update-comparator.js";
 export * from "./shadow.js";
 export * from "./service.js";
+export * from "./validation-pipeline.js";

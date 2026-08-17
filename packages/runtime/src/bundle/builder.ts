@@ -50,6 +50,7 @@ export interface BuiltToolBundle {
   spec: ToolBundleSpec;
   archiveBuffer: Buffer;
   bundleDigest: string;
+  digest: string;
   fileDigests: Record<string, string>;
   files: BundleFileEntry[];
   signature?: BundleSignatureData;
@@ -435,6 +436,7 @@ export async function buildToolBundle(options: BuildToolBundleOptions): Promise<
     spec,
     archiveBuffer: finalArchive,
     bundleDigest: finalBundleDigest,
+    digest: finalBundleDigest,
     fileDigests: finalDigests,
     files: fileEntries,
     signature: signatureData,
@@ -468,3 +470,5 @@ export async function createBundleFromDirectory(
     sourceDir: dirPath,
   });
 }
+
+export { parseTarArchive as extractTarball };

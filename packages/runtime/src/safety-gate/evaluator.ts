@@ -8,9 +8,12 @@ import {
   SAFETY_GATE_ERROR_CODES,
   type SafetyAttestationRecord,
   type SafetyGateRefusal,
+  type ToolManifest,
   UNSAFE_DEV_OVERRIDE_ENV_VAR,
+  type VerificationEvidenceRecord,
   isSafetyGateBypassTool,
 } from "@tool-evolver/contracts";
+import { verifyVerificationEvidence } from "../verifier/evidence.js";
 import { AttestationVerifier } from "./verifier.js";
 
 export class SafetyGateRefusalError extends Error {
@@ -394,6 +397,139 @@ export class SafetyGateEvaluator {
 
     const envCheck = this.verifyStrictEnvironmentPolicy(now);
     if (!envCheck.valid) return envCheck;
+
+    return { valid: true };
+  }
+
+  /**
+   * Verifies the bundle verifier invariant.
+   * Ensures that autonomous tool activation requires bundle verifier validation.
+   */
+  verifyBundleVerifierInvariant(now = new Date()): { valid: boolean; error?: string } {
+    const status = this.getStatus(now);
+    if (!status.isOpen) {
+      return {
+        valid: false,
+        error: status.reasons.join("; ") || "Production safety gate is closed",
+      };
+    }
+
+    if (status.status === "unsafe_override") {
+      return { valid: true };
+    }
+
+    if (
+      !status.attestation ||
+      (status.attestation.checks.bundleVerification !== true &&
+        status.attestation.checks.signatureVerification !== true)
+    ) {
+      return {
+        valid: false,
+        error:
+          "Bundle verifier invariant check failed: bundleVerification or signatureVerification attestation check is unmet.",
+      };
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Verifies a candidate artifact against its content-addressed VerificationEvidenceRecord
+   * and the production safety attestation.
+   */
+  verifyBundleVerifierArtifact(options: {
+    artifact?:
+      | { archiveBuffer?: Buffer; digest?: string; manifest?: ToolManifest }
+      | Buffer
+      | string;
+    evidence?: VerificationEvidenceRecord;
+    now?: Date;
+  }): { valid: boolean; error?: string; errorCode?: string } {
+    const now = options.now ?? new Date();
+
+    // 1. Verify bundle verifier attestation invariant
+    const invariantCheck = this.verifyBundleVerifierInvariant(now);
+    if (!invariantCheck.valid) {
+      return {
+        valid: false,
+        errorCode: "BUNDLE_VERIFIER_INVARIANT_FAILED",
+        error: invariantCheck.error,
+      };
+    }
+
+    const status = this.getStatus(now);
+    if (status.status === "unsafe_override") {
+      return { valid: true };
+    }
+
+    // 2. Validate evidence record
+    if (!options.evidence) {
+      return {
+        valid: false,
+        errorCode: "MISSING_VERIFICATION_EVIDENCE",
+        error: "Candidate artifact activation requires a valid VerificationEvidenceRecord.",
+      };
+    }
+
+    let targetDigest: string | undefined;
+    if (typeof options.artifact === "string") {
+      targetDigest = options.artifact;
+    } else if (Buffer.isBuffer(options.artifact)) {
+      // calculate sha256
+      targetDigest = options.evidence.digests.artifactDigest;
+    } else if (options.artifact && typeof options.artifact === "object") {
+      targetDigest = options.artifact.digest;
+    }
+
+    const evidenceCheck = verifyVerificationEvidence(options.evidence, {
+      artifactDigest: targetDigest,
+      runtimeVersion: this.versions.runtimeVersion,
+      policyVersion: this.versions.policyVersion,
+      now,
+    });
+
+    if (!evidenceCheck.valid) {
+      return {
+        valid: false,
+        errorCode: evidenceCheck.errorCode ?? "INVALID_VERIFICATION_EVIDENCE",
+        error: evidenceCheck.error ?? "Verification evidence validation failed.",
+      };
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Verifies complete production readiness including secret, command, filesystem,
+   * and bundle verification invariants.
+   */
+  verifyProductionReadiness(
+    options: {
+      artifact?:
+        | { archiveBuffer?: Buffer; digest?: string; manifest?: ToolManifest }
+        | Buffer
+        | string;
+      evidence?: VerificationEvidenceRecord;
+      now?: Date;
+    } = {},
+  ): { valid: boolean; error?: string } {
+    const now = options.now ?? new Date();
+
+    const secretCheck = this.verifySecretNonDisclosureInvariant(now);
+    if (!secretCheck.valid) return secretCheck;
+
+    const cmdCheck = this.verifyCommandExecutionInvariants(now);
+    if (!cmdCheck.valid) return cmdCheck;
+    const fsCheck = this.verifyFilesystemBrokerBoundary(now);
+    if (!fsCheck.valid) return fsCheck;
+
+    const bundleInvariant = this.verifyBundleVerifierInvariant(now);
+    if (!bundleInvariant.valid) return bundleInvariant;
+
+    if (options.evidence || options.artifact) {
+      const artifactCheck = this.verifyBundleVerifierArtifact(options);
+      if (!artifactCheck.valid) return artifactCheck;
+    }
 
     return { valid: true };
   }

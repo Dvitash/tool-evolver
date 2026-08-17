@@ -13,6 +13,12 @@ export * from "./bundle/signature.js";
 // Production Readiness Safety Gate & Attestation Verification
 export * from "./safety-gate/index.js";
 
+// Candidate Verification, Type Checking, Probes & Evidence Records
+export * from "./verifier/index.js";
+
+// Bundle & Artifact Construction
+export * from "./builder/index.js";
+
 // Loader Security & Path Traversal Checks
 export * from "./loader/security-checks.js";
 

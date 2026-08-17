@@ -7,6 +7,7 @@ import {
   Sha256DigestSchema,
 } from "./common.js";
 import { ToolScopeSchema } from "./tools.js";
+import { SignatureMetadataSchema } from "./versions.js";
 
 /**
  * 1. WorkspaceRecord: Persistent registration of a local workspace root.
@@ -211,3 +212,56 @@ export const DeadLetterRecordSchema = z.object({
 });
 
 export type DeadLetterRecord = z.infer<typeof DeadLetterRecordSchema>;
+
+/**
+ * 10. VerificationEvidenceRecord: Content-addressed candidate verification evidence.
+ */
+export const VerificationDigestsSchema = z.object({
+  sourceDigest: Sha256DigestSchema,
+  manifestDigest: Sha256DigestSchema,
+  testsDigest: Sha256DigestSchema,
+  sdkDigest: Sha256DigestSchema,
+  runtimeDigest: Sha256DigestSchema,
+  policyDigest: Sha256DigestSchema,
+  denoDigest: Sha256DigestSchema,
+  artifactDigest: Sha256DigestSchema,
+  compositeEvidenceDigest: Sha256DigestSchema,
+});
+
+export type VerificationDigests = z.infer<typeof VerificationDigestsSchema>;
+
+export const VerificationChecksSchema = z.object({
+  compilationAndTypeCheck: z.boolean(),
+  staticAnalysis: z.boolean(),
+  schemaValidation: z.boolean(),
+  unitTests: z.boolean(),
+  securityProbes: z.boolean(),
+  deterministicPackaging: z.boolean(),
+});
+
+export type VerificationChecks = z.infer<typeof VerificationChecksSchema>;
+
+export const ProbeResultEntrySchema = z.object({
+  probeId: z.string().min(1),
+  name: z.string().min(1),
+  passed: z.boolean(),
+  details: z.string().optional(),
+});
+
+export type ProbeResultEntry = z.infer<typeof ProbeResultEntrySchema>;
+
+export const VerificationEvidenceRecordSchema = z.object({
+  evidenceId: IdentifierSchema,
+  toolId: IdentifierSchema,
+  version: SchemaVersionSchema,
+  status: z.enum(["passed", "failed"]),
+  verifiedAt: ISOTimestampSchema,
+  expiresAt: ISOTimestampSchema,
+  digests: VerificationDigestsSchema,
+  checks: VerificationChecksSchema,
+  probeResults: z.array(ProbeResultEntrySchema).default([]),
+  metadata: z.record(z.unknown()).optional(),
+  signature: SignatureMetadataSchema.optional(),
+});
+
+export type VerificationEvidenceRecord = z.infer<typeof VerificationEvidenceRecordSchema>;
