@@ -264,4 +264,33 @@ export class SafetyGateEvaluator {
       throw new SafetyGateRefusalError(check.refusal);
     }
   }
+
+  /**
+   * Verifies the filesystem broker boundary invariant.
+   * Ensures that workspace filesystem access is mediated strictly through the broker
+   * and that direct Deno worker access is prevented.
+   */
+  verifyFilesystemBrokerBoundary(now = new Date()): { valid: boolean; error?: string } {
+    const status = this.getStatus(now);
+    if (!status.isOpen) {
+      return {
+        valid: false,
+        error: status.reasons.join("; ") || "Production safety gate is closed",
+      };
+    }
+
+    if (status.status === "unsafe_override") {
+      return { valid: true };
+    }
+
+    if (!status.attestation || status.attestation.checks.filesystemMediation !== true) {
+      return {
+        valid: false,
+        error:
+          "Filesystem broker mediation invariant check failed: filesystemMediation attestation check is unmet.",
+      };
+    }
+
+    return { valid: true };
+  }
 }

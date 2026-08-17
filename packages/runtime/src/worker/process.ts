@@ -105,17 +105,14 @@ export class WorkerProcess {
 
     // 2. Prepare permission flags
     // The worker is permissionless for network, env, run, ffi, write.
-    // Read is allowed only for bootstrap script, bundle entrypoint and scratch workspace.
+    // Read is allowed ONLY for bootstrap script, verified bundle entrypoint, and scratch workspace.
+    // The workspace root is strictly excluded from Deno read/write permissions.
     const entrypointDir = path.dirname(path.resolve(this.options.bundleEntrypoint));
     const allowReadPaths = [
       this.scratchDir,
       entrypointDir,
       path.resolve(this.options.bundleEntrypoint),
     ];
-    if (this.options.workspaceRoot) {
-      allowReadPaths.push(path.resolve(this.options.workspaceRoot));
-    }
-
     const args = [
       "run",
       "--no-prompt",

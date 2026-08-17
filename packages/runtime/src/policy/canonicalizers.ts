@@ -50,6 +50,106 @@ export interface FsCanonicalizeOptions {
 }
 
 /**
+ * Standard sensitive or hidden path patterns that require explicit non-wildcard inclusion.
+ */
+export const SENSITIVE_PATH_PATTERNS = [
+  "**/.git/**",
+  "**/.git",
+  "**/.ssh/**",
+  "**/.ssh",
+  "**/.aws/**",
+  "**/.aws",
+  "**/.env*",
+  "**/id_rsa*",
+  "**/id_ed25519*",
+  "/etc/shadow",
+  "/etc/passwd",
+  "/etc/sudoers",
+  "/private/etc/shadow",
+  "/private/etc/passwd",
+  "/private/etc/sudoers",
+] as const;
+
+/**
+ * Resolves platform-specific path aliases (macOS /private/var <-> /var, WSL /mnt/c <-> c:).
+ */
+export function resolvePlatformAliases(p: string): string {
+  let normalized = p.replace(/\\+/g, "/");
+
+  // macOS /private aliases
+  if (normalized.startsWith("/private/var/") || normalized === "/private/var") {
+    normalized = normalized.replace(/^\/private\/var/, "/var");
+  } else if (normalized.startsWith("/private/tmp/") || normalized === "/private/tmp") {
+    normalized = normalized.replace(/^\/private\/tmp/, "/tmp");
+  } else if (normalized.startsWith("/private/etc/") || normalized === "/private/etc") {
+    normalized = normalized.replace(/^\/private\/etc/, "/etc");
+  }
+
+  // WSL mount aliases: /mnt/c/... -> c:/...
+  const wslMatch = normalized.match(/^\/mnt\/([a-zA-Z])(?:\/(.*))?$/);
+  if (wslMatch) {
+    const drive = wslMatch[1].toLowerCase();
+    const rest = wslMatch[2] ? `/${wslMatch[2]}` : "";
+    normalized = `${drive}:${rest}`;
+  }
+
+  // Normalize uppercase Windows drive letter: C:/... -> c:/...
+  const winMatch = normalized.match(/^([a-zA-Z]):(?:\/(.*))?$/);
+  if (winMatch) {
+    const drive = winMatch[1].toLowerCase();
+    const rest = winMatch[2] ? `/${winMatch[2]}` : "";
+    normalized = `${drive}:${rest}`;
+  }
+
+  return normalized;
+}
+
+/**
+ * Checks whether a path matches any standard sensitive or hidden path patterns.
+ */
+export function isSensitivePath(targetPath: string, workspaceRoot?: string): boolean {
+  const normTarget = normalizeSlashes(targetPath);
+  const aliasTarget = resolvePlatformAliases(normTarget);
+  const normRoot = workspaceRoot ? normalizeSlashes(workspaceRoot) : undefined;
+
+  for (const pattern of SENSITIVE_PATH_PATTERNS) {
+    if (
+      matchesPathPattern(normTarget, pattern, normRoot ?? process.cwd()) ||
+      matchesPathPattern(aliasTarget, pattern, normRoot ?? process.cwd())
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Checks whether a pattern is an explicit literal non-wildcard match for a target path.
+ */
+export function isExplicitNonWildcardMatch(
+  pattern: string,
+  targetPath: string,
+  workspaceRoot?: string,
+): boolean {
+  if (/[*?]/.test(pattern)) {
+    return false;
+  }
+  const normRoot = workspaceRoot ? normalizeSlashes(workspaceRoot) : "";
+  const normPattern = normalizeSlashes(pattern);
+  const normTarget = normalizeSlashes(targetPath);
+
+  const resolvedPattern = path.isAbsolute(normPattern)
+    ? normPattern
+    : normalizeSlashes(path.resolve(normRoot, normPattern));
+  const resolvedTarget = path.isAbsolute(normTarget)
+    ? normTarget
+    : normalizeSlashes(path.resolve(normRoot, normTarget));
+
+  if (resolvedTarget === resolvedPattern) return true;
+  return resolvePlatformAliases(resolvedTarget) === resolvePlatformAliases(resolvedPattern);
+}
+
+/**
  * Normalizes all path separators to POSIX standard forward-slashes.
  */
 export function normalizeSlashes(p: string): string {
@@ -57,30 +157,61 @@ export function normalizeSlashes(p: string): string {
 }
 
 /**
+ * Expands placeholders like {{workspace}} or ${workspace} in a path string.
+ */
+export function expandWorkspacePlaceholder(p: string, workspaceRoot: string): string {
+  const normRoot = normalizeSlashes(workspaceRoot);
+  return p
+    .replace(/<WORKSPACE_ROOT>/gi, normRoot)
+    .replace(/\{\{workspace\}\}/gi, normRoot)
+    .replace(/\$\{workspace\}/gi, normRoot)
+    .replace(/^~(?=$|\/|\\)/, os.homedir());
+}
+
+/**
  * Checks whether a target path is strictly contained within a given root directory.
  */
 export function isPathInsideRoot(targetPath: string, rootDir: string): boolean {
-  const normTarget = normalizeSlashes(path.resolve(rootDir, targetPath));
-  const normRoot = normalizeSlashes(path.resolve(rootDir));
+  const normTarget = normalizeSlashes(targetPath);
+  const normRoot = normalizeSlashes(rootDir);
 
-  if (normTarget === normRoot) {
+  const aliasTarget = resolvePlatformAliases(normTarget);
+  const aliasRoot = resolvePlatformAliases(normRoot);
+
+  if (aliasTarget === aliasRoot) {
     return true;
   }
 
-  const rootPrefix = normRoot.endsWith("/") ? normRoot : `${normRoot}/`;
-  return normTarget.startsWith(rootPrefix);
+  const aliasRootPrefix = aliasRoot.endsWith("/") ? aliasRoot : `${aliasRoot}/`;
+  if (aliasTarget.startsWith(aliasRootPrefix)) {
+    return true;
+  }
+
+  const resolvedTarget = normalizeSlashes(path.resolve(rootDir, targetPath));
+  const resolvedRoot = normalizeSlashes(path.resolve(rootDir));
+
+  if (resolvedTarget === resolvedRoot) {
+    return true;
+  }
+
+  const resolvedRootPrefix = resolvedRoot.endsWith("/") ? resolvedRoot : `${resolvedRoot}/`;
+  if (resolvedTarget.startsWith(resolvedRootPrefix)) {
+    return true;
+  }
+
+  const resolvedAliasTarget = resolvePlatformAliases(resolvedTarget);
+  const resolvedAliasRoot = resolvePlatformAliases(resolvedRoot);
+  if (resolvedAliasTarget === resolvedAliasRoot) {
+    return true;
+  }
+  const resolvedAliasPrefix = resolvedAliasRoot.endsWith("/")
+    ? resolvedAliasRoot
+    : `${resolvedAliasRoot}/`;
+  return resolvedAliasTarget.startsWith(resolvedAliasPrefix);
 }
 
 /**
- * Replaces <WORKSPACE_ROOT> placeholder with the actual workspace root path.
- */
-export function expandWorkspacePlaceholder(rawPath: string, workspaceRoot: string): string {
-  const normRoot = normalizeSlashes(path.resolve(workspaceRoot));
-  return rawPath.replace(/<WORKSPACE_ROOT>/g, normRoot);
-}
-
-/**
- * Checks for invalid characters (null bytes, control characters, unprintable chars).
+ * Checks for invalid characters (null bytes, control characters, unprintable chars, reserved DOS names).
  */
 export function validatePathCharacters(rawPath: string): void {
   if (typeof rawPath !== "string" || rawPath.length === 0) {
@@ -98,10 +229,33 @@ export function validatePathCharacters(rawPath: string): void {
   }
 
   // Encoded null bytes or traversal tricks
-  if (/%00|%2e%2e|\.\.%2f|\.\.%5c/i.test(rawPath)) {
+  if (/%00|%2e%2e|\.\.%2f|\.\.%5c|%2e%2e%2f|%2e%2e%5c|%252e%252e/i.test(rawPath)) {
     throw new PolicyCanonicalizationError(
       "PATH_TRAVERSAL",
       `Path contains encoded traversal sequences: ${rawPath}`,
+      { rawPath },
+    );
+  }
+
+  // Windows / DOS reserved device names
+  const segments = normalizeSlashes(rawPath).split("/");
+  for (const seg of segments) {
+    const baseSeg = seg.split(".")[0]?.toUpperCase();
+    if (baseSeg && /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(baseSeg)) {
+      throw new PolicyCanonicalizationError(
+        "INVALID_PATH_CHARACTERS",
+        `Path contains reserved Windows device name: ${seg}`,
+        { rawPath, segment: seg },
+      );
+    }
+  }
+
+  // Alternative Data Streams (e.g. file.txt:stream or :$DATA)
+  const withoutDrive = rawPath.replace(/^[a-zA-Z]:[/\\]/, "");
+  if (withoutDrive.includes(":")) {
+    throw new PolicyCanonicalizationError(
+      "INVALID_PATH_CHARACTERS",
+      `Path contains NTFS alternative data stream colon: ${rawPath}`,
       { rawPath },
     );
   }
@@ -253,33 +407,56 @@ export function matchesPathPattern(
   const expandedPattern = expandWorkspacePlaceholder(pattern, workspaceRoot);
   const normPattern = normalizeSlashes(expandedPattern);
 
+  const isPatternAbsolute = path.isAbsolute(normPattern) || /^[a-zA-Z]:/.test(normPattern);
+  if (!isPatternAbsolute) {
+    if (!isPathInsideRoot(normTarget, workspaceRoot)) {
+      return false;
+    }
+  }
+
   // If pattern is a glob
   if (/[*?]/.test(normPattern)) {
-    const resolvedPattern = path.isAbsolute(normPattern)
+    const resolvedPattern = isPatternAbsolute
       ? normPattern
       : `${normalizeSlashes(path.resolve(workspaceRoot))}/${normPattern.replace(/^\.\//, "")}`;
     const re = globToRegExp(resolvedPattern);
     if (re.test(normTarget)) {
       return true;
     }
-    // Also test relative pattern
-    const relTarget = normalizeSlashes(path.relative(workspaceRoot, normTarget));
-    const reRel = globToRegExp(normPattern.replace(/^\.\//, ""));
-    return reRel.test(relTarget);
+    // Also test relative pattern only if inside workspace
+    if (isPathInsideRoot(normTarget, workspaceRoot)) {
+      const relTarget = path.relative(workspaceRoot, normTarget).replace(/\\/g, "/");
+      if (!relTarget.startsWith("..")) {
+        const relRe = globToRegExp(normPattern.replace(/^\.\//, ""));
+        if (relRe.test(relTarget)) {
+          return true;
+        }
+      }
+    }
+    // Also test platform alias
+    const aliasTarget = resolvePlatformAliases(normTarget);
+    const aliasPattern = resolvePlatformAliases(resolvedPattern);
+    const aliasRe = globToRegExp(aliasPattern);
+    if (aliasRe.test(aliasTarget)) {
+      return true;
+    }
+    return false;
   }
 
-  // Exact path or directory prefix
-  const resolvedPattern = normalizeSlashes(path.resolve(workspaceRoot, normPattern));
-  if (normTarget === resolvedPattern) {
+  // Exact literal path match
+  const resolvedLiteral = isPatternAbsolute
+    ? normPattern
+    : normalizeSlashes(path.resolve(workspaceRoot, normPattern));
+
+  if (normTarget === resolvedLiteral) {
     return true;
   }
 
-  const dirPrefix = resolvedPattern.endsWith("/") ? resolvedPattern : `${resolvedPattern}/`;
-  return normTarget.startsWith(dirPrefix);
+  return resolvePlatformAliases(normTarget) === resolvePlatformAliases(resolvedLiteral);
 }
 
 /**
- * Checks whether a path is allowed given read/write allowed list and deny list.
+ * Determines whether a target path is allowed given allowedPatterns and denyPatterns.
  */
 export function isPathPermitted(
   targetPath: string,
@@ -287,9 +464,18 @@ export function isPathPermitted(
   denyPatterns: string[],
   workspaceRoot: string,
 ): boolean {
-  const normTarget = canonicalizePath(targetPath, workspaceRoot, { allowTemp: true });
+  const normTarget = normalizeSlashes(path.resolve(workspaceRoot, targetPath));
 
-  // Deny list takes strict precedence
+  // Sensitive paths remain denied unless explicitly allowed via non-wildcard match
+  if (isSensitivePath(normTarget, workspaceRoot)) {
+    const hasExplicit = allowedPatterns.some((pattern) =>
+      isExplicitNonWildcardMatch(pattern, normTarget, workspaceRoot),
+    );
+    if (!hasExplicit) {
+      return false;
+    }
+  }
+
   for (const denyPattern of denyPatterns) {
     if (matchesPathPattern(normTarget, denyPattern, workspaceRoot)) {
       return false;

@@ -199,5 +199,22 @@ describe("Safety Gate Runtime Engine & Attestation Verification", () => {
       evaluator.setAttestation(null);
       expect(evaluator.getStatus().isOpen).toBe(false);
     });
+
+    it("verifies filesystem broker boundary invariant against production attestation", () => {
+      const validAttestation = createSafetyAttestation();
+      const evaluator = new SafetyGateEvaluator({ attestation: validAttestation });
+      const boundaryCheck = evaluator.verifyFilesystemBrokerBoundary();
+
+      expect(boundaryCheck.valid).toBe(true);
+      expect(boundaryCheck.error).toBeUndefined();
+    });
+
+    it("fails filesystem broker boundary verification when attestation is missing or unmet", () => {
+      const evaluator = new SafetyGateEvaluator({ attestation: null });
+      const boundaryCheck = evaluator.verifyFilesystemBrokerBoundary();
+
+      expect(boundaryCheck.valid).toBe(false);
+      expect(boundaryCheck.error).toBeDefined();
+    });
   });
 });

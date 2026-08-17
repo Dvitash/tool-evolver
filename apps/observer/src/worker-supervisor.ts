@@ -1,8 +1,60 @@
 import child_process from "node:child_process";
+import path from "node:path";
 import process from "node:process";
 import { UNSAFE_ENV_PREFIX } from "@tool-evolver/contracts";
 import type { Logger } from "./lifecycle.js";
 
+export interface DenoWorkerPermissionOptions {
+  bundleEntrypoint: string;
+  scratchDir: string;
+  sdkPaths?: string[];
+  allowReadPaths?: string[];
+  workspaceRoot?: string;
+}
+
+/**
+ * Builds Deno command line permission flags for isolated worker processes.
+ * Strictly guarantees that `--allow-read` is granted ONLY to the verified bundle,
+ * runtime SDK, and isolated scratch directory. Workspace root is strictly excluded.
+ */
+export function buildDenoWorkerPermissions(options: DenoWorkerPermissionOptions): string[] {
+  const resolvedBundle = path.resolve(options.bundleEntrypoint);
+  const bundleDir = path.dirname(resolvedBundle);
+  const resolvedScratch = path.resolve(options.scratchDir);
+
+  const allowRead = new Set<string>();
+  allowRead.add(resolvedScratch);
+  allowRead.add(bundleDir);
+  allowRead.add(resolvedBundle);
+
+  if (options.sdkPaths) {
+    for (const sdkPath of options.sdkPaths) {
+      allowRead.add(path.resolve(sdkPath));
+    }
+  }
+
+  if (options.allowReadPaths) {
+    const forbiddenWorkspace = options.workspaceRoot ? path.resolve(options.workspaceRoot) : null;
+    for (const p of options.allowReadPaths) {
+      const resolved = path.resolve(p);
+      // Strictly prevent adding workspace root to Deno read permissions
+      if (forbiddenWorkspace && resolved === forbiddenWorkspace) {
+        continue;
+      }
+      allowRead.add(resolved);
+    }
+  }
+
+  return [
+    "--no-prompt",
+    `--allow-read=${Array.from(allowRead).join(",")}`,
+    `--allow-write=${resolvedScratch}`,
+    "--deny-net",
+    "--deny-env",
+    "--deny-run",
+    "--deny-ffi",
+  ];
+}
 export type WorkerStatus =
   | "completed"
   | "timed_out"

@@ -5,9 +5,12 @@ import path from "node:path";
 import type { FsCapability } from "@tool-evolver/contracts";
 import {
   expandWorkspacePlaceholder,
+  isExplicitNonWildcardMatch,
   isPathInsideRoot,
+  isSensitivePath,
   matchesPathPattern,
   normalizeSlashes,
+  resolvePlatformAliases,
   validatePathCharacters,
 } from "../policy/canonicalizers.js";
 import {
@@ -16,24 +19,6 @@ import {
   type BrokerContext,
   BrokerSecurityError,
 } from "./base.js";
-
-/**
- * Standard sensitive or hidden paths that require explicit inclusion.
- */
-const SENSITIVE_PATH_PATTERNS = [
-  "**/.git/**",
-  "**/.git",
-  "**/.ssh/**",
-  "**/.ssh",
-  "**/.aws/**",
-  "**/.aws",
-  "**/.env*",
-  "**/id_rsa*",
-  "**/id_ed25519*",
-  "/etc/shadow",
-  "/etc/passwd",
-  "/etc/sudoers",
-];
 
 export interface FileStatResult {
   size: number;
@@ -123,7 +108,7 @@ export class FilesystemBroker extends BaseCapabilityBroker {
     // Expand placeholders
     const expanded = expandWorkspacePlaceholder(rawPath, workspaceRoot);
 
-    // Normalize and resolve path
+    // Resolve target path
     const resolvedPath = path.isAbsolute(expanded)
       ? normalizeSlashes(path.resolve(expanded))
       : normalizeSlashes(path.resolve(workspaceRoot, expanded));
@@ -131,10 +116,13 @@ export class FilesystemBroker extends BaseCapabilityBroker {
     // Unicode normalization
     const canonicalTarget = resolvedPath.normalize("NFC");
 
-    // Check denied paths (strict precedence)
+    // Check denied paths on canonicalTarget (strict precedence)
     const denyPatterns = fsCap.denyPaths ?? [];
     for (const denyPattern of denyPatterns) {
-      if (matchesPathPattern(canonicalTarget, denyPattern, workspaceRoot)) {
+      if (
+        matchesPathPattern(canonicalTarget, denyPattern, workspaceRoot) ||
+        matchesPathPattern(resolvePlatformAliases(canonicalTarget), denyPattern, workspaceRoot)
+      ) {
         throw new BrokerSecurityError(
           "PATH_DENIED",
           `Path is explicitly denied by capability policy: ${rawPath}`,
@@ -143,32 +131,30 @@ export class FilesystemBroker extends BaseCapabilityBroker {
       }
     }
 
-    // Check default sensitive paths unless explicitly allowed in readPaths or writePaths
-    const isExplicitlyAllowed = (mode === "read" ? fsCap.readPaths : fsCap.writePaths)?.some(
-      (pattern) => matchesPathPattern(canonicalTarget, pattern, workspaceRoot),
-    );
-
-    if (!isExplicitlyAllowed) {
-      for (const sensitivePattern of SENSITIVE_PATH_PATTERNS) {
-        if (matchesPathPattern(canonicalTarget, sensitivePattern, workspaceRoot)) {
-          throw new BrokerSecurityError(
-            "HIDDEN_FILE_DENIED",
-            `Access to sensitive or hidden path is denied: ${rawPath}`,
-            { path: rawPath },
-          );
-        }
+    // Check sensitive / hidden paths on canonicalTarget unless explicitly allowed via non-wildcard match
+    if (isSensitivePath(canonicalTarget, workspaceRoot)) {
+      const explicitPatterns = mode === "read" ? fsCap.readPaths : fsCap.writePaths;
+      const isExplicit = explicitPatterns?.some((pattern) =>
+        isExplicitNonWildcardMatch(pattern, canonicalTarget, workspaceRoot),
+      );
+      if (!isExplicit) {
+        throw new BrokerSecurityError(
+          "HIDDEN_FILE_DENIED",
+          `Access to sensitive or hidden path is denied: ${rawPath}`,
+          { path: rawPath },
+        );
       }
     }
 
     // Check allowed roots
     let isAllowed = false;
 
-    // 1. Workspace root
+    // 1. Workspace root allowed
     if (fsCap.allowWorkspaceRoot && isPathInsideRoot(canonicalTarget, workspaceRoot)) {
       isAllowed = true;
     }
 
-    // 2. Temp / Scratch root
+    // 2. Temp scratch dir allowed
     if (fsCap.allowTemp && scratchDir && isPathInsideRoot(canonicalTarget, scratchDir)) {
       isAllowed = true;
     }
@@ -177,7 +163,10 @@ export class FilesystemBroker extends BaseCapabilityBroker {
     const explicitPatterns = mode === "read" ? fsCap.readPaths : fsCap.writePaths;
     if (explicitPatterns && explicitPatterns.length > 0) {
       for (const pattern of explicitPatterns) {
-        if (matchesPathPattern(canonicalTarget, pattern, workspaceRoot)) {
+        if (
+          matchesPathPattern(canonicalTarget, pattern, workspaceRoot) ||
+          matchesPathPattern(resolvePlatformAliases(canonicalTarget), pattern, workspaceRoot)
+        ) {
           isAllowed = true;
           break;
         }
@@ -185,72 +174,135 @@ export class FilesystemBroker extends BaseCapabilityBroker {
     }
 
     if (!isAllowed) {
+      // Check if it was an escape attempt outside roots
+      if (
+        !isPathInsideRoot(canonicalTarget, workspaceRoot) &&
+        (!scratchDir || !isPathInsideRoot(canonicalTarget, scratchDir))
+      ) {
+        throw new BrokerSecurityError(
+          "OUTSIDE_ALLOWED_ROOT",
+          `Path escapes authorized root directories: ${rawPath}`,
+          { path: rawPath, resolvedPath: canonicalTarget, workspaceRoot },
+        );
+      }
       throw new BrokerSecurityError(
-        "OUTSIDE_ALLOWED_ROOT",
-        `Path is outside authorized ${mode} roots: ${rawPath}`,
+        "OPERATION_NOT_PERMITTED",
+        `Access to path is not granted by capability grant: ${rawPath}`,
         { path: rawPath, mode },
       );
     }
-    // Symlink / Realpath containment check
-    this.verifySymlinkContainment(canonicalTarget, workspaceRoot, scratchDir, fsCap);
 
-    return canonicalTarget;
+    // 4. Verify symlink containment and check real target
+    this.verifySymlinkContainment(resolvedPath, workspaceRoot, scratchDir, fsCap);
+
+    return resolvedPath;
   }
 
   /**
-   * Verifies that symlinks do not target paths outside authorized roots.
+   * Verifies that symlinks do not target paths outside authorized roots or sensitive targets.
    */
   private verifySymlinkContainment(
     targetPath: string,
     workspaceRoot: string,
     scratchDir: string | undefined,
     fsCap: FsCapability,
-  ): void {
+  ): string {
     let checkPath = targetPath;
+    const trailingSegments: string[] = [];
 
     // Find the deepest existing parent or the path itself
     while (!fs.existsSync(checkPath)) {
       const parent = path.dirname(checkPath);
       if (parent === checkPath) break;
+      trailingSegments.unshift(path.basename(checkPath));
       checkPath = parent;
     }
 
+    let realTarget = targetPath;
     if (fs.existsSync(checkPath)) {
       try {
-        const realTarget = normalizeSlashes(fs.realpathSync(checkPath));
-        let realAllowed = false;
-
-        if (fsCap.allowWorkspaceRoot && isPathInsideRoot(realTarget, workspaceRoot)) {
-          realAllowed = true;
-        }
-        if (fsCap.allowTemp && scratchDir && isPathInsideRoot(realTarget, scratchDir)) {
-          realAllowed = true;
-        }
-
-        const allExplicit = [...(fsCap.readPaths ?? []), ...(fsCap.writePaths ?? [])];
-        for (const pattern of allExplicit) {
-          if (matchesPathPattern(realTarget, pattern, workspaceRoot)) {
-            realAllowed = true;
-            break;
-          }
-        }
-
-        if (!realAllowed) {
-          throw new BrokerSecurityError(
-            "SYMLINK_ESCAPE",
-            `Symlink target escapes authorized capability roots: ${checkPath} -> ${realTarget}`,
-            { path: checkPath, realTarget },
-          );
-        }
+        const realCheck = normalizeSlashes(fs.realpathSync(checkPath));
+        realTarget =
+          trailingSegments.length > 0
+            ? normalizeSlashes(path.join(realCheck, ...trailingSegments))
+            : realCheck;
       } catch (err) {
         if (err instanceof BrokerSecurityError) throw err;
-        // If realpath fails, fail closed
         throw new BrokerSecurityError(
           "INVALID_PATH",
           `Failed to resolve real path for ${checkPath}`,
+          { targetPath, checkPath },
         );
       }
     }
+
+    const realWorkspaceRoot = normalizeSlashes(
+      fs.existsSync(workspaceRoot) ? fs.realpathSync(workspaceRoot) : workspaceRoot,
+    );
+    const realScratchDir =
+      scratchDir && fs.existsSync(scratchDir)
+        ? normalizeSlashes(fs.realpathSync(scratchDir))
+        : scratchDir;
+
+    // Check deny paths on realTarget
+    const denyPatterns = fsCap.denyPaths ?? [];
+    for (const denyPattern of denyPatterns) {
+      if (
+        matchesPathPattern(realTarget, denyPattern, realWorkspaceRoot) ||
+        matchesPathPattern(resolvePlatformAliases(realTarget), denyPattern, realWorkspaceRoot)
+      ) {
+        throw new BrokerSecurityError(
+          "PATH_DENIED",
+          `Resolved target path is explicitly denied by capability policy: ${targetPath} -> ${realTarget}`,
+          { targetPath, realTarget, deniedByPattern: denyPattern },
+        );
+      }
+    }
+
+    // Check sensitive paths on realTarget
+    if (isSensitivePath(realTarget, realWorkspaceRoot)) {
+      const explicitPatterns = [...(fsCap.readPaths ?? []), ...(fsCap.writePaths ?? [])];
+      const isExplicit = explicitPatterns.some((pattern) =>
+        isExplicitNonWildcardMatch(pattern, realTarget, realWorkspaceRoot),
+      );
+      if (!isExplicit) {
+        throw new BrokerSecurityError(
+          "HIDDEN_FILE_DENIED",
+          `Resolved target points to sensitive or hidden path: ${targetPath} -> ${realTarget}`,
+          { targetPath, realTarget },
+        );
+      }
+    }
+
+    // Verify containment within authorized roots
+    let realAllowed = false;
+    if (fsCap.allowWorkspaceRoot && isPathInsideRoot(realTarget, realWorkspaceRoot)) {
+      realAllowed = true;
+    }
+    if (fsCap.allowTemp && realScratchDir && isPathInsideRoot(realTarget, realScratchDir)) {
+      realAllowed = true;
+    }
+
+    const allExplicit = [...(fsCap.readPaths ?? []), ...(fsCap.writePaths ?? [])];
+    if (
+      allExplicit.some(
+        (pattern) =>
+          matchesPathPattern(realTarget, pattern, realWorkspaceRoot) ||
+          matchesPathPattern(resolvePlatformAliases(realTarget), pattern, realWorkspaceRoot),
+      )
+    ) {
+      realAllowed = true;
+    }
+
+    if (!realAllowed) {
+      throw new BrokerSecurityError(
+        "SYMLINK_ESCAPE",
+        `Symlink points outside authorized roots: ${targetPath} -> ${realTarget}`,
+        { targetPath, realTarget },
+      );
+    }
+
+    return realTarget;
   }
 
   /**
@@ -738,12 +790,30 @@ export class FilesystemBroker extends BaseCapabilityBroker {
           `Path is not a directory: ${dirPath}`,
         );
       }
-
+      const workspaceRoot = normalizeSlashes(path.resolve(context.workspaceRoot ?? process.cwd()));
       const entries: string[] = [];
       const readEntries = (currentDir: string, relativePrefix: string) => {
         const dirents = fs.readdirSync(currentDir, { withFileTypes: true });
         for (const dirent of dirents) {
           const entryRel = relativePrefix ? `${relativePrefix}/${dirent.name}` : dirent.name;
+          const fullEntryPath = normalizeSlashes(path.join(currentDir, dirent.name));
+
+          const isDenied = (fsCap.denyPaths ?? []).some(
+            (p) =>
+              matchesPathPattern(fullEntryPath, p, workspaceRoot) ||
+              matchesPathPattern(entryRel, p, workspaceRoot),
+          );
+          const isSensitive =
+            isSensitivePath(fullEntryPath, workspaceRoot) ||
+            isSensitivePath(entryRel, workspaceRoot);
+          const isExplicitAllowed = (fsCap.readPaths ?? []).some((p) =>
+            isExplicitNonWildcardMatch(p, fullEntryPath, workspaceRoot),
+          );
+
+          if (isDenied || (isSensitive && !isExplicitAllowed)) {
+            continue;
+          }
+
           entries.push(entryRel);
           if (params.recursive && dirent.isDirectory()) {
             readEntries(path.join(currentDir, dirent.name), entryRel);
@@ -752,7 +822,6 @@ export class FilesystemBroker extends BaseCapabilityBroker {
       };
 
       readEntries(targetPath, "");
-
       this.recordAudit(
         "listDirectory",
         context,

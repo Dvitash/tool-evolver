@@ -108,6 +108,10 @@ export interface ToolContext<TInput = unknown> {
   log(level: "debug" | "info" | "warn" | "error", message: string, data?: unknown): Promise<void>;
   readonly logger: ToolLogger;
   readonly broker: ToolBrokerClient;
+  readonly fs?: FsBrokerClient;
+  readonly net?: NetBrokerClient;
+  readonly cmd?: CmdBrokerClient;
+  readonly secret?: SecretBrokerClient;
 }
 
 /**
@@ -294,5 +298,9 @@ export function createToolContext<TInput = unknown>(
     log: logFn,
     logger,
     broker: brokerClient,
+    fs: brokerClient.fs,
+    net: brokerClient.net,
+    cmd: brokerClient.cmd,
+    secret: brokerClient.secret,
   };
 }
