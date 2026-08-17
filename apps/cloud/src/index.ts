@@ -34,6 +34,10 @@ import {
   OpportunityDetectionService,
   createOpportunityDetectionService,
 } from "./evolution/opportunity/index.js";
+import {
+  CandidateGenerationService,
+  createCandidateGenerationService,
+} from "./evolution/generator/index.js";
 
 // Configuration & Validation
 export * from "./config.js";
@@ -63,6 +67,9 @@ export * from "./server/index.js";
 // Evolution Opportunity Detection Engine
 export * from "./evolution/opportunity/index.js";
 
+// Evolution Candidate Planning, Code Generation & Repair Engine
+export * from "./evolution/generator/index.js";
+
 /**
  * Unified Cloud Service container aggregating persistence, storage,
  * queue, server, and background workers.
@@ -86,6 +93,7 @@ export class CloudService {
   readonly retentionService: RetentionService;
   readonly exportService: ExportService;
   readonly opportunityService: OpportunityDetectionService;
+  readonly candidateGenerationService: CandidateGenerationService;
 
   private isInitialized = false;
 
@@ -127,6 +135,7 @@ export class CloudService {
       retentionRepo: this.retentionRepo,
     });
     this.opportunityService = createOpportunityDetectionService();
+    this.candidateGenerationService = createCandidateGenerationService();
 
     this.worker.registerHandler("opportunity.detect", async (job) => {
       const tenant = job.tenantContext;
@@ -158,6 +167,17 @@ export class CloudService {
             } as unknown as NormalizedSessionEvent));
             await this.opportunityService.processSessionEvents(tenant, sessionEvents);
           }
+        }
+      }
+    });
+
+    this.worker.registerHandler("candidate.generate", async (job) => {
+      const tenant = job.tenantContext;
+      const payload = job.payload as { opportunityId?: string; options?: Record<string, unknown> } | undefined;
+      if (payload?.opportunityId) {
+        const opp = await this.opportunityService.getOpportunityById(tenant, payload.opportunityId);
+        if (opp && opp.status === "eligible") {
+          await this.candidateGenerationService.generateCandidate(tenant, opp, payload.options);
         }
       }
     });

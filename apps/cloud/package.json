@@ -28,6 +28,8 @@
     "@tool-evolver/crypto": "workspace:*",
     "@tool-evolver/db": "workspace:*",
     "@tool-evolver/protocol": "workspace:*",
+    "@tool-evolver/runtime": "workspace:*",
+    "typescript": "^5.7.3",
     "zod": "^3.25.76"
   }
 }

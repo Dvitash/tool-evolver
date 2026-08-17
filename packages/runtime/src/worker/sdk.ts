@@ -19,8 +19,13 @@ export interface BrokeredFetchResponse {
   status: number;
   statusText: string;
   headers: Record<string, string>;
+  ok?: boolean;
+  url?: string;
+  redirected?: boolean;
   text(): Promise<string>;
   json<T = unknown>(): Promise<T>;
+  arrayBuffer?(): Promise<ArrayBuffer>;
+  bytes?(): Promise<Uint8Array>;
 }
 
 /**

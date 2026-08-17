@@ -30,6 +30,8 @@ export * from "./shim/index.js";
 
 // Cloud MCP Catalog Proxying & Offline Degradation
 export * from "./proxy/index.js";
+// Tool-Catalog Refresh Notifications & Harness Nudges
+export * from "./refresh/index.js";
 
 // Backward Compatibility Helpers
 export interface GatewayService {

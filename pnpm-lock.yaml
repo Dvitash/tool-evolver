@@ -92,6 +92,12 @@ importers:
       '@tool-evolver/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@tool-evolver/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -104,6 +110,9 @@ importers:
       '@tool-evolver/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@tool-evolver/harness-contracts':
+        specifier: workspace:*
+        version: link:../../packages/harness-contracts
       '@tool-evolver/observer':
         specifier: workspace:*
         version: link:../observer

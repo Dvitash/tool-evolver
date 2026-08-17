@@ -97,6 +97,11 @@ export const McpClientCapabilitiesSchema = z.object({
       listChanged: z.boolean().optional(),
     })
     .optional(),
+  tools: z
+    .object({
+      listChanged: z.boolean().optional(),
+    })
+    .optional(),
   sampling: z.record(z.unknown()).optional(),
   experimental: z.record(z.unknown()).optional(),
 });

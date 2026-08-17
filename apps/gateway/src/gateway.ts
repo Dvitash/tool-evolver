@@ -27,9 +27,12 @@ import {
   type ProgressNotificationParams,
 } from "./protocol/types.js";
 import { ToolRegistry } from "./registry/registry.js";
-import { type GatewayRouter, createRegistryGatewayRouter } from "./router.js";
+import { type GatewayRouter, RegistryGatewayRouter, createRegistryGatewayRouter } from "./router.js";
 import { type WorkspaceContext, resolveWorkspaceContext } from "./workspace-resolver.js";
-
+import {
+  CatalogRefreshCoordinator,
+  type RefreshCoordinatorOptions,
+} from "./refresh/index.js";
 export interface GatewayServerOptions {
   router?: GatewayRouter;
   registry?: ToolRegistry;
@@ -43,6 +46,9 @@ export interface GatewayServerOptions {
   rateLimitBurst?: number;
   harnessDetector?: (clientInfo: McpImplementationInfo) => string;
   logger?: (level: string, message: string, meta?: unknown) => void;
+  refreshCoordinator?: CatalogRefreshCoordinator;
+  refreshCoordinatorOptions?: RefreshCoordinatorOptions;
+  enableRefreshCoordinator?: boolean;
 }
 
 export interface ConnectionSession {
@@ -118,6 +124,8 @@ export class LocalMcpGateway {
   private readonly rateLimitBurst: number;
   private readonly harnessDetector: (clientInfo: McpImplementationInfo) => string;
   private readonly logger?: (level: string, message: string, meta?: unknown) => void;
+  readonly refreshCoordinator?: CatalogRefreshCoordinator;
+  private readonly ownRefreshCoordinator: boolean = false;
 
   private readonly connections = new Map<string, McpConnection>();
   private readonly messageWriters = new Map<string, (msg: JsonRpcMessage) => void>();
@@ -125,13 +133,15 @@ export class LocalMcpGateway {
   private isClosed = false;
 
   constructor(options: GatewayServerOptions) {
+    let internalRegistry: ToolRegistry | undefined = options.registry;
+
     if (options.router) {
       this.router = options.router;
     } else if (options.registry) {
       this.router = createRegistryGatewayRouter(options.registry, options.invocationRouter);
     } else {
-      const reg = new ToolRegistry({ invocationRouter: options.invocationRouter });
-      this.router = createRegistryGatewayRouter(reg, options.invocationRouter);
+      internalRegistry = new ToolRegistry({ invocationRouter: options.invocationRouter });
+      this.router = createRegistryGatewayRouter(internalRegistry, options.invocationRouter);
     }
     this.serverInfo = options.serverInfo ?? {
       name: "tool-evolver-mcp",
@@ -150,6 +160,25 @@ export class LocalMcpGateway {
       this.unsubscribeRouterListener = this.router.onToolListChanged(() => {
         this.broadcastToolListChanged();
       });
+    }
+
+    const registryToAttach =
+      internalRegistry ??
+      (this.router instanceof RegistryGatewayRouter ? this.router.getRegistry() : undefined);
+
+    if (options.refreshCoordinator) {
+      this.refreshCoordinator = options.refreshCoordinator;
+      this.refreshCoordinator.attachGateway(this);
+      if (registryToAttach) {
+        this.refreshCoordinator.attachRegistry(registryToAttach);
+      }
+    } else if (options.enableRefreshCoordinator !== false) {
+      this.refreshCoordinator = new CatalogRefreshCoordinator(options.refreshCoordinatorOptions);
+      this.refreshCoordinator.attachGateway(this);
+      this.ownRefreshCoordinator = true;
+      if (registryToAttach) {
+        this.refreshCoordinator.attachRegistry(registryToAttach);
+      }
     }
   }
 
@@ -200,6 +229,19 @@ export class LocalMcpGateway {
       total += conn.getActiveRequestCount();
     }
     return total;
+  }
+  /**
+   * Returns all active MCP connections registered with this gateway.
+   */
+  getAllConnections(): McpConnection[] {
+    return Array.from(this.connections.values()).filter((c) => !c.isClosed);
+  }
+
+  /**
+   * Returns an active connection by its connection ID.
+   */
+  getConnection(connectionId: string): McpConnection | undefined {
+    return this.connections.get(connectionId);
   }
 
   /**
@@ -424,9 +466,12 @@ export class LocalMcpGateway {
     }
 
     const tools = await this.router.listTools(connection.workspaceContext);
+    this.refreshCoordinator?.recordToolsListObserved(
+      connection.connectionId,
+      connection.workspaceContext.workspaceId,
+    );
     return { tools };
   }
-
   /**
    * Handles `tools/call` request.
    */
@@ -627,6 +672,9 @@ export class LocalMcpGateway {
     if (this.unsubscribeRouterListener) {
       this.unsubscribeRouterListener();
       this.unsubscribeRouterListener = undefined;
+    }
+    if (this.ownRefreshCoordinator && this.refreshCoordinator) {
+      this.refreshCoordinator.destroy();
     }
 
     for (const conn of this.connections.values()) {

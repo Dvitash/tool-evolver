@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import vm from "node:vm";
 import { type ToolManifest, ToolManifestSchema } from "@tool-evolver/contracts";
+import type { InvocationGrant } from "../policy/grant.js";
+import { CapabilityBrokerManager } from "../brokers/manager.js";
 import {
   type ErrorMessage,
   type LogMessage,
@@ -43,6 +45,8 @@ export interface ToolExecutionOptions {
   sessionId?: string;
   workspaceId?: string;
   allowDirectHostAccess?: boolean;
+  grant?: InvocationGrant;
+  brokerManager?: CapabilityBrokerManager;
 }
 
 /**
@@ -96,7 +100,7 @@ export class DeterministicWorkerSandbox {
     options: ToolExecutionOptions = {}
   ): Promise<InvocationResult> {
     const startTime = Date.now();
-    const invocationId = `inv_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const invocationId = options.grant?.invocationId ?? options.sessionId ?? `inv_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const manifestLimits =
       manifest && typeof manifest === "object" && "limits" in manifest && manifest.limits && typeof manifest.limits === "object"
         ? (manifest.limits as Record<string, unknown>)
@@ -139,11 +143,41 @@ export class DeterministicWorkerSandbox {
         }
       }
 
-      // 2. Set up context
-      const defaultBrokerHandler: BrokerRequestHandlerFn = options.brokerHandler ?? (async () => {
+      // 2. Set up context & capability brokers
+      let effectiveBrokerHandler = options.brokerHandler;
+      if (!effectiveBrokerHandler) {
+        const toolName = typeof manifest === "object" && manifest !== null && "name" in manifest ? String(manifest.name) : undefined;
+        const toolVersion = typeof manifest === "object" && manifest !== null && "version" in manifest ? String(manifest.version) : undefined;
+
+        if (options.brokerManager) {
+          effectiveBrokerHandler = options.brokerManager.createRequestHandler({
+            invocationId,
+            grant: options.grant,
+            workspaceRoot: options.workspaceRoot ?? process.cwd(),
+            scratchDir,
+            sessionId: options.sessionId,
+            workspaceId: options.workspaceId,
+            toolId: toolName,
+            toolVersion: toolVersion,
+          });
+        } else if (options.grant) {
+          const manager = new CapabilityBrokerManager();
+          effectiveBrokerHandler = manager.createRequestHandler({
+            invocationId,
+            grant: options.grant,
+            workspaceRoot: options.workspaceRoot ?? process.cwd(),
+            scratchDir,
+            sessionId: options.sessionId,
+            workspaceId: options.workspaceId,
+            toolId: toolName,
+            toolVersion: toolVersion,
+          });
+        }
+      }
+
+      const defaultBrokerHandler: BrokerRequestHandlerFn = effectiveBrokerHandler ?? (async () => {
         throw new Error("No broker handler configured for sandbox");
       });
-
       const toolContext = createToolContext({
         input,
         invocationId,
@@ -373,8 +407,14 @@ export class DeterministicWorkerSandbox {
  * ToolRuntime: Primary interface for executing generated tools in isolated sandboxes.
  */
 export class ToolRuntime {
-  constructor(private readonly defaultOptions: ToolExecutionOptions = {}) {}
+  private readonly brokerManager?: CapabilityBrokerManager;
 
+  constructor(
+    private readonly defaultOptions: ToolExecutionOptions = {},
+    brokerManager?: CapabilityBrokerManager
+  ) {
+    this.brokerManager = brokerManager ?? defaultOptions.brokerManager;
+  }
   /**
    * Executes a tool defined by manifest and bundle/handler in an isolated sandbox.
    */
@@ -386,6 +426,7 @@ export class ToolRuntime {
   ): Promise<InvocationResult> {
     const mergedOptions: ToolExecutionOptions = {
       ...this.defaultOptions,
+      brokerManager: options.brokerManager ?? this.brokerManager ?? this.defaultOptions.brokerManager,
       ...options,
     };
 

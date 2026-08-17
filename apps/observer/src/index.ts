@@ -31,6 +31,9 @@ export * from "./tailing/index.js";
 
 // Transcript Normalization, Deduplication, Privacy Redaction & Re-normalization
 export * from "./normalization/index.js";
+
+// Local Observability, Audit Trail, Kill Switches, Health & Recovery
+export * from "./observability/index.js";
 // Backward Compatibility Observer Service
 export interface ObserverService {
   recordEvent(message: ProtocolMessage): void;

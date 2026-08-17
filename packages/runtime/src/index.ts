@@ -37,6 +37,9 @@ export * from "./worker/index.js";
 // Capability Policy Engine, Grants, Canonicalizers & Inspection
 export * from "./policy/index.js";
 
+// Capability Brokers (FS, Net, Command, Audit & SDK Clients)
+export * from "./brokers/index.js";
+
 // Backward-compatible Runtime Engine Interface
 export interface RuntimeEngine {
   isReady(): boolean;

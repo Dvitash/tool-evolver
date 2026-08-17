@@ -313,3 +313,11 @@ export async function acquireDaemonLock(
   const lock = new DaemonLock(options);
   return lock.acquire();
 }
+
+export async function inspectLockFile(
+  lockPath: string,
+  staleThresholdMs?: number,
+): Promise<LockInspectionResult> {
+  const lock = new DaemonLock({ lockPath, staleThresholdMs });
+  return lock.inspect();
+}
