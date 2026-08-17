@@ -53,23 +53,24 @@ describe("Database Client, Migrations & Outbox", () => {
     // Initial run
     const result = await runMigrations(pool);
     expect(result.success).toBe(true);
-    expect(result.appliedCount).toBe(3);
-    expect(result.currentVersion).toBe(3);
+    expect(result.appliedCount).toBe(4);
+    expect(result.currentVersion).toBe(4);
 
     // Verify migration status
     const statuses = await getMigrationStatus(pool);
-    expect(statuses.length).toBeGreaterThanOrEqual(3);
+    expect(statuses.length).toBeGreaterThanOrEqual(4);
     expect(statuses[0].applied).toBe(true);
     expect(statuses[0].version).toBe(1);
     expect(statuses[1].applied).toBe(true);
     expect(statuses[1].version).toBe(2);
     expect(statuses[2].applied).toBe(true);
     expect(statuses[2].version).toBe(3);
-
+    expect(statuses[3].applied).toBe(true);
+    expect(statuses[3].version).toBe(4);
     // Re-running migrations is idempotent
     const secondRun = await runMigrations(pool);
     expect(secondRun.appliedCount).toBe(0);
-    expect(secondRun.currentVersion).toBe(3);
+    expect(secondRun.currentVersion).toBe(4);
 
     // Verify tables exist by querying accounts and jobs
     const accountsRes = await pool.query(`SELECT * FROM accounts`);
@@ -82,7 +83,7 @@ describe("Database Client, Migrations & Outbox", () => {
     // Rollback migration
     const rollback = await rollbackMigration(pool, { targetVersion: 0 });
     expect(rollback.success).toBe(true);
-    expect(rollback.rolledBackCount).toBe(3);
+    expect(rollback.rolledBackCount).toBe(4);
     expect(rollback.currentVersion).toBe(0);
   });
   it("should atomically commit domain entity and outbox message in the same transaction", async () => {

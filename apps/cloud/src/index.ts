@@ -69,6 +69,16 @@ import {
   CloudMcpServer,
   createCloudMcpServer,
 } from "./mcp/index.js";
+import {
+  RolloutController,
+  RolloutPolicyRegistry,
+  RolloutAssignmentRouter,
+  RolloutEvaluator,
+  RolloutRepository,
+  type CreateRolloutParams,
+  type RolloutTelemetryEvent,
+  type RolloutOverrideRecord,
+} from "./evolution/rollout/index.js";
 
 // Configuration & Validation
 export * from "./config.js";
@@ -115,6 +125,8 @@ export * from "./evolution/replay/index.js";
 // Cloud MCP Subsystem & Catalog
 export * from "./mcp/index.js";
 export * from "./evolution/evaluation/index.js";
+export * from "./evolution/artifacts/index.js";
+export * from "./evolution/rollout/index.js";
 
 /**
  * Unified Cloud Service container aggregating persistence, storage,
@@ -147,6 +159,11 @@ export class CloudService {
   readonly artifactRegistryService: ToolArtifactRegistryService;
   readonly catalogService: CloudCatalogService;
   readonly mcpServer: CloudMcpServer;
+  readonly rolloutRepo: RolloutRepository;
+  readonly rolloutPolicyRegistry: RolloutPolicyRegistry;
+  readonly rolloutAssignmentRouter: RolloutAssignmentRouter;
+  readonly rolloutEvaluator: RolloutEvaluator;
+  readonly rolloutController: RolloutController;
   private isInitialized = false;
 
   constructor(options: { config?: Partial<RawCloudConfig> } = {}) {
@@ -198,14 +215,25 @@ export class CloudService {
       this.objectStore,
       { outboxPublisher: this.outboxPublisher },
     );
-
-
     this.catalogService = createCloudCatalogService({
       dbPool: this.dbPool,
       toolRegistryRepo: this.artifactRegistryService.toolRegistryRepo,
       outboxPublisher: this.outboxPublisher,
     });
     this.mcpServer = createCloudMcpServer({
+      catalogService: this.catalogService,
+    });
+    this.rolloutRepo = new RolloutRepository(this.dbPool);
+    this.rolloutPolicyRegistry = new RolloutPolicyRegistry();
+    this.rolloutEvaluator = new RolloutEvaluator();
+    this.rolloutAssignmentRouter = new RolloutAssignmentRouter(this.rolloutRepo);
+    this.rolloutController = new RolloutController(this.dbPool, {
+      rolloutRepo: this.rolloutRepo,
+      policyRegistry: this.rolloutPolicyRegistry,
+      evaluator: this.rolloutEvaluator,
+      assignmentRouter: this.rolloutAssignmentRouter,
+      toolRegistryRepo: this.artifactRegistryService.toolRegistryRepo,
+      outboxPublisher: this.outboxPublisher,
       catalogService: this.catalogService,
     });
     this.candidateEvaluationService = createCandidateEvaluationService();
@@ -298,21 +326,74 @@ export class CloudService {
       }
     });
     this.worker.registerHandler("candidate.publish", async (job) => {
+      const tenant = job.tenantContext;
       const payload = job.payload as {
         candidate?: EvolutionCandidate;
         evaluationResult?: EvaluationResult;
         options?: PublishCandidateOptions;
       } | undefined;
       if (payload && payload.candidate && payload.evaluationResult) {
-        await this.artifactRegistryService.publishCandidate(
+        const toolVersion = await this.artifactRegistryService.publishCandidate(
           payload.candidate,
           payload.evaluationResult,
           payload.options,
         );
+        if (toolVersion) {
+          try {
+            await this.rolloutController.createRolloutForPublishedVersion(
+              tenant,
+              {
+                toolId: payload.candidate.proposedTool.id,
+                version: toolVersion.version,
+                artifactDigest: toolVersion.artifact.artifactDigest,
+                manifestDigest: toolVersion.manifest.digest,
+              },
+            );
+          } catch {
+            // Rollout creation can be deferred or handled via queue
+          }
+        }
       }
     });
 
-    this.server = createCloudServer({
+    this.worker.registerHandler("rollout.create", async (job) => {
+      const tenant = job.tenantContext;
+      const payload = job.payload as CreateRolloutParams | undefined;
+      if (payload) {
+        await this.rolloutController.createRolloutForPublishedVersion(
+          tenant,
+          payload,
+        );
+      }
+    });
+
+    this.worker.registerHandler("rollout.evaluate", async (job) => {
+      const payload = job.payload as { rolloutId?: string } | undefined;
+      if (payload?.rolloutId) {
+        await this.rolloutController.evaluateRollout(payload.rolloutId);
+      }
+    });
+
+    this.worker.registerHandler("rollout.telemetry", async (job) => {
+      const payload = job.payload as { event?: RolloutTelemetryEvent } | undefined;
+      if (payload?.event) {
+        await this.rolloutController.recordTelemetry(payload.event);
+      }
+    });
+
+    this.worker.registerHandler("rollout.rollback", async (job) => {
+      const tenant = job.tenantContext;
+      const payload = job.payload as { rolloutId?: string; reason?: string } | undefined;
+      if (payload?.rolloutId) {
+        await this.rolloutController.executeManualRollback(
+          tenant,
+          payload.rolloutId,
+          payload.reason ?? "Worker triggered rollback",
+        );
+      }
+    });
+
+    this.server = new CloudServer({
       config: this.config,
       dbPool: this.dbPool,
       authService: this.authService,
