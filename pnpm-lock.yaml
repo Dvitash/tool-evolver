@@ -74,12 +74,18 @@ importers:
       '@tool-evolver/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@tool-evolver/observer':
+        specifier: workspace:*
+        version: link:../observer
       '@tool-evolver/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
       '@tool-evolver/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
   apps/observer:
     dependencies:
@@ -121,6 +127,16 @@ importers:
       '@tool-evolver/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@tool-evolver/observer':
+        specifier: workspace:*
+        version: link:../../apps/observer
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@tool-evolver/test-fixtures':
+        specifier: workspace:*
+        version: link:../../fixtures/test-fixtures
 
   packages/harness-contracts:
     dependencies:

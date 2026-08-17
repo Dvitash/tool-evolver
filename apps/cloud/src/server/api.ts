@@ -1,5 +1,5 @@
 import { createServer, IncomingMessage, Server, ServerResponse } from "node:http";
-import { AddressInfo } from "node:net";
+import { AddressInfo, Socket } from "node:net";
 import { randomUUID } from "node:crypto";
 import { CloudConfig, loadConfig } from "../config.js";
 import { DatabasePool, createDatabasePool } from "../db/client.js";
@@ -13,6 +13,14 @@ import {
   getTenantContext,
   runWithTenant,
 } from "../tenant.js";
+import {
+  AuthService,
+  TokenError,
+  authenticateHttpRequest,
+  authenticateWebSocket,
+  createAuthService,
+  handleAuthRoutes,
+} from "../auth/index.js";
 
 /**
  * Health check status response.
@@ -37,8 +45,8 @@ export interface CloudServerOptions {
   objectStore?: ObjectStore;
   queue?: DurableQueue;
   outboxPublisher?: OutboxPublisher;
+  authService?: AuthService;
 }
-
 /**
  * Cloud API Server shell providing HTTP endpoints, health checks,
  * tenant context middleware, and trace propagation.
@@ -51,6 +59,7 @@ export class CloudServer {
   private outboxPublisher: OutboxPublisher;
   private server: Server | null = null;
   private startTime: number;
+  readonly authService: AuthService;
 
   constructor(options: CloudServerOptions = {}) {
     this.config = options.config ?? loadConfig();
@@ -58,6 +67,11 @@ export class CloudServer {
     this.objectStore = options.objectStore ?? createObjectStore(this.config.storage);
     this.queue = options.queue ?? createDurableQueue(this.config.queue, this.dbPool);
     this.outboxPublisher = options.outboxPublisher ?? new OutboxPublisher(this.dbPool);
+    this.authService =
+      options.authService ??
+      createAuthService({
+        config: this.config.auth,
+      });
     this.startTime = Date.now();
   }
 
@@ -91,6 +105,35 @@ export class CloudServer {
 
     this.server.on("error", (err) => {
       reject(err);
+    });
+    this.server.on("upgrade", async (req, socket: Socket, _head) => {
+      try {
+        const authContext = await authenticateWebSocket(req, this.authService, {
+          allowDevHeaders: true,
+        });
+
+        if (!authContext) {
+          socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+
+        if (authContext.claims?.deviceId) {
+          const isRevoked = await this.authService.tokenRepository.isDeviceRevoked(
+            authContext.claims.deviceId,
+          );
+          if (isRevoked) {
+            socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+            socket.destroy();
+            return;
+          }
+        }
+
+        this.server?.emit("wsConnection", socket, authContext);
+      } catch {
+        socket.write("HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n");
+        socket.destroy();
+      }
     });
 
     this.server.listen(port, host, () => {
@@ -222,67 +265,81 @@ export class CloudServer {
       return;
     }
 
-    // 2. Authentication & Tenant Extraction
-    const accountIdHeader = req.headers["x-account-id"] as string;
-    const workspaceIdHeader = req.headers["x-workspace-id"] as string;
-    const authHeader = req.headers.authorization;
-
-    let tenantContext: TenantContext | undefined;
-
-    if (accountIdHeader && workspaceIdHeader) {
-      tenantContext = {
-        accountId: accountIdHeader,
-        workspaceId: workspaceIdHeader,
-        traceId,
-        correlationId: requestId,
-      };
-    } else if (authHeader?.startsWith("Bearer ")) {
-      // Mock / Dev token handling: "Bearer <accountId>:<workspaceId>" or token parse
-      const token = authHeader.slice(7).trim();
-      if (token.includes(":")) {
-        const [acc, ws] = token.split(":");
-        tenantContext = {
-          accountId: acc,
-          workspaceId: ws,
-          traceId,
-          correlationId: requestId,
-        };
-      } else {
-        tenantContext = {
-          accountId: "acc-default",
-          workspaceId: "ws-default",
-          traceId,
-          correlationId: requestId,
-        };
-      }
-    }
-
-    // For /v1/* endpoints, enforce tenant context except for registration endpoints
-    if (path.startsWith("/v1/")) {
-      const isPublicRegistration =
-        path === "/v1/auth/bootstrap" ||
-        path === "/v1/auth/exchange" ||
-        path === "/v1/accounts" && req.method === "POST";
-
-      if (!tenantContext && !isPublicRegistration) {
+    // 2. Authentication routes under /v1/auth/*
+    if (path.startsWith("/v1/auth/")) {
+      try {
+        let body: Record<string, unknown> = {};
+        if (req.method === "POST" || req.method === "PUT" || req.method === "PATCH") {
+          body = await this.parseJsonBody(req);
+        }
+        const handled = await handleAuthRoutes(
+          req,
+          res,
+          path,
+          body,
+          this.authService,
+          standardHeaders,
+        );
+        if (handled) return;
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
         this.sendJson(
           res,
-          401,
+          400,
           {
-            error: "UNAUTHORIZED",
-            message: "Missing tenant authentication credentials (x-account-id and x-workspace-id or Bearer token)",
+            error: "INVALID_REQUEST",
+            message,
           },
           standardHeaders,
         );
         return;
       }
+    }
 
-      const activeContext: TenantContext = tenantContext ?? {
-        accountId: "system",
-        workspaceId: "system",
-        traceId,
-        correlationId: requestId,
-      };
+    // 3. For all other /v1/* endpoints, authenticate and establish tenant context
+    if (path.startsWith("/v1/")) {
+      const isPublicRegistration = path === "/v1/accounts" && req.method === "POST";
+      let activeContext: TenantContext;
+
+      if (isPublicRegistration) {
+        activeContext = {
+          accountId: "system",
+          workspaceId: "system",
+          traceId,
+          correlationId: requestId,
+        };
+      } else {
+        try {
+          const authContext = await authenticateHttpRequest(req, this.authService, {
+            allowDevHeaders: true,
+          });
+          activeContext = authContext.tenant;
+        } catch (err: unknown) {
+          if (err instanceof TokenError) {
+            this.sendJson(
+              res,
+              err.httpStatus,
+              {
+                error: err.code === "unauthorized_client" ? "UNAUTHORIZED" : err.code.toUpperCase(),
+                message: err.message,
+              },
+              standardHeaders,
+            );
+            return;
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          this.sendJson(
+            res,
+            401,
+            {
+              error: "UNAUTHORIZED",
+              message: message || "Missing or invalid authorization credentials",
+            },
+            standardHeaders,
+          );
+          return;
+        }
+      }
 
       try {
         await runWithTenant(activeContext, async () => {

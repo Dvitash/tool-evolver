@@ -13,6 +13,7 @@ import { WorkerRuntime } from "./queue/worker.js";
 import { JobScheduler } from "./queue/scheduler.js";
 import { ObjectStore, createObjectStore } from "./storage/object-store.js";
 import { CloudServer, createCloudServer } from "./server/api.js";
+import { AuthService, createAuthService } from "./auth/index.js";
 
 // Configuration & Validation
 export * from "./config.js";
@@ -28,6 +29,10 @@ export * from "./storage/index.js";
 
 // Durable Queue, Envelope, Worker Runtime & Scheduler
 export * from "./queue/index.js";
+// Model Gateway & Structured Inference
+export * from "./models/index.js";
+// Identity & Authentication
+export * from "./auth/index.js";
 
 // HTTP API Server
 export * from "./server/index.js";
@@ -42,6 +47,7 @@ export class CloudService {
   readonly objectStore: ObjectStore;
   readonly queue: DurableQueue;
   readonly outboxPublisher: OutboxPublisher;
+  readonly authService: AuthService;
   readonly worker: WorkerRuntime;
   readonly scheduler: JobScheduler;
   readonly server: CloudServer;
@@ -54,6 +60,9 @@ export class CloudService {
     this.objectStore = createObjectStore(this.config.storage);
     this.queue = createDurableQueue(this.config.queue, this.dbPool);
     this.outboxPublisher = new OutboxPublisher(this.dbPool);
+    this.authService = createAuthService({
+      config: this.config.auth,
+    });
     this.worker = new WorkerRuntime(this.queue, {
       concurrency: this.config.queue.concurrency,
       pollIntervalMs: this.config.queue.pollIntervalMs,
@@ -66,6 +75,7 @@ export class CloudService {
       objectStore: this.objectStore,
       queue: this.queue,
       outboxPublisher: this.outboxPublisher,
+      authService: this.authService,
     });
   }
 
@@ -78,26 +88,35 @@ export class CloudService {
     // Run database migrations
     await runMigrations(this.dbPool);
 
-    // Start background components
-    this.outboxPublisher.start(this.config.queue.pollIntervalMs);
-    this.scheduler.start();
+    // Initialize worker runtime
+    await this.worker.start();
 
     this.isInitialized = true;
   }
 
   /**
-   * Shutdown all cloud services cleanly.
+   * Start the HTTP API server.
+   */
+  async start(port?: number, host?: string): Promise<number> {
+    await this.initialize();
+    return this.server.start(port, host);
+  }
+
+  /**
+   * Graceful teardown of server, worker runtime, and persistence pools.
+   */
+  async stop(): Promise<void> {
+    await this.server.stop();
+    await this.worker.stop();
+    await this.scheduler.stop();
+    await this.dbPool.end();
+    this.isInitialized = false;
+  }
+  /**
+   * Alias for stop().
    */
   async shutdown(): Promise<void> {
-    if (!this.isInitialized) return;
-
-    this.outboxPublisher.stop();
-    this.scheduler.stop();
-    await this.worker.stop();
-    await this.server.stop();
-    await this.dbPool.end();
-
-    this.isInitialized = false;
+    await this.stop();
   }
 }
 

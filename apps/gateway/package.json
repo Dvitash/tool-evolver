@@ -6,6 +6,9 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "tool-evolver-mcp": "./dist/bin/mcp-shim.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -21,7 +24,9 @@
   },
   "dependencies": {
     "@tool-evolver/contracts": "workspace:*",
+    "@tool-evolver/observer": "workspace:*",
     "@tool-evolver/protocol": "workspace:*",
-    "@tool-evolver/runtime": "workspace:*"
+    "@tool-evolver/runtime": "workspace:*",
+    "zod": "^3.25.76"
   }
 }
