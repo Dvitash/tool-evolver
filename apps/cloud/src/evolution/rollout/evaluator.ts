@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import {
-  type CanaryMetricsWindow,
-  type RolloutDecision,
-  type RolloutEntity,
-  type RolloutOverrideRecord,
-  type RolloutPolicy,
-  type RolloutTelemetryEvent,
+import type {
+  CanaryMetricsWindow,
+  RolloutDecision,
+  RolloutEntity,
+  RolloutOverrideRecord,
+  RolloutPolicy,
+  RolloutTelemetryEvent,
 } from "./types.js";
 
 /**
@@ -63,7 +63,7 @@ export function aggregateTelemetryEvents(
   let successCount = 0;
   let failureCount = 0;
   const latenciesMs: number[] = [];
-  let policyViolations = 0;
+  const policyViolations = 0;
   let securityViolations = 0;
   let quarantineSignals = 0;
   let capabilityBreaches = 0;
@@ -99,10 +99,7 @@ export function aggregateTelemetryEvents(
 
     if (event.quarantineSignal) {
       quarantineSignals += 1;
-      if (
-        event.quarantineReason &&
-        !quarantineReasons.includes(event.quarantineReason)
-      ) {
+      if (event.quarantineReason && !quarantineReasons.includes(event.quarantineReason)) {
         quarantineReasons.push(event.quarantineReason);
       }
     }
@@ -120,22 +117,19 @@ export function aggregateTelemetryEvents(
     }
   }
 
-  const successRate =
-    totalInvocations > 0 ? successCount / totalInvocations : 1.0;
+  const successRate = totalInvocations > 0 ? successCount / totalInvocations : 1.0;
   const errorRate = totalInvocations > 0 ? failureCount / totalInvocations : 0.0;
   const { p50, p95, p99 } = computeLatencyPercentiles(latenciesMs);
 
   let latencyRegressionPercent: number | undefined;
   if (baselineP95LatencyMs && baselineP95LatencyMs > 0 && p95 > 0) {
-    latencyRegressionPercent =
-      ((p95 - baselineP95LatencyMs) / baselineP95LatencyMs) * 100;
+    latencyRegressionPercent = ((p95 - baselineP95LatencyMs) / baselineP95LatencyMs) * 100;
   }
 
   const activeDevices = deviceStatus?.activeCount ?? 1;
   const offlineDevices = deviceStatus?.offlineCount ?? 0;
   const totalDevices = activeDevices + offlineDevices;
-  const deviceReportingRate =
-    totalDevices > 0 ? activeDevices / totalDevices : 1.0;
+  const deviceReportingRate = totalDevices > 0 ? activeDevices / totalDevices : 1.0;
 
   return {
     windowStart,
@@ -178,9 +172,7 @@ export class RolloutEvaluator {
   /**
    * Evaluates a canary metrics window against a versioned rollout policy.
    */
-  evaluateCanaryMetrics(
-    params: EvaluateCanaryMetricsParams,
-  ): RolloutDecision {
+  evaluateCanaryMetrics(params: EvaluateCanaryMetricsParams): RolloutDecision {
     const { rollout, policy, metrics, userOverride } = params;
     const now = params.now ?? new Date().toISOString();
     const targetRollbackVersion = rollout.previousVersion ?? "1.0.0";
@@ -368,10 +360,7 @@ export class RolloutEvaluator {
     // Check policy timeout on insufficient evidence
     if (rollout.startedAt) {
       const elapsedMs = new Date(now).getTime() - new Date(rollout.startedAt).getTime();
-      if (
-        elapsedMs > policy.timeoutMs &&
-        metrics.totalInvocations < policy.minInvocations
-      ) {
+      if (elapsedMs > policy.timeoutMs && metrics.totalInvocations < policy.minInvocations) {
         return {
           decisionId: randomUUID(),
           rolloutId: rollout.id,

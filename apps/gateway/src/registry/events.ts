@@ -23,10 +23,7 @@ const DEFAULT_DEBOUNCE_MS = 50;
 export class CatalogChangeEventEmitter {
   private readonly debounceMs: number;
   private readonly globalListeners = new Set<(event: CatalogChangeEvent) => void>();
-  private readonly workspaceListeners = new Map<
-    string,
-    Set<(event: CatalogChangeEvent) => void>
-  >();
+  private readonly workspaceListeners = new Map<string, Set<(event: CatalogChangeEvent) => void>>();
   private readonly pendingEvents = new Map<string, PendingEvent>();
 
   constructor(options?: CatalogEventsOptions) {
@@ -57,7 +54,7 @@ export class CatalogChangeEventEmitter {
    */
   onWorkspaceCatalogChanged(
     workspaceId: string,
-    listener: (event: CatalogChangeEvent) => void
+    listener: (event: CatalogChangeEvent) => void,
   ): () => void {
     let listeners = this.workspaceListeners.get(workspaceId);
     if (!listeners) {

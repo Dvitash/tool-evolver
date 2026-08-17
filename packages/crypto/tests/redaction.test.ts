@@ -70,18 +70,12 @@ describe("SecretRedactor", () => {
     };
 
     const sanitized = redactor.redactObject(payload);
-    expect(sanitized.connection.uri).toBe(
-      "postgres://admin:[REDACTED:DB_PASS]@db.internal:5432"
-    );
-    expect(sanitized.connection.params[0]).toBe(
-      "--password=[REDACTED:DB_PASS]"
-    );
+    expect(sanitized.connection.uri).toBe("postgres://admin:[REDACTED:DB_PASS]@db.internal:5432");
+    expect(sanitized.connection.params[0]).toBe("--password=[REDACTED:DB_PASS]");
 
     const err = new Error("Failed to connect with password sensitive-db-password");
     const sanitizedErr = redactor.redactObject(err);
-    expect(sanitizedErr.message).toBe(
-      "Failed to connect with password [REDACTED:DB_PASS]"
-    );
+    expect(sanitizedErr.message).toBe("Failed to connect with password [REDACTED:DB_PASS]");
   });
 
   it("tracks fingerprints and secret count", () => {

@@ -145,7 +145,8 @@ export class TelemetryAggregator {
       return undefined;
     }
 
-    const errorRate = store.total > 0 ? Math.round((store.failure / store.total) * 10000) / 10000 : 0;
+    const errorRate =
+      store.total > 0 ? Math.round((store.failure / store.total) * 10000) / 10000 : 0;
     const errorsByType: Record<string, number> = {};
     for (const [k, v] of store.errors.entries()) {
       errorsByType[k] = v;
@@ -220,6 +221,8 @@ export class TelemetryAggregator {
   }
 }
 
-export function createTelemetryAggregator(options?: { maxSamplesPerTool?: number }): TelemetryAggregator {
+export function createTelemetryAggregator(options?: {
+  maxSamplesPerTool?: number;
+}): TelemetryAggregator {
   return new TelemetryAggregator(options);
 }

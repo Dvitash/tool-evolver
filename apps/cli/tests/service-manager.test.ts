@@ -82,7 +82,9 @@ describe("SystemdUserServiceManager", () => {
       daemonPath: "/home/testuser/.tool-evolver/dist/daemon.js",
     });
 
-    expect(def).toContain("ExecStart=/usr/bin/node /home/testuser/.tool-evolver/dist/daemon.js run");
+    expect(def).toContain(
+      "ExecStart=/usr/bin/node /home/testuser/.tool-evolver/dist/daemon.js run",
+    );
   });
 
   it("installs systemd service, reloads daemon, enables and starts service", async () => {
@@ -156,7 +158,8 @@ describe("SystemdUserServiceManager", () => {
       if (args[1] === "is-enabled") return { stdout: "enabled\n", stderr: "", exitCode: 0 };
       if (args[1] === "status") {
         return {
-          stdout: "● tool-evolver.service - Tool Evolver Daemon\n   Main PID: 12345 (node)\n   Active: active (running)\n",
+          stdout:
+            "● tool-evolver.service - Tool Evolver Daemon\n   Main PID: 12345 (node)\n   Active: active (running)\n",
           stderr: "",
           exitCode: 0,
         };
@@ -215,7 +218,12 @@ describe("LaunchdUserServiceManager", () => {
     expect(result.enabled).toBe(true);
     expect(result.started).toBe(true);
 
-    const plistPath = path.join(homeDir, "Library", "LaunchAgents", "com.tool-evolver.daemon.plist");
+    const plistPath = path.join(
+      homeDir,
+      "Library",
+      "LaunchAgents",
+      "com.tool-evolver.daemon.plist",
+    );
     expect(result.unitPath).toBe(plistPath);
     expect(await fsBridge.exists(plistPath)).toBe(true);
 
@@ -226,7 +234,12 @@ describe("LaunchdUserServiceManager", () => {
   });
 
   it("uninstalls launchd agent cleanly", async () => {
-    const plistPath = path.join(homeDir, "Library", "LaunchAgents", "com.tool-evolver.daemon.plist");
+    const plistPath = path.join(
+      homeDir,
+      "Library",
+      "LaunchAgents",
+      "com.tool-evolver.daemon.plist",
+    );
     const fsBridge = createMockFsBridge({ [plistPath]: "<plist></plist>" });
     const runner = createMockRunner();
 
@@ -243,18 +256,22 @@ describe("LaunchdUserServiceManager", () => {
     expect(result.removed).toBe(true);
     expect(await fsBridge.exists(plistPath)).toBe(false);
 
-    expect(runner.executed).toEqual([
-      { cmd: "launchctl", args: ["unload", "-w", plistPath] },
-    ]);
+    expect(runner.executed).toEqual([{ cmd: "launchctl", args: ["unload", "-w", plistPath] }]);
   });
 
   it("inspects launchd status and parses PID", async () => {
-    const plistPath = path.join(homeDir, "Library", "LaunchAgents", "com.tool-evolver.daemon.plist");
+    const plistPath = path.join(
+      homeDir,
+      "Library",
+      "LaunchAgents",
+      "com.tool-evolver.daemon.plist",
+    );
     const fsBridge = createMockFsBridge({ [plistPath]: "<plist></plist>" });
     const runner = createMockRunner((_cmd, args) => {
       if (args[0] === "list") {
         return {
-          stdout: '{\n\t"LimitLoadToSessionType" = "Aqua";\n\t"Label" = "com.tool-evolver.daemon";\n\t"PID" = 54321;\n};\n',
+          stdout:
+            '{\n\t"LimitLoadToSessionType" = "Aqua";\n\t"Label" = "com.tool-evolver.daemon";\n\t"PID" = 54321;\n};\n',
           stderr: "",
           exitCode: 0,
         };
@@ -310,7 +327,11 @@ describe("WslUserServiceManager", () => {
     const fsBridge = createMockFsBridge();
     const runner = createMockRunner((_cmd, args) => {
       if (args[1] === "is-system-running") {
-        return { stdout: "", stderr: "System has not been booted with systemd as init system", exitCode: 1 };
+        return {
+          stdout: "",
+          stderr: "System has not been booted with systemd as init system",
+          exitCode: 1,
+        };
       }
       return { stdout: "", stderr: "", exitCode: 0 };
     });

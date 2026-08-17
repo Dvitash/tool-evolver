@@ -52,7 +52,11 @@ export class ConsentManager {
    * Retrieve current consent record for a tenant/device scope.
    * Returns default safe consent record if none exists.
    */
-  async getConsent(accountId: string, workspaceId: string, deviceId?: string): Promise<ConsentRecord> {
+  async getConsent(
+    accountId: string,
+    workspaceId: string,
+    deviceId?: string,
+  ): Promise<ConsentRecord> {
     if (deviceId) {
       const deviceKey = this.buildKey(accountId, workspaceId, deviceId);
       const deviceConsent = this.consentStore.get(deviceKey);
@@ -107,7 +111,11 @@ export class ConsentManager {
   /**
    * Check if raw transcript upload is explicitly enabled for this scope.
    */
-  async hasRawUploadConsent(accountId: string, workspaceId: string, deviceId?: string): Promise<boolean> {
+  async hasRawUploadConsent(
+    accountId: string,
+    workspaceId: string,
+    deviceId?: string,
+  ): Promise<boolean> {
     const consent = await this.getConsent(accountId, workspaceId, deviceId);
     return consent.rawTranscriptUpload === true;
   }
@@ -127,7 +135,11 @@ export class ConsentManager {
   /**
    * Check if telemetry event collection is allowed.
    */
-  async hasTelemetryConsent(accountId: string, workspaceId: string, deviceId?: string): Promise<boolean> {
+  async hasTelemetryConsent(
+    accountId: string,
+    workspaceId: string,
+    deviceId?: string,
+  ): Promise<boolean> {
     const consent = await this.getConsent(accountId, workspaceId, deviceId);
     return consent.telemetry === true;
   }
@@ -135,7 +147,11 @@ export class ConsentManager {
   /**
    * Check if diagnostics upload is allowed.
    */
-  async hasDiagnosticsConsent(accountId: string, workspaceId: string, deviceId?: string): Promise<boolean> {
+  async hasDiagnosticsConsent(
+    accountId: string,
+    workspaceId: string,
+    deviceId?: string,
+  ): Promise<boolean> {
     const consent = await this.getConsent(accountId, workspaceId, deviceId);
     return consent.diagnostics === true;
   }

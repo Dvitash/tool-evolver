@@ -175,20 +175,20 @@ describe("InvocationGrant", () => {
       capabilities: sampleCapabilities,
     });
 
-    expect(
-      verifyInvocationGrant(grant, { expectedInvocationId: "inv_other" }).errorCode,
-    ).toBe("INVOCATION_MISMATCH");
+    expect(verifyInvocationGrant(grant, { expectedInvocationId: "inv_other" }).errorCode).toBe(
+      "INVOCATION_MISMATCH",
+    );
 
-    expect(
-      verifyInvocationGrant(grant, { expectedToolId: "tool_other" }).errorCode,
-    ).toBe("TOOL_MISMATCH");
+    expect(verifyInvocationGrant(grant, { expectedToolId: "tool_other" }).errorCode).toBe(
+      "TOOL_MISMATCH",
+    );
 
-    expect(
-      verifyInvocationGrant(grant, { expectedWorkspaceId: "ws_other" }).errorCode,
-    ).toBe("WORKSPACE_MISMATCH");
+    expect(verifyInvocationGrant(grant, { expectedWorkspaceId: "ws_other" }).errorCode).toBe(
+      "WORKSPACE_MISMATCH",
+    );
 
-    expect(
-      verifyInvocationGrant(grant, { expectedEnvelopeId: "env_other" }).errorCode,
-    ).toBe("ENVELOPE_MISMATCH");
+    expect(verifyInvocationGrant(grant, { expectedEnvelopeId: "env_other" }).errorCode).toBe(
+      "ENVELOPE_MISMATCH",
+    );
   });
 });

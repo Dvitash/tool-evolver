@@ -409,7 +409,7 @@ export class ExponentialBackoff {
   }
 
   nextDelay(): number {
-    const computed = this.baseDelayMs * Math.pow(this.factor, this.attempts);
+    const computed = this.baseDelayMs * this.factor ** this.attempts;
     const capped = Math.min(computed, this.maxDelayMs);
     this.attempts += 1;
 

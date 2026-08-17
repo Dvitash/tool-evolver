@@ -27,12 +27,12 @@ export class QuotaExceededError extends Error {
  * Quota and rate limiter configuration.
  */
 export interface QuotaLimits {
-  maxRequestsPerMinute?: number;      // Default 600
-  maxEventsPerMinute?: number;        // Default 50,000
-  maxBytesPerMinute?: number;         // Default 100MB
-  maxBatchSizeBytes?: number;         // Default 10MB
-  maxDecompressedSizeBytes?: number;  // Default 50MB
-  maxEventsPerBatch?: number;         // Default 1,000
+  maxRequestsPerMinute?: number; // Default 600
+  maxEventsPerMinute?: number; // Default 50,000
+  maxBytesPerMinute?: number; // Default 100MB
+  maxBatchSizeBytes?: number; // Default 10MB
+  maxDecompressedSizeBytes?: number; // Default 50MB
+  maxEventsPerBatch?: number; // Default 1,000
 }
 
 export const DEFAULT_QUOTA_LIMITS: Required<QuotaLimits> = {

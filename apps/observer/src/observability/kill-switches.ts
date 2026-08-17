@@ -108,7 +108,7 @@ export class KillSwitchManager {
 
     const now = new Date().toISOString();
     const existing = this.inMemorySwitches.get(key);
-    const activatedAt = enabled ? existing?.activatedAt ?? now : undefined;
+    const activatedAt = enabled ? (existing?.activatedAt ?? now) : undefined;
 
     const entry: KillSwitchEntry = {
       switchKey: key,
@@ -176,11 +176,25 @@ export class KillSwitchManager {
   // ---------------------------------------------------------------------------
 
   async pauseEvolution(reason?: string, actor?: AuditActor): Promise<void> {
-    await this.setSwitch("evolution_pause:global", "evolution_pause", true, undefined, reason, actor);
+    await this.setSwitch(
+      "evolution_pause:global",
+      "evolution_pause",
+      true,
+      undefined,
+      reason,
+      actor,
+    );
   }
 
   async resumeEvolution(actor?: AuditActor): Promise<void> {
-    await this.setSwitch("evolution_pause:global", "evolution_pause", false, undefined, undefined, actor);
+    await this.setSwitch(
+      "evolution_pause:global",
+      "evolution_pause",
+      false,
+      undefined,
+      undefined,
+      actor,
+    );
   }
 
   isEvolutionPaused(): boolean {
@@ -205,11 +219,25 @@ export class KillSwitchManager {
   // ---------------------------------------------------------------------------
 
   async disableAllTools(reason?: string, actor?: AuditActor): Promise<void> {
-    await this.setSwitch("global_tool_disable:global", "global_tool_disable", true, undefined, reason, actor);
+    await this.setSwitch(
+      "global_tool_disable:global",
+      "global_tool_disable",
+      true,
+      undefined,
+      reason,
+      actor,
+    );
   }
 
   async enableAllTools(actor?: AuditActor): Promise<void> {
-    await this.setSwitch("global_tool_disable:global", "global_tool_disable", false, undefined, undefined, actor);
+    await this.setSwitch(
+      "global_tool_disable:global",
+      "global_tool_disable",
+      false,
+      undefined,
+      undefined,
+      actor,
+    );
   }
 
   isAllToolsDisabled(): boolean {
@@ -220,7 +248,11 @@ export class KillSwitchManager {
   // 3. Workspace Disable
   // ---------------------------------------------------------------------------
 
-  async disableWorkspaceTools(workspaceId: string, reason?: string, actor?: AuditActor): Promise<void> {
+  async disableWorkspaceTools(
+    workspaceId: string,
+    reason?: string,
+    actor?: AuditActor,
+  ): Promise<void> {
     const key = `workspace_tool_disable:${workspaceId}`;
     await this.setSwitch(key, "workspace_tool_disable", true, workspaceId, reason, actor);
   }
@@ -299,11 +331,25 @@ export class KillSwitchManager {
   // ---------------------------------------------------------------------------
 
   async disconnectCloud(reason?: string, actor?: AuditActor): Promise<void> {
-    await this.setSwitch("cloud_disconnect:global", "cloud_disconnect", true, undefined, reason, actor);
+    await this.setSwitch(
+      "cloud_disconnect:global",
+      "cloud_disconnect",
+      true,
+      undefined,
+      reason,
+      actor,
+    );
   }
 
   async reconnectCloud(actor?: AuditActor): Promise<void> {
-    await this.setSwitch("cloud_disconnect:global", "cloud_disconnect", false, undefined, undefined, actor);
+    await this.setSwitch(
+      "cloud_disconnect:global",
+      "cloud_disconnect",
+      false,
+      undefined,
+      undefined,
+      actor,
+    );
   }
 
   isCloudDisconnected(): boolean {
@@ -361,7 +407,7 @@ export class KillSwitchManager {
   async resetAll(actor?: AuditActor): Promise<void> {
     for (const key of this.inMemorySwitches.keys()) {
       const sw = this.inMemorySwitches.get(key);
-      if (sw && sw.enabled) {
+      if (sw?.enabled) {
         await this.setSwitch(key, sw.switchType, false, sw.targetId, undefined, actor);
       }
     }

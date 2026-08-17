@@ -79,9 +79,7 @@ describe("Workspace Resolver", () => {
             protocolVersion: "2024-11-05",
             clientInfo: { name: "test-client" },
             capabilities: {},
-            workspaceFolders: [
-              { uri: pathToFileURL(tmp1).href, name: "test-workspace" },
-            ],
+            workspaceFolders: [{ uri: pathToFileURL(tmp1).href, name: "test-workspace" }],
           },
           env: { TOOL_EVOLVER_WORKSPACE: "/some/ignored/path" },
           cwd: "/another/ignored/path",

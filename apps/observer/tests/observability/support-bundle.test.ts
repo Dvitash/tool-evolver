@@ -73,7 +73,8 @@ describe("SupportBundleGenerator", () => {
 
   it("strictly sanitizes all secrets, credentials, and API keys from the entire bundle", async () => {
     const rawApiKey = "sk-proj-99999999999999999999999999999999";
-    const rawBearer = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature";
+    const rawBearer =
+      "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature";
     const rawPassword = "VerySecretPassword123";
 
     const logger = createStructuredLogger();

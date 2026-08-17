@@ -121,10 +121,35 @@ describe("Capability Intersection", () => {
           denyPaths: [],
           maxFileSizeBytes: 10485760,
         },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const result = intersectCapabilities(requested, baseEnvelope, {
@@ -147,10 +172,35 @@ describe("Capability Intersection", () => {
           denyPaths: [],
           maxFileSizeBytes: 10485760,
         },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const result = intersectCapabilities(requested, baseEnvelope, {
@@ -171,10 +221,35 @@ describe("Capability Intersection", () => {
           denyPaths: [],
           maxFileSizeBytes: 10485760,
         },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const result = intersectCapabilities(requested, baseEnvelope, {
@@ -189,7 +264,14 @@ describe("Capability Intersection", () => {
   describe("Network Intersection Violations", () => {
     it("detects unauthorized domain request", () => {
       const requested: CapabilityManifest = {
-        fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
+        fs: {
+          readPaths: [],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: true,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
         net: {
           allowOutbound: true,
           allowedDomains: ["api.evil.com"], // Not allowed by envelope
@@ -199,9 +281,26 @@ describe("Capability Intersection", () => {
           allowLocalhost: false,
           denyPrivateRanges: true,
         },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const result = intersectCapabilities(requested, baseEnvelope, {
@@ -214,7 +313,14 @@ describe("Capability Intersection", () => {
 
     it("blocks private/internal IP requests strictly", () => {
       const requested: CapabilityManifest = {
-        fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
+        fs: {
+          readPaths: [],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: true,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
         net: {
           allowOutbound: true,
           allowedDomains: ["169.254.169.254", "127.0.0.1", "10.0.0.1"],
@@ -224,9 +330,26 @@ describe("Capability Intersection", () => {
           allowLocalhost: false,
           denyPrivateRanges: true,
         },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const result = intersectCapabilities(requested, baseEnvelope, {
@@ -247,7 +370,14 @@ describe("Capability Intersection", () => {
       };
 
       const requested: CapabilityManifest = {
-        fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
+        fs: {
+          readPaths: [],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: true,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
         net: {
           allowOutbound: true,
           allowedDomains: ["api.github.com"],
@@ -257,9 +387,26 @@ describe("Capability Intersection", () => {
           allowLocalhost: false,
           denyPrivateRanges: true,
         },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const result = intersectCapabilities(requested, noNetEnvelope, {
@@ -274,8 +421,23 @@ describe("Capability Intersection", () => {
   describe("Command Subsystem Violations", () => {
     it("detects shell execution denial", () => {
       const requested: CapabilityManifest = {
-        fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
+        fs: {
+          readPaths: [],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: true,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
         command: {
           allowShellExecution: true, // Envelope has allowShellExecution: false
           allowedCommands: ["bash"],
@@ -283,8 +445,19 @@ describe("Capability Intersection", () => {
           forbiddenPatterns: [],
           allowEnvPassthrough: [],
         },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const result = intersectCapabilities(requested, baseEnvelope, {
@@ -297,8 +470,23 @@ describe("Capability Intersection", () => {
 
     it("detects command expansion outside allowed commands", () => {
       const requested: CapabilityManifest = {
-        fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
+        fs: {
+          readPaths: [],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: true,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
         command: {
           allowShellExecution: false,
           allowedCommands: ["curl", "wget"], // Not in allowed commands
@@ -306,8 +494,19 @@ describe("Capability Intersection", () => {
           forbiddenPatterns: [],
           allowEnvPassthrough: [],
         },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const result = intersectCapabilities(requested, baseEnvelope, {
@@ -322,16 +521,43 @@ describe("Capability Intersection", () => {
   describe("Secrets Subsystem Violations", () => {
     it("detects secret alias expansion outside approved envelope", () => {
       const requested: CapabilityManifest = {
-        fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
+        fs: {
+          readPaths: [],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: true,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
         secrets: {
           allowedSecretNames: ["AWS_SECRET_ACCESS_KEY", "STRIPE_SECRET_KEY"], // Not authorized
           allowedPrefixes: [],
           denyDirectRead: true,
           injectAsEnv: true,
         },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       };
 
       const result = intersectCapabilities(requested, baseEnvelope, {

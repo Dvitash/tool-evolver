@@ -1,10 +1,6 @@
-import type {
-  CapabilityManifest,
-  EvolutionCandidate,
-  ToolManifest,
-} from "@tool-evolver/contracts";
-import type { CandidateRevision, ToolPlan } from "../generator/types.js";
+import type { CapabilityManifest, EvolutionCandidate, ToolManifest } from "@tool-evolver/contracts";
 import type { InferenceService } from "../../models/service.js";
+import type { CandidateRevision, ToolPlan } from "../generator/types.js";
 import { StaticAnalyzer } from "./static-analyzer.js";
 import { TestSynthesizer } from "./test-synthesizer.js";
 import { TypeChecker } from "./type-checker.js";
@@ -42,7 +38,8 @@ export class CandidateValidationService {
   constructor(options: CandidateValidationServiceOptions = {}) {
     this.staticAnalyzer = options.staticAnalyzer ?? new StaticAnalyzer();
     this.typeChecker = options.typeChecker ?? new TypeChecker();
-    this.synthesizer = options.synthesizer ?? new TestSynthesizer({ inferenceService: options.inferenceService });
+    this.synthesizer =
+      options.synthesizer ?? new TestSynthesizer({ inferenceService: options.inferenceService });
     this.sandbox = options.sandbox ?? new ValidationSandbox();
     this.inferenceService = options.inferenceService;
   }
@@ -52,7 +49,7 @@ export class CandidateValidationService {
    */
   async validateCandidate(
     target: CandidateValidationTarget,
-    options: CandidateValidationOptions = {}
+    options: CandidateValidationOptions = {},
   ): Promise<CandidateValidationResult> {
     const startTime = Date.now();
     const validatedAt = new Date(startTime).toISOString();
@@ -70,7 +67,9 @@ export class CandidateValidationService {
         (f) =>
           f.severity === "error" &&
           (f.category === "forbidden_import" || f.category === "forbidden_api") &&
-          (f.message.includes(".node") || f.message.includes("http://") || f.message.includes("https://"))
+          (f.message.includes(".node") ||
+            f.message.includes("http://") ||
+            f.message.includes("https://")),
       );
 
       // 3. Step 2: Pinned TypeScript Typecheck & Schema Consistency
@@ -82,7 +81,12 @@ export class CandidateValidationService {
 
       // If terminal security violation, reject immediately as terminal_fail
       if (hasTerminalForbiddenImports) {
-        const repairFeedback = this.buildRepairFeedback(staticFindings, typecheckResult.errors, undefined, capabilities);
+        const repairFeedback = this.buildRepairFeedback(
+          staticFindings,
+          typecheckResult.errors,
+          undefined,
+          capabilities,
+        );
         repairFeedback.canRepair = false; // unrepairable
 
         return {
@@ -102,9 +106,15 @@ export class CandidateValidationService {
       // If static syntax errors or typecheck failure prevent running tests
       if (
         staticFindings.some((f) => f.category === "syntax_error") ||
-        (!typecheckPassed && typecheckResult.errors.some((e) => e.includes("Syntax") || e.includes("Transpilation")))
+        (!typecheckPassed &&
+          typecheckResult.errors.some((e) => e.includes("Syntax") || e.includes("Transpilation")))
       ) {
-        const repairFeedback = this.buildRepairFeedback(staticFindings, typecheckResult.errors, undefined, capabilities);
+        const repairFeedback = this.buildRepairFeedback(
+          staticFindings,
+          typecheckResult.errors,
+          undefined,
+          capabilities,
+        );
 
         return {
           candidateId,
@@ -138,7 +148,8 @@ export class CandidateValidationService {
       // 6. Step 5: Verdict & Structured Repair Formulation
       const hasTestFailures = testReport.failed > 0 || testReport.timeouts > 0;
       const coverageThreshold = options.coverageThresholdPercent ?? 50;
-      const coveragePassed = !coverageReport || coverageReport.statementCoveragePercent >= coverageThreshold;
+      const coveragePassed =
+        !coverageReport || coverageReport.statementCoveragePercent >= coverageThreshold;
 
       let status: ValidationStatus = "pass";
 
@@ -148,7 +159,12 @@ export class CandidateValidationService {
 
       let repairFeedback: StructuredRepairFeedback | undefined;
       if (status === "repairable_fail") {
-        repairFeedback = this.buildRepairFeedback(staticFindings, typecheckResult.errors, testReport, capabilities);
+        repairFeedback = this.buildRepairFeedback(
+          staticFindings,
+          typecheckResult.errors,
+          testReport,
+          capabilities,
+        );
       }
 
       return {
@@ -250,7 +266,7 @@ export class CandidateValidationService {
     staticFindings: StaticAnalysisFinding[],
     typecheckErrors: string[],
     testReport?: TestExecutionReport,
-    currentCapabilities?: CapabilityManifest
+    currentCapabilities?: CapabilityManifest,
   ): StructuredRepairFeedback {
     const suggestedFixes: string[] = [];
     const failedTestSummaries: string[] = [];
@@ -270,7 +286,12 @@ export class CandidateValidationService {
           recommendedChanges.capabilities = {
             ...recommendedChanges.capabilities,
             fs: {
-              ...(currentCapabilities?.fs ?? { readPaths: [], writePaths: [], denyPaths: [], maxFileSizeBytes: 10485760 }),
+              ...(currentCapabilities?.fs ?? {
+                readPaths: [],
+                writePaths: [],
+                denyPaths: [],
+                maxFileSizeBytes: 10485760,
+              }),
               allowWorkspaceRoot: true,
               allowTemp: true,
             },
@@ -279,7 +300,14 @@ export class CandidateValidationService {
           recommendedChanges.capabilities = {
             ...recommendedChanges.capabilities,
             net: {
-              ...(currentCapabilities?.net ?? { allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true }),
+              ...(currentCapabilities?.net ?? {
+                allowedDomains: [],
+                allowedHosts: [],
+                allowedPorts: [],
+                allowedProtocols: ["https"],
+                allowLocalhost: false,
+                denyPrivateRanges: true,
+              }),
               allowOutbound: true,
             },
           };
@@ -287,7 +315,12 @@ export class CandidateValidationService {
           recommendedChanges.capabilities = {
             ...recommendedChanges.capabilities,
             command: {
-              ...(currentCapabilities?.command ?? { allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] }),
+              ...(currentCapabilities?.command ?? {
+                allowedCommands: [],
+                allowedBinaries: [],
+                forbiddenPatterns: [],
+                allowEnvPassthrough: [],
+              }),
               allowShellExecution: true,
             },
           };
@@ -304,13 +337,21 @@ export class CandidateValidationService {
     if (testReport) {
       for (const t of testReport.results) {
         if (!t.passed) {
-          failedTestSummaries.push(`Test '${t.name}' (${t.testType}) failed: ${t.error ?? "assertion failure"}`);
+          failedTestSummaries.push(
+            `Test '${t.name}' (${t.testType}) failed: ${t.error ?? "assertion failure"}`,
+          );
           if (t.testType === "schema_boundary") {
-            suggestedFixes.push(`Ensure InputSchema strictly parses and rejects invalid parameter combinations.`);
+            suggestedFixes.push(
+              `Ensure InputSchema strictly parses and rejects invalid parameter combinations.`,
+            );
           } else if (t.testType === "error_mode") {
-            suggestedFixes.push(`Wrap broker calls in try-catch and handle external broker errors gracefully.`);
+            suggestedFixes.push(
+              `Wrap broker calls in try-catch and handle external broker errors gracefully.`,
+            );
           } else if (t.testType === "happy_path") {
-            suggestedFixes.push(`Check tool implementation logic and ensure valid return payload matching OutputSchema.`);
+            suggestedFixes.push(
+              `Check tool implementation logic and ensure valid return payload matching OutputSchema.`,
+            );
           }
         }
       }
@@ -330,7 +371,7 @@ export class CandidateValidationService {
  * Factory function for creating a CandidateValidationService instance.
  */
 export function createCandidateValidationService(
-  options: CandidateValidationServiceOptions = {}
+  options: CandidateValidationServiceOptions = {},
 ): CandidateValidationService {
   return new CandidateValidationService(options);
 }

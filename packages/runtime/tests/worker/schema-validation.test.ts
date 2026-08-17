@@ -42,7 +42,9 @@ describe("validateAgainstSchema", () => {
     const extraProp = { id: "item-1", count: 5, extra: "unauthorized" };
     const extraRes = validateAgainstSchema(schema, extraProp);
     expect(extraRes.valid).toBe(false);
-    expect(extraRes.errors.some((e) => e.includes("additional property is not allowed"))).toBe(true);
+    expect(extraRes.errors.some((e) => e.includes("additional property is not allowed"))).toBe(
+      true,
+    );
   });
 
   it("validates embedded .schema objects (MCP output schema)", () => {
@@ -90,9 +92,7 @@ describe("validateAgainstSchema", () => {
     expect(validateAgainstSchema(schema, valid).valid).toBe(true);
 
     const invalid = {
-      items: [
-        { name: "alpha", score: "not-a-number" },
-      ],
+      items: [{ name: "alpha", score: "not-a-number" }],
     };
     expect(validateAgainstSchema(schema, invalid).valid).toBe(false);
   });

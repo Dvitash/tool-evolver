@@ -30,11 +30,7 @@ export class PolicyCanonicalizationError extends Error {
   readonly code: CanonicalizationErrorCode;
   readonly details?: Record<string, unknown>;
 
-  constructor(
-    code: CanonicalizationErrorCode,
-    message: string,
-    details?: Record<string, unknown>,
-  ) {
+  constructor(code: CanonicalizationErrorCode, message: string, details?: Record<string, unknown>) {
     super(`[${code}] ${message}`);
     this.name = "PolicyCanonicalizationError";
     this.code = code;
@@ -132,9 +128,7 @@ export function canonicalizePath(
   const normalizedSlashes = normalizeSlashes(expanded);
 
   const normWorkspaceRoot = normalizeSlashes(path.resolve(workspaceRoot));
-  const effectiveTempDir = normalizeSlashes(
-    path.resolve(options.tempDir ?? os.tmpdir()),
-  );
+  const effectiveTempDir = normalizeSlashes(path.resolve(options.tempDir ?? os.tmpdir()));
 
   // If the path is a glob pattern containing wildcards (* or ?)
   const isGlob = options.allowGlob && /[*?]/.test(normalizedSlashes);
@@ -388,7 +382,10 @@ export function canonicalizeScheme(rawScheme: string): AllowedProtocol {
   if (typeof rawScheme !== "string") {
     throw new PolicyCanonicalizationError("INVALID_SCHEME", "Scheme must be a string");
   }
-  const clean = rawScheme.toLowerCase().replace(/[:/]+$/, "").trim();
+  const clean = rawScheme
+    .toLowerCase()
+    .replace(/[:/]+$/, "")
+    .trim();
   if (clean === "http" || clean === "https" || clean === "ws" || clean === "wss") {
     return clean;
   }
@@ -487,11 +484,12 @@ function parseIpv4ToNumber(ipStr: string): number | null {
   if (parts.length === 1) {
     // Single integer / hex representation e.g. 2130706433 or 0x7f000001
     const raw = parts[0];
-    const num = raw.startsWith("0x") || raw.startsWith("0X")
-      ? Number.parseInt(raw, 16)
-      : raw.startsWith("0") && raw.length > 1
-        ? Number.parseInt(raw, 8)
-        : Number.parseInt(raw, 10);
+    const num =
+      raw.startsWith("0x") || raw.startsWith("0X")
+        ? Number.parseInt(raw, 16)
+        : raw.startsWith("0") && raw.length > 1
+          ? Number.parseInt(raw, 8)
+          : Number.parseInt(raw, 10);
     if (!Number.isNaN(num) && num >= 0 && num <= 0xffffffff) {
       return num;
     }
@@ -575,7 +573,10 @@ function isPrivateIpv4Number(ipNum: number): boolean {
  * Checks whether a given host or IP is private, reserved, loopback, or local.
  */
 export function isPrivateOrReservedIp(ipOrHost: string): boolean {
-  const host = ipOrHost.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  const host = ipOrHost
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "");
 
   // Localhost names
   if (

@@ -3,7 +3,7 @@ import {
   DEFAULT_ROLLOUT_POLICIES,
   RolloutPolicyRegistry,
 } from "../../../src/evolution/rollout/policy.js";
-import { type RolloutPolicy } from "../../../src/evolution/rollout/types.js";
+import type { RolloutPolicy } from "../../../src/evolution/rollout/types.js";
 
 describe("RolloutPolicyRegistry - Policy Management & Tiered Configurations", () => {
   it("should provide valid default policies across all risk tiers", () => {

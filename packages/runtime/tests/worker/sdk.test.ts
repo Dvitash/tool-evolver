@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   DefaultToolBrokerClient,
+  type ToolContext,
   createToolContext,
   defineTool,
-  type ToolContext,
 } from "../../src/worker/sdk.js";
 
 describe("Tool SDK", () => {
@@ -67,33 +67,35 @@ describe("Tool SDK", () => {
       const fakeFiles = new Map<string, string>();
       fakeFiles.set("hello.txt", "world");
 
-      const brokerHandler = vi.fn(async (service: string, action: string, payload: Record<string, unknown>) => {
-        if (service === "fs") {
-          if (action === "readFile") {
-            const p = payload.path as string;
-            if (!fakeFiles.has(p)) throw new Error("File not found");
-            return { content: fakeFiles.get(p), encoding: "utf-8" };
+      const brokerHandler = vi.fn(
+        async (service: string, action: string, payload: Record<string, unknown>) => {
+          if (service === "fs") {
+            if (action === "readFile") {
+              const p = payload.path as string;
+              if (!fakeFiles.has(p)) throw new Error("File not found");
+              return { content: fakeFiles.get(p), encoding: "utf-8" };
+            }
+            if (action === "writeFile") {
+              fakeFiles.set(payload.path as string, payload.content as string);
+              return {};
+            }
+            if (action === "exists") {
+              return { exists: fakeFiles.has(payload.path as string) };
+            }
+            if (action === "listDir") {
+              return { entries: Array.from(fakeFiles.keys()) };
+            }
+            if (action === "stat") {
+              return { size: 5, isFile: true, isDirectory: false, mtime: new Date().toISOString() };
+            }
+            if (action === "removeFile") {
+              fakeFiles.delete(payload.path as string);
+              return {};
+            }
           }
-          if (action === "writeFile") {
-            fakeFiles.set(payload.path as string, payload.content as string);
-            return {};
-          }
-          if (action === "exists") {
-            return { exists: fakeFiles.has(payload.path as string) };
-          }
-          if (action === "listDir") {
-            return { entries: Array.from(fakeFiles.keys()) };
-          }
-          if (action === "stat") {
-            return { size: 5, isFile: true, isDirectory: false, mtime: new Date().toISOString() };
-          }
-          if (action === "removeFile") {
-            fakeFiles.delete(payload.path as string);
-            return {};
-          }
-        }
-        throw new Error(`Unhandled action: ${service}.${action}`);
-      });
+          throw new Error(`Unhandled action: ${service}.${action}`);
+        },
+      );
 
       const client = new DefaultToolBrokerClient(brokerHandler);
 
@@ -125,28 +127,30 @@ describe("Tool SDK", () => {
     });
 
     it("routes net, cmd, and secret operations through broker handler", async () => {
-      const brokerHandler = vi.fn(async (service: string, action: string, payload: Record<string, unknown>) => {
-        if (service === "net" && action === "fetch") {
-          return {
-            status: 200,
-            statusText: "OK",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ message: "fetched successfully" }),
-          };
-        }
-        if (service === "cmd" && action === "exec") {
-          return {
-            exitCode: 0,
-            stdout: `executed: ${payload.command}`,
-            stderr: "",
-          };
-        }
-        if (service === "secret" && action === "getSecret") {
-          if (payload.name === "API_KEY") return { secret: "secret_value_123" };
-          return { secret: null };
-        }
-        throw new Error(`Unhandled ${service}.${action}`);
-      });
+      const brokerHandler = vi.fn(
+        async (service: string, action: string, payload: Record<string, unknown>) => {
+          if (service === "net" && action === "fetch") {
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ message: "fetched successfully" }),
+            };
+          }
+          if (service === "cmd" && action === "exec") {
+            return {
+              exitCode: 0,
+              stdout: `executed: ${payload.command}`,
+              stderr: "",
+            };
+          }
+          if (service === "secret" && action === "getSecret") {
+            if (payload.name === "API_KEY") return { secret: "secret_value_123" };
+            return { secret: null };
+          }
+          throw new Error(`Unhandled ${service}.${action}`);
+        },
+      );
 
       const client = new DefaultToolBrokerClient(brokerHandler);
 

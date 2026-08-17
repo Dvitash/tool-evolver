@@ -4,6 +4,8 @@ import {
   WorkerFrameDecoder,
   WorkerFrameEncoder,
   WorkerMessageSchema,
+  createBrokerRequestMessage,
+  createBrokerResponseMessage,
   createCancelMessage,
   createErrorMessage,
   createHeartbeatMessage,
@@ -13,8 +15,6 @@ import {
   createProgressMessage,
   createResultMessage,
   createShutdownMessage,
-  createBrokerRequestMessage,
-  createBrokerResponseMessage,
   withResolvers,
 } from "../../src/worker/protocol.js";
 

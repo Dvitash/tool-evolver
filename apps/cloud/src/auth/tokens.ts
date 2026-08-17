@@ -1,22 +1,22 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import {
-  AuthClaims,
-  AuthClaimsSchema,
-  AuthScope,
-  TokenErrorCode,
-  TokenRotationRequest,
-  TokenRotationResponse,
-} from "@tool-evolver/protocol";
 import { sha256 } from "@tool-evolver/crypto";
 import {
-  MemoryTokenRepository,
-  RefreshTokenRecord,
-  TokenRepository,
-} from "./repositories/token-repository.js";
+  type AuthClaims,
+  AuthClaimsSchema,
+  type AuthScope,
+  type TokenErrorCode,
+  type TokenRotationRequest,
+  type TokenRotationResponse,
+} from "@tool-evolver/protocol";
 import {
-  AccountRepository,
+  type AccountRepository,
   MemoryAccountRepository,
 } from "./repositories/account-repository.js";
+import {
+  MemoryTokenRepository,
+  type RefreshTokenRecord,
+  type TokenRepository,
+} from "./repositories/token-repository.js";
 
 /**
  * Custom Error for Auth / Token failures.
@@ -26,12 +26,7 @@ export class TokenError extends Error {
   readonly httpStatus: number;
   readonly interval?: number;
 
-  constructor(
-    code: TokenErrorCode,
-    message: string,
-    httpStatus = 400,
-    interval?: number,
-  ) {
+  constructor(code: TokenErrorCode, message: string, httpStatus = 400, interval?: number) {
     super(message);
     this.name = "TokenError";
     this.code = code;
@@ -45,11 +40,7 @@ export class TokenError extends Error {
  */
 export function base64UrlEncode(data: string | Buffer): string {
   const buf = typeof data === "string" ? Buffer.from(data, "utf-8") : data;
-  return buf
-    .toString("base64")
-    .replace(/=/g, "")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_");
+  return buf.toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
 /**
@@ -102,9 +93,7 @@ export function signJwt(payload: Record<string, unknown>, secret: string): strin
   const payloadPart = base64UrlEncode(JSON.stringify(payload));
   const unsignedToken = `${headerPart}.${payloadPart}`;
 
-  const signature = createHmac("sha256", secret)
-    .update(unsignedToken)
-    .digest();
+  const signature = createHmac("sha256", secret).update(unsignedToken).digest();
   const signaturePart = base64UrlEncode(signature);
 
   return `${unsignedToken}.${signaturePart}`;
@@ -130,16 +119,17 @@ export function verifyJwt<T extends Record<string, unknown> = Record<string, unk
   const [headerPart, payloadPart, signaturePart] = parts;
   const unsignedToken = `${headerPart}.${payloadPart}`;
 
-  const expectedSignature = createHmac("sha256", secret)
-    .update(unsignedToken)
-    .digest();
+  const expectedSignature = createHmac("sha256", secret).update(unsignedToken).digest();
   const expectedSigBase64 = base64UrlEncode(expectedSignature);
 
   // Timing safe signature comparison
   const sigBuffer = Buffer.from(signaturePart);
   const expectedSigBuffer = Buffer.from(expectedSigBase64);
 
-  if (sigBuffer.length !== expectedSigBuffer.length || !timingSafeEqual(sigBuffer, expectedSigBuffer)) {
+  if (
+    sigBuffer.length !== expectedSigBuffer.length ||
+    !timingSafeEqual(sigBuffer, expectedSigBuffer)
+  ) {
     return { valid: false, error: "Invalid token signature", code: "invalid_grant" };
   }
 
@@ -162,12 +152,21 @@ export function verifyJwt<T extends Record<string, unknown> = Record<string, unk
 
     // Check issuer if requested
     if (options?.issuer && payload.issuer && payload.issuer !== options.issuer) {
-      return { valid: false, payload, error: `Invalid issuer: expected ${options.issuer}`, code: "invalid_grant" };
+      return {
+        valid: false,
+        payload,
+        error: `Invalid issuer: expected ${options.issuer}`,
+        code: "invalid_grant",
+      };
     }
 
     return { valid: true, payload };
   } catch (err) {
-    return { valid: false, error: `Failed to decode JWT payload: ${(err as Error).message}`, code: "invalid_grant" };
+    return {
+      valid: false,
+      error: `Failed to decode JWT payload: ${(err as Error).message}`,
+      code: "invalid_grant",
+    };
   }
 }
 
@@ -354,7 +353,9 @@ export class TokenService {
     const familyId = `fam_${randomBytes(16).toString("hex")}`;
 
     const now = new Date();
-    const refreshExpiresAt = new Date(now.getTime() + this.refreshTokenTtlSeconds * 1000).toISOString();
+    const refreshExpiresAt = new Date(
+      now.getTime() + this.refreshTokenTtlSeconds * 1000,
+    ).toISOString();
 
     // Create token family
     await this.tokenRepository.createTokenFamily({
@@ -427,7 +428,10 @@ export class TokenService {
       throw new TokenError("invalid_grant", "Device ID does not match refresh token authorization");
     }
     if (request.installationId && family.installationId !== request.installationId) {
-      throw new TokenError("invalid_grant", "Installation ID does not match refresh token authorization");
+      throw new TokenError(
+        "invalid_grant",
+        "Installation ID does not match refresh token authorization",
+      );
     }
 
     // 5. Check expiration
@@ -457,7 +461,9 @@ export class TokenService {
     const newRefreshToken = `rt_${randomBytes(32).toString("hex")}`;
     const newTokenHash = sha256(newRefreshToken);
     const now = new Date();
-    const refreshExpiresAt = new Date(now.getTime() + this.refreshTokenTtlSeconds * 1000).toISOString();
+    const refreshExpiresAt = new Date(
+      now.getTime() + this.refreshTokenTtlSeconds * 1000,
+    ).toISOString();
 
     const newRecord: RefreshTokenRecord = {
       tokenHash: newTokenHash,

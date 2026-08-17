@@ -1,10 +1,10 @@
-import { CapabilityEnvelope } from "@tool-evolver/contracts";
+import type { CapabilityEnvelope } from "@tool-evolver/contracts";
 import {
-  Episode,
-  SuppressionOptions,
+  type Episode,
+  type SuppressionOptions,
   SuppressionReason,
-  SuppressionResult,
-  WorkflowCluster,
+  type SuppressionResult,
+  type WorkflowCluster,
 } from "./types.js";
 
 const DEFAULT_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -138,7 +138,10 @@ export class SuppressionEngine {
   /**
    * Checks for destructive commands across cluster episodes.
    */
-  private checkDestructiveOperations(episodes: Episode[]): { isDestructive: boolean; reason: string } {
+  private checkDestructiveOperations(episodes: Episode[]): {
+    isDestructive: boolean;
+    reason: string;
+  } {
     for (const ep of episodes) {
       for (const evt of ep.events) {
         if (evt.type === "command_exec") {
@@ -176,7 +179,8 @@ export class SuppressionEngine {
     if (envelope.isFrozen) {
       return {
         violates: true,
-        reason: "Capability envelope for this workspace is frozen; new tool synthesis is disallowed.",
+        reason:
+          "Capability envelope for this workspace is frozen; new tool synthesis is disallowed.",
       };
     }
 
@@ -197,7 +201,12 @@ export class SuppressionEngine {
             };
           }
         }
-        if (!allowShellExecution && allowedCommands.length > 0 && !allowedCommands.includes(cmdName) && !allowedBinaries.includes(cmdName)) {
+        if (
+          !allowShellExecution &&
+          allowedCommands.length > 0 &&
+          !allowedCommands.includes(cmdName) &&
+          !allowedBinaries.includes(cmdName)
+        ) {
           return {
             violates: true,
             reason: `Command '${cmdName}' is not permitted by capability envelope command whitelist.`,
@@ -219,7 +228,7 @@ export class SuppressionEngine {
     }
 
     // Check fs capability
-    if (envelope.fs && envelope.fs.denyPaths && envelope.fs.denyPaths.length > 0) {
+    if (envelope.fs?.denyPaths && envelope.fs.denyPaths.length > 0) {
       for (const path of cluster.representativeSignature.normalizedPaths) {
         for (const denyPath of envelope.fs.denyPaths) {
           if (path.includes(denyPath)) {

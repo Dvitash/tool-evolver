@@ -1,12 +1,9 @@
 import { describe, expect, it } from "vitest";
-import {
-  AuthService,
-  createAuthService,
-} from "../../src/auth/index.js";
-import { CloudServer, createCloudServer } from "../../src/server/index.js";
+import { AuthService, createAuthService } from "../../src/auth/index.js";
 import { loadConfig } from "../../src/config.js";
 import { MemoryDatabasePool } from "../../src/db/index.js";
 import { MemoryDurableQueue } from "../../src/queue/index.js";
+import { CloudServer, createCloudServer } from "../../src/server/index.js";
 import { MemoryObjectStore } from "../../src/storage/index.js";
 
 describe("Device and Installation Revocation", () => {
@@ -27,7 +24,11 @@ describe("Device and Installation Revocation", () => {
     expect(initialVerify.valid).toBe(true);
 
     // 2. Revoke the device
-    await auth.revokeDevice("dev_target_to_revoke", "inst_target_to_revoke", "Security audit revocation");
+    await auth.revokeDevice(
+      "dev_target_to_revoke",
+      "inst_target_to_revoke",
+      "Security audit revocation",
+    );
 
     // 3. Check token repository and account repository
     expect(await auth.tokenRepository.isDeviceRevoked("dev_target_to_revoke")).toBe(true);

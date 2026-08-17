@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { CandidateScorer } from "../../../src/evolution/evaluation/scorer.js";
 import {
   STANDARD_EVALUATION_POLICY_V1,
   STRICT_EVALUATION_POLICY_V1,
 } from "../../../src/evolution/evaluation/policy.js";
+import { CandidateScorer } from "../../../src/evolution/evaluation/scorer.js";
 import {
   createMockCandidateRevision,
   createMockOpportunity,
@@ -44,7 +44,7 @@ describe("CandidateScorer (Multi-Dimensional Quality, Safety & Economics Scoring
     expect(dimensionKeys).toContain("maintainability");
 
     expect(result.compositeScore).toBeGreaterThanOrEqual(0.85);
-    expect(result.confidenceScore).toBeGreaterThanOrEqual(0.70);
+    expect(result.confidenceScore).toBeGreaterThanOrEqual(0.7);
     expect(result.passed).toBe(true);
   });
 
@@ -123,17 +123,52 @@ describe("CandidateScorer (Multi-Dimensional Quality, Safety & Economics Scoring
     const readOnlyManifest = createMockToolManifest(); // read_only
     const secretManifest = createMockToolManifest({
       capabilities: {
-        fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 1048576 },
-        net: { allowOutbound: false, allowedDomains: [], allowedPorts: [], allowInsecureHttp: false, denyDomains: [], denyPrivateRanges: true },
-        command: { allowedCommands: [], allowEnvInheritance: false, denyCommands: [], allowPipes: false, maxExecutionTimeMs: 1000 },
-        secrets: { allowedSecretNames: ["PROD_DB_SECRET"], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 1, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 1000, maxOutputSizeBytes: 1048576 },
+        fs: {
+          readPaths: [],
+          writePaths: [],
+          allowWorkspaceRoot: false,
+          allowTemp: false,
+          denyPaths: [],
+          maxFileSizeBytes: 1048576,
+        },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedPorts: [],
+          allowInsecureHttp: false,
+          denyDomains: [],
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowedCommands: [],
+          allowEnvInheritance: false,
+          denyCommands: [],
+          allowPipes: false,
+          maxExecutionTimeMs: 1000,
+        },
+        secrets: {
+          allowedSecretNames: ["PROD_DB_SECRET"],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 1,
+          maxCpuUsagePercent: 100,
+          maxMemoryMb: 128,
+          maxExecutionTimeMs: 1000,
+          maxOutputSizeBytes: 1048576,
+        },
       },
     }); // secret_mediated
 
     const validationWithWarnings = createMockValidationResult({
       staticFindings: [
-        { severity: "warning", category: "static_flaw", message: "Potential unchecked array indexing" },
+        {
+          severity: "warning",
+          category: "static_flaw",
+          message: "Potential unchecked array indexing",
+        },
       ],
     });
 
@@ -162,11 +197,17 @@ describe("CandidateScorer (Multi-Dimensional Quality, Safety & Economics Scoring
 
     // Secret-mediated tier has higher required threshold score and min confidence
     expect(secretResult.thresholdScore).toBeGreaterThan(readOnlyResult.thresholdScore);
-    expect(secretResult.minRequiredConfidence).toBeGreaterThan(readOnlyResult.minRequiredConfidence);
+    expect(secretResult.minRequiredConfidence).toBeGreaterThan(
+      readOnlyResult.minRequiredConfidence,
+    );
 
     // Secret-mediated tier applies heavier penalty for static warnings
-    const readOnlySec = readOnlyResult.dimensionScores.find((d) => d.dimension === "security_policy_fit");
-    const secretSec = secretResult.dimensionScores.find((d) => d.dimension === "security_policy_fit");
+    const readOnlySec = readOnlyResult.dimensionScores.find(
+      (d) => d.dimension === "security_policy_fit",
+    );
+    const secretSec = secretResult.dimensionScores.find(
+      (d) => d.dimension === "security_policy_fit",
+    );
     expect(secretSec?.adjustedScore).toBeLessThan(readOnlySec?.adjustedScore ?? 1.0);
   });
 

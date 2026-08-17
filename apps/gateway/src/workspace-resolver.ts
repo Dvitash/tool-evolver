@@ -4,11 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { InitializeParams, McpClientInfo, McpRoot } from "./protocol/types.js";
 
-export type WorkspaceResolutionSource =
-  | "roots"
-  | "init_param"
-  | "harness_session"
-  | "cwd_fallback";
+export type WorkspaceResolutionSource = "roots" | "init_param" | "harness_session" | "cwd_fallback";
 
 export interface ResolvedWorkspaceRoot {
   uri: string;
@@ -107,7 +103,7 @@ export function generateWorkspaceId(canonicalRoot: string): string {
  * 3. Current working directory fallback
  */
 export function resolveWorkspaceContext(
-  options: WorkspaceResolutionOptions = {}
+  options: WorkspaceResolutionOptions = {},
 ): WorkspaceContext {
   const env = options.env ?? process.env;
   const initParams = options.initParams;
@@ -184,10 +180,7 @@ export function resolveWorkspaceContext(
   const canonicalRoot = candidatePath;
   const gitRoot = findGitRoot(canonicalRoot);
   const workspaceId = generateWorkspaceId(canonicalRoot);
-  const name =
-    collectedRoots[0]?.name ||
-    path.basename(canonicalRoot) ||
-    "workspace";
+  const name = collectedRoots[0]?.name || path.basename(canonicalRoot) || "workspace";
 
   if (collectedRoots.length === 0) {
     collectedRoots.push({

@@ -1,8 +1,5 @@
-import { describe, expect, it, beforeEach } from "vitest";
-import {
-  AnalyticsService,
-  AnalyticsTenantMismatchError,
-} from "../../src/analytics/service.js";
+import { beforeEach, describe, expect, it } from "vitest";
+import { AnalyticsService, AnalyticsTenantMismatchError } from "../../src/analytics/service.js";
 import type { TelemetryBatchRequest } from "../../src/analytics/types.js";
 import { MemoryDatabasePool } from "../../src/db/client.js";
 import { runMigrations } from "../../src/db/migrations.js";
@@ -71,7 +68,10 @@ describe("AnalyticsService: End-to-End Ingestion, Isolation & Cascade", () => {
     expect(buckets.length).toBeGreaterThanOrEqual(1);
 
     // Verify rollout telemetry events table
-    const eventsRes = await pool.query(`SELECT * FROM rollout_telemetry_events WHERE workspace_id = $1`, [tenantA.workspaceId]);
+    const eventsRes = await pool.query(
+      `SELECT * FROM rollout_telemetry_events WHERE workspace_id = $1`,
+      [tenantA.workspaceId],
+    );
     expect(eventsRes.rows.length).toBe(1);
     expect(eventsRes.rows[0].tool_id).toBe("linter_tool");
   });

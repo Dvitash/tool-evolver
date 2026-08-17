@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { CapabilityEnvelope } from "@tool-evolver/contracts";
-import { OpportunityDetection } from "../../../src/evolution/opportunity/types.js";
-import { TenantContext } from "../../../src/tenant.js";
+import type { CapabilityEnvelope } from "@tool-evolver/contracts";
+import type { OpportunityDetection } from "../../../src/evolution/opportunity/types.js";
+import type { TenantContext } from "../../../src/tenant.js";
 
 export function createMockTenant(overrides: Partial<TenantContext> = {}): TenantContext {
   return {
@@ -13,7 +13,9 @@ export function createMockTenant(overrides: Partial<TenantContext> = {}): Tenant
   };
 }
 
-export function createMockOpportunity(overrides: Partial<OpportunityDetection> = {}): OpportunityDetection {
+export function createMockOpportunity(
+  overrides: Partial<OpportunityDetection> = {},
+): OpportunityDetection {
   const id = overrides.id ?? `opp-${randomUUID().slice(0, 8)}`;
   return {
     id,
@@ -81,7 +83,9 @@ export function createMockOpportunity(overrides: Partial<OpportunityDetection> =
   };
 }
 
-export function createMockEnvelope(overrides: Partial<CapabilityEnvelope> = {}): CapabilityEnvelope {
+export function createMockEnvelope(
+  overrides: Partial<CapabilityEnvelope> = {},
+): CapabilityEnvelope {
   return {
     envelopeId: overrides.envelopeId ?? `env-${randomUUID().slice(0, 8)}`,
     workspaceId: overrides.workspaceId ?? "ws-test-456",

@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
 import { createInMemoryStateStore } from "@tool-evolver/db";
 import type { RawHarnessRecord } from "@tool-evolver/harness-contracts";
+import { describe, expect, it } from "vitest";
 import {
   type HarnessRecordDecoder,
   NormalizationPipeline,
@@ -82,7 +82,12 @@ describe("Re-Normalization & Versioned Revision Engine", () => {
       canDecode: () => true,
       decode: (record) => {
         const payload = record.rawPayload;
-        if (record.recordType === "transcript_line" && payload && typeof payload === "object" && "content" in payload) {
+        if (
+          record.recordType === "transcript_line" &&
+          payload &&
+          typeof payload === "object" &&
+          "content" in payload
+        ) {
           return {
             type: "message",
             role: "user",
@@ -93,9 +98,17 @@ describe("Re-Normalization & Versioned Revision Engine", () => {
             causalRef: { causalSequence: record.sequenceNumber },
           };
         }
-        if (record.recordType === "tool_call" && payload && typeof payload === "object" && "parameters" in payload) {
+        if (
+          record.recordType === "tool_call" &&
+          payload &&
+          typeof payload === "object" &&
+          "parameters" in payload
+        ) {
           const rawParams = payload.parameters;
-          const safeParams = typeof rawParams === "object" && rawParams !== null ? (rawParams as Record<string, unknown>) : {};
+          const safeParams =
+            typeof rawParams === "object" && rawParams !== null
+              ? (rawParams as Record<string, unknown>)
+              : {};
           return {
             type: "tool_call",
             toolName: "bash_runner",

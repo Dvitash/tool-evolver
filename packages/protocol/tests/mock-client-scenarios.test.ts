@@ -124,7 +124,7 @@ describe("ProtocolClient & MockProtocolServer Scenarios", () => {
     expect(snapshot.checksum).toBeDefined();
 
     // 6. Download Artifact & Verify Checksum
-    const sampleDigest = Array.from(mockServer["artifactStore"].keys())[0];
+    const sampleDigest = Array.from(mockServer.artifactStore.keys())[0];
     const artifact = client.downloadArtifact(sampleDigest);
     expect(artifact.bytes.byteLength).toBeGreaterThan(0);
     expect(artifact.metadata.digest).toBe(sampleDigest);

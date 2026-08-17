@@ -1,4 +1,4 @@
-import { NormalizedSessionEvent } from "@tool-evolver/contracts";
+import type { NormalizedSessionEvent } from "@tool-evolver/contracts";
 import { describe, expect, it } from "vitest";
 import { ConsentManager } from "../../src/auth/consent.js";
 import {

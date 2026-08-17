@@ -2,10 +2,7 @@ import { describe, expect, it } from "vitest";
 import { OpportunityClassifier } from "../../../src/evolution/opportunity/classifier.js";
 import { StructuralClusterer } from "../../../src/evolution/opportunity/clustering.js";
 import { EpisodeSegmenter } from "../../../src/evolution/opportunity/episode.js";
-import {
-  createInferenceService,
-  FakeModelProvider,
-} from "../../../src/models/index.js";
+import { FakeModelProvider, createInferenceService } from "../../../src/models/index.js";
 import {
   createCommandExecEvent,
   createFileEditEvent,
@@ -20,7 +17,12 @@ describe("OpportunityClassifier & Model Invariants", () => {
     const classifier = new OpportunityClassifier();
 
     const events = [
-      createToolCallEvent({ eventId: "e1", sessionId: "sess-1", toolName: "read_file", parameters: { path: "src/a.ts" } }),
+      createToolCallEvent({
+        eventId: "e1",
+        sessionId: "sess-1",
+        toolName: "read_file",
+        parameters: { path: "src/a.ts" },
+      }),
       createToolResultEvent({ eventId: "e2", sessionId: "sess-1", toolCallId: "e1", result: "ok" }),
       createFileEditEvent({ eventId: "e3", sessionId: "sess-1", filePath: "src/a.ts" }),
     ];
@@ -28,7 +30,11 @@ describe("OpportunityClassifier & Model Invariants", () => {
     const episodes = segmenter.segmentEvents(events);
     const [cluster] = clusterer.clusterEpisodes(episodes);
 
-    const classification = await classifier.classifyOpportunity("tenant-1", cluster, "repeated_pattern");
+    const classification = await classifier.classifyOpportunity(
+      "tenant-1",
+      cluster,
+      "repeated_pattern",
+    );
     expect(classification.title).toBeDefined();
     expect(classification.pattern).toBeDefined();
     expect(classification.confidenceScore).toBeGreaterThan(0);
@@ -45,15 +51,33 @@ describe("OpportunityClassifier & Model Invariants", () => {
     const classifier = new OpportunityClassifier(inferenceService);
 
     const events = [
-      createToolCallEvent({ eventId: "e1", sessionId: "sess-1", toolName: "run_tests", parameters: { filter: "unit" } }),
-      createToolResultEvent({ eventId: "e2", sessionId: "sess-1", toolCallId: "e1", result: "1 failed" }),
-      createCommandExecEvent({ eventId: "e3", sessionId: "sess-1", command: "vitest run --coverage" }),
+      createToolCallEvent({
+        eventId: "e1",
+        sessionId: "sess-1",
+        toolName: "run_tests",
+        parameters: { filter: "unit" },
+      }),
+      createToolResultEvent({
+        eventId: "e2",
+        sessionId: "sess-1",
+        toolCallId: "e1",
+        result: "1 failed",
+      }),
+      createCommandExecEvent({
+        eventId: "e3",
+        sessionId: "sess-1",
+        command: "vitest run --coverage",
+      }),
     ];
 
     const episodes = segmenter.segmentEvents(events);
     const [cluster] = clusterer.clusterEpisodes(episodes);
 
-    const classification = await classifier.classifyOpportunity("tenant-1", cluster, "repeated_pattern");
+    const classification = await classifier.classifyOpportunity(
+      "tenant-1",
+      cluster,
+      "repeated_pattern",
+    );
     expect(classification.title).toBeDefined();
     expect(classification.provenance).toBeDefined();
     expect(classification.provenance?.providerId).toBe("mock-model-provider");
@@ -71,8 +95,17 @@ describe("OpportunityClassifier & Model Invariants", () => {
 
     const events = [
       createToolCallEvent({ eventId: "truth-event-1", sessionId: "sess-1", toolName: "read_file" }),
-      createToolResultEvent({ eventId: "truth-event-2", sessionId: "sess-1", toolCallId: "truth-event-1", result: "ok" }),
-      createFileEditEvent({ eventId: "truth-event-3", sessionId: "sess-1", filePath: "src/main.ts" }),
+      createToolResultEvent({
+        eventId: "truth-event-2",
+        sessionId: "sess-1",
+        toolCallId: "truth-event-1",
+        result: "ok",
+      }),
+      createFileEditEvent({
+        eventId: "truth-event-3",
+        sessionId: "sess-1",
+        filePath: "src/main.ts",
+      }),
     ];
 
     const episodes = segmenter.segmentEvents(events);
@@ -82,7 +115,11 @@ describe("OpportunityClassifier & Model Invariants", () => {
     expect(cluster.completedOccurrences).toBe(1);
     expect(cluster.evidenceEventIds).toEqual(["truth-event-1", "truth-event-2", "truth-event-3"]);
 
-    const classification = await classifier.classifyOpportunity("tenant-1", cluster, "repeated_pattern");
+    const classification = await classifier.classifyOpportunity(
+      "tenant-1",
+      cluster,
+      "repeated_pattern",
+    );
 
     // The classifier returns qualitative metadata only
     expect(classification).not.toHaveProperty("completedOccurrences");

@@ -211,7 +211,9 @@ export class ObserverCoordinator extends EventEmitter {
                 let source: SessionEventSource | undefined;
                 if (typeof adapter.openEventSource === "function") {
                   try {
-                    const cursor = await this.tailer.getCursorManager().getCursor(session.sessionId);
+                    const cursor = await this.tailer
+                      .getCursorManager()
+                      .getCursor(session.sessionId);
                     source = await adapter.openEventSource(session, cursor ?? undefined);
                   } catch (err: unknown) {
                     summary.errors.push(

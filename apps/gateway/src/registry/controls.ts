@@ -134,7 +134,7 @@ export class UserControlsManager {
             JSON.stringify(controls.disabledTools),
             JSON.stringify(controls.rollbacks ?? []),
             now,
-          ]
+          ],
         );
       } catch {
         // Fallback silently if DB write fails
@@ -220,7 +220,7 @@ export class UserControlsManager {
   async recordRollback(
     workspaceId: string,
     targetRevision: number | string,
-    restoredSnapshotId?: string
+    restoredSnapshotId?: string,
   ): Promise<void> {
     const controls = await this.getControls(workspaceId);
     if (!controls.rollbacks) {

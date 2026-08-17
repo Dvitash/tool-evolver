@@ -130,11 +130,7 @@ export class SyncRepository {
     );
   }
 
-  async markOutboxFailed(
-    outboxId: string,
-    error: string,
-    nextRetryAt?: string,
-  ): Promise<void> {
+  async markOutboxFailed(outboxId: string, error: string, nextRetryAt?: string): Promise<void> {
     this.conn.run(
       `UPDATE local_outbox
        SET status = 'failed',
@@ -177,10 +173,9 @@ export class SyncRepository {
       status: "pending" | "processing" | "processed" | "failed" | "ignored";
       received_at: string;
       processed_at: string | null;
-    }>(
-      "SELECT * FROM local_inbox WHERE status = 'pending' ORDER BY received_at ASC LIMIT ?;",
-      [limit],
-    );
+    }>("SELECT * FROM local_inbox WHERE status = 'pending' ORDER BY received_at ASC LIMIT ?;", [
+      limit,
+    ]);
 
     return rows.map((r) => ({
       inboxId: r.inbox_id,
@@ -329,14 +324,7 @@ export class SyncRepository {
         processed_count = excluded.processed_count,
         status = excluded.status,
         received_at = excluded.received_at;`,
-      [
-        ack.ackId,
-        ack.batchId,
-        ack.serverTimestamp,
-        ack.processedCount,
-        ack.status,
-        ack.receivedAt,
-      ],
+      [ack.ackId, ack.batchId, ack.serverTimestamp, ack.processedCount, ack.status, ack.receivedAt],
     );
   }
 

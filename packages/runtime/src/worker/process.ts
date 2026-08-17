@@ -1,9 +1,10 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import crypto from "node:crypto";
 import type { CapabilityManifest, ToolManifest } from "@tool-evolver/contracts";
+import { DENO_WORKER_BOOTSTRAP_SOURCE } from "./bootstrap.js";
 import {
   type BrokerRequestMessage,
   type BrokerResponseMessage,
@@ -13,16 +14,15 @@ import {
   type LogMessage,
   type ProgressMessage,
   type ResultMessage,
-  type WorkerMessage,
   WorkerFrameDecoder,
   WorkerFrameEncoder,
+  type WorkerMessage,
   createCancelMessage,
   createInitializeMessage,
   createInvokeMessage,
   createShutdownMessage,
   withResolvers,
 } from "./protocol.js";
-import { DENO_WORKER_BOOTSTRAP_SOURCE } from "./bootstrap.js";
 import type { BrokerRequestHandlerFn } from "./sdk.js";
 
 /**
@@ -91,7 +91,7 @@ export class WorkerProcess {
   async execute(
     invocationId: string,
     input: unknown,
-    context?: { sessionId?: string; workspaceId?: string; toolId?: string; version?: string }
+    context?: { sessionId?: string; workspaceId?: string; toolId?: string; version?: string },
   ): Promise<WorkerExecutionResult> {
     const startTime = Date.now();
     const timeoutMs = this.options.timeoutMs ?? 30000;
@@ -107,7 +107,11 @@ export class WorkerProcess {
     // The worker is permissionless for network, env, run, ffi, write.
     // Read is allowed only for bootstrap script, bundle entrypoint and scratch workspace.
     const entrypointDir = path.dirname(path.resolve(this.options.bundleEntrypoint));
-    const allowReadPaths = [this.scratchDir, entrypointDir, path.resolve(this.options.bundleEntrypoint)];
+    const allowReadPaths = [
+      this.scratchDir,
+      entrypointDir,
+      path.resolve(this.options.bundleEntrypoint),
+    ];
     if (this.options.workspaceRoot) {
       allowReadPaths.push(path.resolve(this.options.workspaceRoot));
     }
@@ -286,7 +290,7 @@ export class WorkerProcess {
     msg: WorkerMessage,
     invocationId: string,
     startTime: number,
-    finalize: (res: WorkerExecutionResult) => void
+    finalize: (res: WorkerExecutionResult) => void,
   ): Promise<void> {
     switch (msg.type) {
       case "progress": {
@@ -319,7 +323,13 @@ export class WorkerProcess {
         const isTimeout = msg.errorType === "timeout";
         const isCancelled = msg.errorType === "cancelled";
         finalize({
-          status: isValidation ? "validation_error" : isTimeout ? "timeout" : isCancelled ? "cancelled" : "error",
+          status: isValidation
+            ? "validation_error"
+            : isTimeout
+              ? "timeout"
+              : isCancelled
+                ? "cancelled"
+                : "error",
           error: {
             type: msg.errorType,
             message: msg.message,

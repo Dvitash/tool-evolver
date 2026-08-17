@@ -108,10 +108,7 @@ export class BoundedRecordQueue extends EventEmitter {
       1,
       Math.floor(this.capacity * (options.highWatermarkRatio ?? 0.8)),
     );
-    this.lowWatermark = Math.max(
-      0,
-      Math.floor(this.capacity * (options.lowWatermarkRatio ?? 0.2)),
-    );
+    this.lowWatermark = Math.max(0, Math.floor(this.capacity * (options.lowWatermarkRatio ?? 0.2)));
     this.maxRetries = options.maxRetries ?? 3;
     this.dropPolicy = options.dropPolicy ?? "reject";
   }
@@ -221,11 +218,7 @@ export class BoundedRecordQueue extends EventEmitter {
    * Rejects a record. Increments retry attempts; if maxRetries is exceeded,
    * routes to Dead Letter Queue. Otherwise re-queues at head of queue.
    */
-  nack(
-    recordId: string,
-    error?: Error | string,
-    forcedReason?: DeadLetterReason,
-  ): void {
+  nack(recordId: string, error?: Error | string, forcedReason?: DeadLetterReason): void {
     this.nackedTotal++;
     const record = this.inFlight.get(recordId);
     this.inFlight.delete(recordId);
@@ -233,7 +226,8 @@ export class BoundedRecordQueue extends EventEmitter {
     const attempts = (this.attemptCounts.get(recordId) ?? 0) + 1;
     this.attemptCounts.set(recordId, attempts);
 
-    const errorMessage = error instanceof Error ? error.message : (error ?? "Unknown processing error");
+    const errorMessage =
+      error instanceof Error ? error.message : (error ?? "Unknown processing error");
 
     if (!record) {
       return;
@@ -300,7 +294,11 @@ export class BoundedRecordQueue extends EventEmitter {
     if (this.queue.length < this.highWatermark) {
       this._isPaused = false;
       this._isBackpressured = false;
-      this.emit("resume", { sessionId: this.sessionId, queueSize: this.queue.length, manual: true });
+      this.emit("resume", {
+        sessionId: this.sessionId,
+        queueSize: this.queue.length,
+        manual: true,
+      });
     }
   }
 

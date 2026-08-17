@@ -9,85 +9,85 @@ import type {
   EvolutionCandidate,
   NormalizedSessionEvent,
 } from "@tool-evolver/contracts";
-import { CloudConfig, RawCloudConfig, loadConfig } from "./config.js";
-import { DatabasePool, createDatabasePool } from "./db/client.js";
+import {
+  type AnalyticsService,
+  type CalculateEfficiencyParams,
+  type CalibrateEvaluationParams,
+  type MaterializeRolloutWindowParams,
+  type MetricsRepository,
+  createAnalyticsService,
+  createMetricsRepository,
+} from "./analytics/index.js";
+import { type AuthService, createAuthService } from "./auth/index.js";
+import { type CloudConfig, type RawCloudConfig, loadConfig } from "./config.js";
+import { type DatabasePool, createDatabasePool } from "./db/client.js";
 import { runMigrations } from "./db/migrations.js";
 import { OutboxPublisher } from "./db/outbox.js";
-import { DurableQueue, createDurableQueue } from "./queue/queue.js";
-import { WorkerRuntime } from "./queue/worker.js";
-import { JobScheduler } from "./queue/scheduler.js";
-import type { JobEnvelope } from "./queue/envelope.js";
-import { ObjectStore, createObjectStore } from "./storage/object-store.js";
 import {
-  ObservationRepository,
-  SessionRepository,
-  EvidenceRepository,
-  RetentionRepository,
-  StoreObservationBatchConsumer,
-  RetentionService,
-  ExportService,
-} from "./storage/index.js";
-import type { StoreObservationBatchPayload } from "./storage/index.js";
-import { CloudServer, createCloudServer } from "./server/api.js";
+  type PublishCandidateOptions,
+  type ToolArtifactRegistryService,
+  createToolArtifactRegistryService,
+} from "./evolution/artifacts/index.js";
 import {
-  ObservationIngestionService,
-  createObservationIngestionService,
-} from "./ingestion/index.js";
-import { AuthService, createAuthService } from "./auth/index.js";
+  type CandidateEvaluationInput,
+  type CandidateEvaluationService,
+  createCandidateEvaluationService,
+} from "./evolution/evaluation/index.js";
 import {
-  OpportunityDetectionService,
-  createOpportunityDetectionService,
-} from "./evolution/opportunity/index.js";
-import {
-  CandidateGenerationService,
+  type CandidateGenerationService,
   createCandidateGenerationService,
 } from "./evolution/generator/index.js";
 import {
-  CandidateValidationService,
+  type OpportunityDetectionService,
+  createOpportunityDetectionService,
+} from "./evolution/opportunity/index.js";
+import {
+  type CandidateTarget,
+  type EvidenceSource,
+  type HistoricalReplayService,
+  createHistoricalReplayService,
+} from "./evolution/replay/index.js";
+import {
+  type CreateRolloutParams,
+  RolloutAssignmentRouter,
+  RolloutController,
+  RolloutEvaluator,
+  type RolloutOverrideRecord,
+  RolloutPolicyRegistry,
+  RolloutRepository,
+  type RolloutTelemetryEvent,
+} from "./evolution/rollout/index.js";
+import {
+  type CandidateValidationService,
   type CandidateValidationTarget,
   createCandidateValidationService,
 } from "./evolution/testing/index.js";
 import {
-  HistoricalReplayService,
-  type CandidateTarget,
-  type EvidenceSource,
-  createHistoricalReplayService,
-} from "./evolution/replay/index.js";
+  type ObservationIngestionService,
+  createObservationIngestionService,
+} from "./ingestion/index.js";
 import {
-  CandidateEvaluationService,
-  type CandidateEvaluationInput,
-  createCandidateEvaluationService,
-} from "./evolution/evaluation/index.js";
-import {
-  ToolArtifactRegistryService,
-  type PublishCandidateOptions,
-  createToolArtifactRegistryService,
-} from "./evolution/artifacts/index.js";
-import {
-  CloudCatalogService,
+  type CloudCatalogService,
+  type CloudMcpServer,
   createCloudCatalogService,
-  CloudMcpServer,
   createCloudMcpServer,
 } from "./mcp/index.js";
+import type { JobEnvelope } from "./queue/envelope.js";
+import { type DurableQueue, createDurableQueue } from "./queue/queue.js";
+import { JobScheduler } from "./queue/scheduler.js";
+import { WorkerRuntime } from "./queue/worker.js";
+import { CloudServer, createCloudServer } from "./server/api.js";
 import {
-  RolloutController,
-  RolloutPolicyRegistry,
-  RolloutAssignmentRouter,
-  RolloutEvaluator,
-  RolloutRepository,
-  type CreateRolloutParams,
-  type RolloutTelemetryEvent,
-  type RolloutOverrideRecord,
-} from "./evolution/rollout/index.js";
-import {
-  AnalyticsService,
-  MetricsRepository,
-  createAnalyticsService,
-  createMetricsRepository,
-  type CalculateEfficiencyParams,
-  type CalibrateEvaluationParams,
-  type MaterializeRolloutWindowParams,
-} from "./analytics/index.js";
+  EvidenceRepository,
+  ExportService,
+  ObservationRepository,
+  RetentionRepository,
+  RetentionService,
+  SessionRepository,
+  StoreObservationBatchConsumer,
+} from "./storage/index.js";
+import type { StoreObservationBatchPayload } from "./storage/index.js";
+import { type ObjectStore, createObjectStore } from "./storage/object-store.js";
 
 // Configuration & Validation
 export * from "./config.js";
@@ -264,22 +264,25 @@ export class CloudService {
             limit: 500,
           });
           if (queryResult.events.length > 0) {
-            const sessionEvents: NormalizedSessionEvent[] = queryResult.events.map((entity) => ({
-              eventId: entity.id,
-              sessionId: entity.sessionId,
-              timestamp: entity.timestamp,
-              type: entity.eventType as NormalizedSessionEvent["type"],
-              schemaVersion: entity.schemaVersion,
-              causalRef: {
-                causalSequence: entity.causalSequence,
-                parentId: entity.parentId ?? undefined,
-                rootId: entity.rootId ?? undefined,
-                turnIndex: entity.turnIndex ?? undefined,
-                stepIndex: entity.stepIndex ?? undefined,
-              },
-              redaction: entity.redaction ?? { isRedacted: false, rulesApplied: [] },
-              ...entity.payload,
-            } as unknown as NormalizedSessionEvent));
+            const sessionEvents: NormalizedSessionEvent[] = queryResult.events.map(
+              (entity) =>
+                ({
+                  eventId: entity.id,
+                  sessionId: entity.sessionId,
+                  timestamp: entity.timestamp,
+                  type: entity.eventType as NormalizedSessionEvent["type"],
+                  schemaVersion: entity.schemaVersion,
+                  causalRef: {
+                    causalSequence: entity.causalSequence,
+                    parentId: entity.parentId ?? undefined,
+                    rootId: entity.rootId ?? undefined,
+                    turnIndex: entity.turnIndex ?? undefined,
+                    stepIndex: entity.stepIndex ?? undefined,
+                  },
+                  redaction: entity.redaction ?? { isRedacted: false, rulesApplied: [] },
+                  ...entity.payload,
+                }) as unknown as NormalizedSessionEvent,
+            );
             await this.opportunityService.processSessionEvents(tenant, sessionEvents);
           }
         }
@@ -288,7 +291,9 @@ export class CloudService {
 
     this.worker.registerHandler("candidate.generate", async (job) => {
       const tenant = job.tenantContext;
-      const payload = job.payload as { opportunityId?: string; options?: Record<string, unknown> } | undefined;
+      const payload = job.payload as
+        | { opportunityId?: string; options?: Record<string, unknown> }
+        | undefined;
       if (payload?.opportunityId) {
         const opp = await this.opportunityService.getOpportunityById(tenant, payload.opportunityId);
         if (opp && opp.status === "eligible") {
@@ -303,9 +308,13 @@ export class CloudService {
     });
 
     this.worker.registerHandler("candidate.validate", async (job) => {
-      const payload = job.payload as { candidate?: unknown; revision?: unknown; target?: unknown } | undefined;
+      const payload = job.payload as
+        | { candidate?: unknown; revision?: unknown; target?: unknown }
+        | undefined;
       if (payload) {
-        const target = (payload.target ?? payload.revision ?? payload.candidate) as CandidateValidationTarget;
+        const target = (payload.target ??
+          payload.revision ??
+          payload.candidate) as CandidateValidationTarget;
         if (target) {
           await this.candidateValidationService.validateCandidate(target);
         }
@@ -314,13 +323,15 @@ export class CloudService {
 
     this.worker.registerHandler("candidate.replay", async (job) => {
       const tenant = job.tenantContext;
-      const payload = job.payload as {
-        candidate?: unknown;
-        target?: unknown;
-        evidence?: unknown;
-        evidenceSetId?: string;
-        options?: Record<string, unknown>;
-      } | undefined;
+      const payload = job.payload as
+        | {
+            candidate?: unknown;
+            target?: unknown;
+            evidence?: unknown;
+            evidenceSetId?: string;
+            options?: Record<string, unknown>;
+          }
+        | undefined;
       if (payload) {
         const candidate = (payload.target ?? payload.candidate) as CandidateTarget;
         if (candidate) {
@@ -336,18 +347,20 @@ export class CloudService {
 
     this.worker.registerHandler("candidate.evaluate", async (job) => {
       const payload = job.payload as CandidateEvaluationInput | undefined;
-      if (payload && payload.candidate && payload.validationResult) {
+      if (payload?.candidate && payload.validationResult) {
         await this.candidateEvaluationService.evaluateCandidate(payload);
       }
     });
     this.worker.registerHandler("candidate.publish", async (job) => {
       const tenant = job.tenantContext;
-      const payload = job.payload as {
-        candidate?: EvolutionCandidate;
-        evaluationResult?: EvaluationResult;
-        options?: PublishCandidateOptions;
-      } | undefined;
-      if (payload && payload.candidate && payload.evaluationResult) {
+      const payload = job.payload as
+        | {
+            candidate?: EvolutionCandidate;
+            evaluationResult?: EvaluationResult;
+            options?: PublishCandidateOptions;
+          }
+        | undefined;
+      if (payload?.candidate && payload.evaluationResult) {
         const toolVersion = await this.artifactRegistryService.publishCandidate(
           payload.candidate,
           payload.evaluationResult,
@@ -355,15 +368,12 @@ export class CloudService {
         );
         if (toolVersion) {
           try {
-            await this.rolloutController.createRolloutForPublishedVersion(
-              tenant,
-              {
-                toolId: payload.candidate.proposedTool.id,
-                version: toolVersion.version,
-                artifactDigest: toolVersion.artifact.artifactDigest,
-                manifestDigest: toolVersion.manifest.digest,
-              },
-            );
+            await this.rolloutController.createRolloutForPublishedVersion(tenant, {
+              toolId: payload.candidate.proposedTool.id,
+              version: toolVersion.version,
+              artifactDigest: toolVersion.artifact.artifactDigest,
+              manifestDigest: toolVersion.manifest.digest,
+            });
           } catch {
             // Rollout creation can be deferred or handled via queue
           }
@@ -375,10 +385,7 @@ export class CloudService {
       const tenant = job.tenantContext;
       const payload = job.payload as CreateRolloutParams | undefined;
       if (payload) {
-        await this.rolloutController.createRolloutForPublishedVersion(
-          tenant,
-          payload,
-        );
+        await this.rolloutController.createRolloutForPublishedVersion(tenant, payload);
       }
     });
 
@@ -500,6 +507,8 @@ export class CloudService {
 /**
  * Factory function creating a CloudService instance.
  */
-export function createCloudService(options: { config?: Partial<RawCloudConfig> } = {}): CloudService {
+export function createCloudService(
+  options: { config?: Partial<RawCloudConfig> } = {},
+): CloudService {
   return new CloudService(options);
 }

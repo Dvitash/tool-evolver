@@ -6,7 +6,7 @@ import { ObservationRepository } from "../../src/storage/repositories/observatio
 import { RetentionRepository } from "../../src/storage/repositories/retention-repository.js";
 import { SessionRepository } from "../../src/storage/repositories/session-repository.js";
 import { RetentionService } from "../../src/storage/retention-service.js";
-import { TenantContext } from "../../src/tenant.js";
+import type { TenantContext } from "../../src/tenant.js";
 
 describe("RetentionService", () => {
   const setup = async () => {
@@ -23,10 +23,10 @@ describe("RetentionService", () => {
       workspaceId: "ws-ret",
     };
 
-    await pool.query(
-      `INSERT INTO accounts (id, name) VALUES ($1, $2)`,
-      ["acc-ret", "Retention Corp"],
-    );
+    await pool.query(`INSERT INTO accounts (id, name) VALUES ($1, $2)`, [
+      "acc-ret",
+      "Retention Corp",
+    ]);
     await pool.query(
       `INSERT INTO workspaces (id, account_id, name, slug) VALUES ($1, $2, $3, $4)`,
       ["ws-ret", "acc-ret", "Retention Workspace", "ret"],

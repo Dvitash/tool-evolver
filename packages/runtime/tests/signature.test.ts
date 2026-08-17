@@ -1,20 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  InMemoryKeyStore,
   createDevelopmentKeyStore,
   generateBundleKeyPair,
   getDevelopmentKeyPair,
-  InMemoryKeyStore,
   signBundlePayload,
   verifyBundleSignature,
 } from "../src/bundle/signature.js";
 import type { BundleSignatureAlgorithm } from "../src/bundle/spec.js";
 
 describe("bundle signature and key store", () => {
-  const algorithms: BundleSignatureAlgorithm[] = [
-    "ed25519",
-    "ecdsa_p256_sha256",
-    "rsa_pss_sha256",
-  ];
+  const algorithms: BundleSignatureAlgorithm[] = ["ed25519", "ecdsa_p256_sha256", "rsa_pss_sha256"];
 
   for (const algo of algorithms) {
     it(`generates key pair, signs, and successfully verifies with algorithm: ${algo}`, async () => {
@@ -61,11 +57,15 @@ describe("bundle signature and key store", () => {
     ]);
 
     const bundleDigest = "1".repeat(64);
-    const sigData = signBundlePayload(bundleDigest, {}, {
-      keyId: keyPair.keyId,
-      privateKeyPem: keyPair.privateKeyPem,
-      algorithm: "ed25519",
-    });
+    const sigData = signBundlePayload(
+      bundleDigest,
+      {},
+      {
+        keyId: keyPair.keyId,
+        privateKeyPem: keyPair.privateKeyPem,
+        algorithm: "ed25519",
+      },
+    );
 
     // Verify with mismatched expected digest
     const verification = await verifyBundleSignature(sigData, keyStore, {
@@ -88,11 +88,15 @@ describe("bundle signature and key store", () => {
       },
     ]);
 
-    const sigData = signBundlePayload("3".repeat(64), {}, {
-      keyId: keyPair.keyId,
-      privateKeyPem: keyPair.privateKeyPem,
-      algorithm: "ed25519",
-    });
+    const sigData = signBundlePayload(
+      "3".repeat(64),
+      {},
+      {
+        keyId: keyPair.keyId,
+        privateKeyPem: keyPair.privateKeyPem,
+        algorithm: "ed25519",
+      },
+    );
 
     // Revoke key
     await keyStore.revokeKey(keyPair.keyId);
@@ -106,11 +110,15 @@ describe("bundle signature and key store", () => {
     const devKeyStore = createDevelopmentKeyStore();
     const devKey = getDevelopmentKeyPair();
 
-    const sigData = signBundlePayload("4".repeat(64), {}, {
-      keyId: devKey.keyId,
-      privateKeyPem: devKey.privateKeyPem,
-      algorithm: "ed25519",
-    });
+    const sigData = signBundlePayload(
+      "4".repeat(64),
+      {},
+      {
+        keyId: devKey.keyId,
+        privateKeyPem: devKey.privateKeyPem,
+        algorithm: "ed25519",
+      },
+    );
 
     // Allowed with allowDevKeys: true
     const verifyDevAllowed = await verifyBundleSignature(sigData, devKeyStore, {

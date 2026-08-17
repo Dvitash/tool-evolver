@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { UpdateComparator } from "../../../src/evolution/evaluation/update-comparator.js";
 import { STANDARD_EVALUATION_POLICY_V1 } from "../../../src/evolution/evaluation/policy.js";
+import { UpdateComparator } from "../../../src/evolution/evaluation/update-comparator.js";
 import {
   createMockActiveBaseline,
   createMockReplayResult,

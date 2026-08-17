@@ -124,7 +124,12 @@ sandbox = "docker"
       expect(plan.preconditionHash).toBeDefined();
 
       // 2. Verify config before apply (should be false)
-      const verifiedBefore = await verifyCodexMcpConfig(targetPath, gatewayUrl, DEFAULT_GATEWAY_SERVER_NAME, fsBridge);
+      const verifiedBefore = await verifyCodexMcpConfig(
+        targetPath,
+        gatewayUrl,
+        DEFAULT_GATEWAY_SERVER_NAME,
+        fsBridge,
+      );
       expect(verifiedBefore).toBe(false);
 
       // 3. Apply mutation
@@ -133,7 +138,12 @@ sandbox = "docker"
       expect(backup.originalContent).toBe(initialContent);
 
       // 4. Verify config after apply (should be true)
-      const verifiedAfter = await verifyCodexMcpConfig(targetPath, gatewayUrl, DEFAULT_GATEWAY_SERVER_NAME, fsBridge);
+      const verifiedAfter = await verifyCodexMcpConfig(
+        targetPath,
+        gatewayUrl,
+        DEFAULT_GATEWAY_SERVER_NAME,
+        fsBridge,
+      );
       expect(verifiedAfter).toBe(true);
 
       const updatedFile = await fsBridge.readFile(targetPath);
@@ -172,7 +182,12 @@ sandbox = "docker"
       const backup = await applyCodexMcpConfig(plan, fsBridge);
 
       // 3. Verify
-      const verified = await verifyCodexMcpConfig(targetPath, gatewayUrl, DEFAULT_GATEWAY_SERVER_NAME, fsBridge);
+      const verified = await verifyCodexMcpConfig(
+        targetPath,
+        gatewayUrl,
+        DEFAULT_GATEWAY_SERVER_NAME,
+        fsBridge,
+      );
       expect(verified).toBe(true);
 
       // 4. Rollback

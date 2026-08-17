@@ -180,9 +180,7 @@ export interface RateLimitOptions {
  * 3. Rate Limit Middleware.
  * Enforces sliding window rate limits per tenant/workspace/tool.
  */
-export function createRateLimitMiddleware(
-  options: RateLimitOptions = {},
-): CloudMcpMiddleware {
+export function createRateLimitMiddleware(options: RateLimitOptions = {}): CloudMcpMiddleware {
   const buckets = new Map<string, RateLimitBucket>();
   const defaultLimit = options.defaultRequestsPerMinute ?? 120;
 
@@ -221,9 +219,7 @@ export function createRateLimitMiddleware(
  * 4. Timeout Middleware.
  * Enforces execution timeout per tool or default.
  */
-export function createTimeoutMiddleware(
-  defaultTimeoutMs: number = 30000,
-): CloudMcpMiddleware {
+export function createTimeoutMiddleware(defaultTimeoutMs = 30000): CloudMcpMiddleware {
   return async (
     context: CloudMcpInvocationContext,
     tool: CloudMcpToolDefinition,
@@ -313,9 +309,11 @@ export interface InvocationAuditRecord {
  * 6. Audit & Privacy Classification Middleware.
  * Tracks metrics and classifies data privacy boundaries.
  */
-export function createAuditPrivacyMiddleware(options: {
-  onAuditRecord?: (record: InvocationAuditRecord) => void;
-} = {}): CloudMcpMiddleware {
+export function createAuditPrivacyMiddleware(
+  options: {
+    onAuditRecord?: (record: InvocationAuditRecord) => void;
+  } = {},
+): CloudMcpMiddleware {
   return async (
     context: CloudMcpInvocationContext,
     tool: CloudMcpToolDefinition,
@@ -345,7 +343,8 @@ export function createAuditPrivacyMiddleware(options: {
       return result;
     } catch (error: unknown) {
       const durationMs = Date.now() - startTime;
-      const errorCode = error instanceof McpInvocationError ? error.code : MCP_ERROR_CODES.INTERNAL_ERROR;
+      const errorCode =
+        error instanceof McpInvocationError ? error.code : MCP_ERROR_CODES.INTERNAL_ERROR;
 
       options.onAuditRecord?.({
         timestamp: new Date().toISOString(),

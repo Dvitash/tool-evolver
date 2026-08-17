@@ -295,7 +295,7 @@ export function createMockResolvedEvidenceSet(): ResolvedEvidenceSet {
 export function createMockCandidateRevision(
   sourceCode: string,
   manifestOverrides: Partial<ToolManifest> = {},
-  capabilitiesOverrides: Partial<CapabilityManifest> = {}
+  capabilitiesOverrides: Partial<CapabilityManifest> = {},
 ): CandidateRevision {
   const manifest: ToolManifest = {
     name: "fs_search_content",
@@ -381,7 +381,15 @@ export function createMockCandidateRevision(
       status: "pass",
       staticAnalysis: { valid: true, findings: [], syntaxErrors: [] },
       typeCheck: { valid: true, errors: [] },
-      testResults: { totalTests: 1, passed: 1, failed: 0, timeouts: 0, durationMs: 50, results: [], suiteId: "s1" },
+      testResults: {
+        totalTests: 1,
+        passed: 1,
+        failed: 0,
+        timeouts: 0,
+        durationMs: 50,
+        results: [],
+        suiteId: "s1",
+      },
       overallVerdict: "pass",
     },
     createdAt: "2026-08-17T10:00:00.000Z",

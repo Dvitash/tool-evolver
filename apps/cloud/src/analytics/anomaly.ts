@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { DatabasePool, Queryable } from "../db/client.js";
 import type { IMetricsRepository } from "./repositories/metrics-repository.js";
-import {
-  type AnomalyAlertRecord,
-  type AnomalySeverity,
-  type AnomalyType,
-  type TelemetryBatchRequest,
+import type {
+  AnomalyAlertRecord,
+  AnomalySeverity,
+  AnomalyType,
+  TelemetryBatchRequest,
 } from "./types.js";
 
 /**
@@ -144,7 +144,7 @@ export class AnomalyDetector {
         }
 
         // Check Invocation Before Activation
-        if (context.activeRolloutTimestamps && context.activeRolloutTimestamps[toolKey]) {
+        if (context.activeRolloutTimestamps?.[toolKey]) {
           const activatedAt = new Date(context.activeRolloutTimestamps[toolKey]).getTime();
           // Allow 5 second clock tolerance
           if (invStartedAt < activatedAt - 5000) {
@@ -168,7 +168,7 @@ export class AnomalyDetector {
         }
 
         // Check Revoked Tool Invocation (unless shadowRun)
-        if (context.revokedVersions && context.revokedVersions[toolKey]) {
+        if (context.revokedVersions?.[toolKey]) {
           if (!inv.resourceUsage?.shadowRun) {
             alerts.push(
               this.createAlert({

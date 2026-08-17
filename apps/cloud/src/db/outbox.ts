@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { DatabasePool, Queryable } from "./client.js";
+import type { DatabasePool, Queryable } from "./client.js";
 
 /**
  * Record representing an outbox event in the database.
@@ -133,10 +133,11 @@ export class OutboxRepository {
    */
   static async markPublished(db: Queryable, id: string): Promise<void> {
     const now = new Date().toISOString();
-    await db.query(
-      `UPDATE outbox SET status = $1, published_at = $2 WHERE id = $3`,
-      ["published", now, id],
-    );
+    await db.query(`UPDATE outbox SET status = $1, published_at = $2 WHERE id = $3`, [
+      "published",
+      now,
+      id,
+    ]);
   }
 
   /**

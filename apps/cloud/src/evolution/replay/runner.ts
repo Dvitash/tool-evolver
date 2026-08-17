@@ -1,7 +1,4 @@
-import type {
-  CapabilityManifest,
-  ToolManifest,
-} from "@tool-evolver/contracts";
+import type { CapabilityManifest, ToolManifest } from "@tool-evolver/contracts";
 import { ValidationSandbox } from "../testing/validation-sandbox.js";
 import { ReplayTraceComparator } from "./comparator.js";
 import type {
@@ -12,10 +9,7 @@ import type {
   ReplayScenario,
   ReplayScenarioExecutionResult,
 } from "./types.js";
-import {
-  DeterministicRandom,
-  VirtualToolBrokerClient,
-} from "./virtual-broker.js";
+import { DeterministicRandom, VirtualToolBrokerClient } from "./virtual-broker.js";
 
 /**
  * Executes candidate tools against historical replay scenarios in isolated sandboxes.
@@ -24,10 +18,12 @@ export class HistoricalReplayRunner {
   private readonly sandbox: ValidationSandbox;
   private readonly comparator: ReplayTraceComparator;
 
-  constructor(options: {
-    sandbox?: ValidationSandbox;
-    comparator?: ReplayTraceComparator;
-  } = {}) {
+  constructor(
+    options: {
+      sandbox?: ValidationSandbox;
+      comparator?: ReplayTraceComparator;
+    } = {},
+  ) {
     this.sandbox = options.sandbox ?? new ValidationSandbox();
     this.comparator = options.comparator ?? new ReplayTraceComparator();
   }
@@ -41,7 +37,7 @@ export class HistoricalReplayRunner {
     options: {
       seed?: number | string;
       timeoutMs?: number;
-    } = {}
+    } = {},
   ): Promise<ReplayScenarioExecutionResult> {
     const seed = options.seed ?? 42;
     const timeoutMs = options.timeoutMs ?? 5000;
@@ -62,7 +58,7 @@ export class HistoricalReplayRunner {
         timeoutMs,
         seed,
         capabilities,
-      }
+      },
     );
 
     const outputTokens = runResult.output
@@ -92,7 +88,7 @@ export class HistoricalReplayRunner {
   async runScenarios(
     candidate: CandidateTarget,
     scenarios: ReplayScenario[],
-    options: HistoricalReplayOptions = {}
+    options: HistoricalReplayOptions = {},
   ): Promise<HistoricalReplayResult> {
     const startTime = Date.now();
     const rng = new DeterministicRandom(options.seed ?? 42);

@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ToolRuntime, type ToolContext, defineTool } from "../../src/worker/index.js";
+import { describe, expect, it } from "vitest";
+import { type ToolContext, ToolRuntime, defineTool } from "../../src/worker/index.js";
 
 describe("ToolRuntime and DeterministicWorkerSandbox", () => {
   const runtime = new ToolRuntime({ mode: "in-process" });
@@ -90,7 +90,12 @@ describe("ToolRuntime and DeterministicWorkerSandbox", () => {
       name: "Bad Output Tool",
       version: "1.0.0",
       description: "Returns wrong shape",
-      parameters: { type: "object" as const, properties: {}, required: [], additionalProperties: true },
+      parameters: {
+        type: "object" as const,
+        properties: {},
+        required: [],
+        additionalProperties: true,
+      },
       outputSchema: {
         type: "object",
         properties: {
@@ -119,7 +124,12 @@ describe("ToolRuntime and DeterministicWorkerSandbox", () => {
       name: "Slow Tool",
       version: "1.0.0",
       description: "Hangs indefinitely",
-      parameters: { type: "object" as const, properties: {}, required: [], additionalProperties: true },
+      parameters: {
+        type: "object" as const,
+        properties: {},
+        required: [],
+        additionalProperties: true,
+      },
       digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
       createdAt: new Date().toISOString(),
     };
@@ -140,7 +150,12 @@ describe("ToolRuntime and DeterministicWorkerSandbox", () => {
       name: "Logging Tool",
       version: "1.0.0",
       description: "Logs messages and emits progress",
-      parameters: { type: "object" as const, properties: {}, required: [], additionalProperties: true },
+      parameters: {
+        type: "object" as const,
+        properties: {},
+        required: [],
+        additionalProperties: true,
+      },
       digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
       createdAt: new Date().toISOString(),
     };
@@ -168,7 +183,12 @@ describe("ToolRuntime and DeterministicWorkerSandbox", () => {
       name: "Brokered Tool",
       version: "1.0.0",
       description: "Uses broker clients",
-      parameters: { type: "object" as const, properties: {}, required: [], additionalProperties: true },
+      parameters: {
+        type: "object" as const,
+        properties: {},
+        required: [],
+        additionalProperties: true,
+      },
       digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
       createdAt: new Date().toISOString(),
     };
@@ -176,7 +196,11 @@ describe("ToolRuntime and DeterministicWorkerSandbox", () => {
     const fakeDb = new Map<string, string>();
     fakeDb.set("config.json", JSON.stringify({ mode: "production" }));
 
-    const brokerHandler = async (service: string, action: string, payload: Record<string, unknown>) => {
+    const brokerHandler = async (
+      service: string,
+      action: string,
+      payload: Record<string, unknown>,
+    ) => {
       if (service === "fs" && action === "readFile") {
         const p = payload.path as string;
         if (!fakeDb.has(p)) throw new Error("File not found");

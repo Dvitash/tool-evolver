@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CapabilityMapper } from "../../../src/evolution/generator/capability-mapper.js";
-import { WorkflowStep } from "../../../src/evolution/generator/types.js";
+import type { WorkflowStep } from "../../../src/evolution/generator/types.js";
 import { createMockEnvelope } from "./helpers.js";
 
 describe("CapabilityMapper", () => {

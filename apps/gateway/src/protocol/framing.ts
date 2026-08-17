@@ -30,7 +30,7 @@ export class McpFrameDecoder {
       this.buffer = "";
       throw new McpProtocolError(
         MCP_ERROR_CODES.OVERSIZED_REQUEST,
-        `Incoming payload buffer exceeded maximum limit of ${this.maxMessageSize} bytes`
+        `Incoming payload buffer exceeded maximum limit of ${this.maxMessageSize} bytes`,
       );
     }
 
@@ -51,10 +51,7 @@ export class McpFrameDecoder {
           // Incomplete headers
           if (this.buffer.length > 4096) {
             this.buffer = "";
-            throw new McpProtocolError(
-              JSON_RPC_ERROR_CODES.PARSE_ERROR,
-              "Malformed header block"
-            );
+            throw new McpProtocolError(JSON_RPC_ERROR_CODES.PARSE_ERROR, "Malformed header block");
           }
           break;
         }
@@ -65,7 +62,7 @@ export class McpFrameDecoder {
           this.buffer = "";
           throw new McpProtocolError(
             JSON_RPC_ERROR_CODES.PARSE_ERROR,
-            "Invalid Content-Length header"
+            "Invalid Content-Length header",
           );
         }
 
@@ -74,7 +71,7 @@ export class McpFrameDecoder {
           this.buffer = "";
           throw new McpProtocolError(
             MCP_ERROR_CODES.OVERSIZED_REQUEST,
-            `Content-Length ${contentLength} exceeds limit of ${this.maxMessageSize} bytes`
+            `Content-Length ${contentLength} exceeds limit of ${this.maxMessageSize} bytes`,
           );
         }
 
@@ -98,7 +95,7 @@ export class McpFrameDecoder {
           this.buffer = "";
           throw new McpProtocolError(
             MCP_ERROR_CODES.OVERSIZED_REQUEST,
-            `Unterminated message line exceeds limit of ${this.maxMessageSize} bytes`
+            `Unterminated message line exceeds limit of ${this.maxMessageSize} bytes`,
           );
         }
         break;
@@ -114,7 +111,7 @@ export class McpFrameDecoder {
       if (line.length > this.maxMessageSize) {
         throw new McpProtocolError(
           MCP_ERROR_CODES.OVERSIZED_REQUEST,
-          `Message length ${line.length} exceeds limit of ${this.maxMessageSize} bytes`
+          `Message length ${line.length} exceeds limit of ${this.maxMessageSize} bytes`,
         );
       }
 
@@ -141,14 +138,14 @@ export class McpFrameDecoder {
     } catch (err) {
       throw new McpProtocolError(
         JSON_RPC_ERROR_CODES.PARSE_ERROR,
-        `Malformed JSON: ${(err as Error).message}`
+        `Malformed JSON: ${(err as Error).message}`,
       );
     }
 
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       throw new McpProtocolError(
         JSON_RPC_ERROR_CODES.INVALID_REQUEST,
-        "JSON-RPC 2.0 payload must be a JSON object"
+        "JSON-RPC 2.0 payload must be a JSON object",
       );
     }
 
@@ -156,7 +153,7 @@ export class McpFrameDecoder {
     if (obj.jsonrpc !== "2.0") {
       throw new McpProtocolError(
         JSON_RPC_ERROR_CODES.INVALID_REQUEST,
-        "Invalid or missing 'jsonrpc': '2.0' attribute"
+        "Invalid or missing 'jsonrpc': '2.0' attribute",
       );
     }
 
@@ -169,7 +166,7 @@ export class McpFrameDecoder {
     if (!hasMethod && !hasResult && !hasError) {
       throw new McpProtocolError(
         JSON_RPC_ERROR_CODES.INVALID_REQUEST,
-        "Message must contain either 'method', 'result', or 'error'"
+        "Message must contain either 'method', 'result', or 'error'",
       );
     }
 
@@ -178,7 +175,7 @@ export class McpFrameDecoder {
       if (typeof id !== "string" && typeof id !== "number" && id !== null) {
         throw new McpProtocolError(
           JSON_RPC_ERROR_CODES.INVALID_REQUEST,
-          "Message 'id' must be a string, number, or null"
+          "Message 'id' must be a string, number, or null",
         );
       }
     }

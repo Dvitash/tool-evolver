@@ -1,13 +1,13 @@
 import {
-  CapabilityEnvelope,
-  CapabilityManifest,
+  type CapabilityEnvelope,
+  type CapabilityManifest,
   CapabilityManifestSchema,
-  CommandCapability,
-  FsCapability,
-  NetCapability,
-  SecretCapability,
+  type CommandCapability,
+  type FsCapability,
+  type NetCapability,
+  type SecretCapability,
 } from "@tool-evolver/contracts";
-import { WorkflowStep } from "./types.js";
+import type { WorkflowStep } from "./types.js";
 
 /**
  * Maps required broker operations and workflow steps to minimal CapabilityManifests.
@@ -18,7 +18,7 @@ export class CapabilityMapper {
    */
   mapRequiredCapabilities(
     steps: WorkflowStep[],
-    envelope?: CapabilityEnvelope
+    envelope?: CapabilityEnvelope,
   ): CapabilityManifest {
     const fsCap: FsCapability = {
       readPaths: [],
@@ -116,7 +116,10 @@ export class CapabilityMapper {
               netCap.allowedHosts.push(parsed.hostname);
             }
             const protocol = parsed.protocol.replace(":", "") as "http" | "https";
-            if (["http", "https"].includes(protocol) && !netCap.allowedProtocols.includes(protocol)) {
+            if (
+              ["http", "https"].includes(protocol) &&
+              !netCap.allowedProtocols.includes(protocol)
+            ) {
               netCap.allowedProtocols.push(protocol);
             }
             if (parsed.port) {
@@ -187,7 +190,7 @@ export class CapabilityMapper {
         }
         if (envelope.net.allowedDomains && envelope.net.allowedDomains.length > 0) {
           netCap.allowedDomains = netCap.allowedDomains.filter((d) =>
-            envelope.net.allowedDomains.includes(d)
+            envelope.net.allowedDomains.includes(d),
           );
         }
         if (envelope.net.denyPrivateRanges !== undefined) {
@@ -201,7 +204,7 @@ export class CapabilityMapper {
         }
         if (envelope.command.forbiddenPatterns && envelope.command.forbiddenPatterns.length > 0) {
           cmdCap.forbiddenPatterns = Array.from(
-            new Set([...cmdCap.forbiddenPatterns, ...envelope.command.forbiddenPatterns])
+            new Set([...cmdCap.forbiddenPatterns, ...envelope.command.forbiddenPatterns]),
           );
         }
       }

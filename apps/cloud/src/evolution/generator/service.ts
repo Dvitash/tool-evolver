@@ -1,20 +1,20 @@
 import { randomUUID } from "node:crypto";
 import {
-  CandidateState,
-  EvolutionCandidate,
+  type CandidateState,
+  type EvolutionCandidate,
   EvolutionCandidateSchema,
-  ToolManifest,
+  type ToolManifest,
   hashCanonical,
 } from "@tool-evolver/contracts";
-import { TenantContext } from "../../tenant.js";
-import { OpportunityDetection } from "../opportunity/types.js";
+import type { TenantContext } from "../../tenant.js";
+import type { OpportunityDetection } from "../opportunity/types.js";
 import { CapabilityMapper } from "./capability-mapper.js";
 import { CodeGenerator } from "./code-generator.js";
 import { CandidatePlanner } from "./planner.js";
 import { RepairOrchestrator } from "./repair-orchestrator.js";
 import { SchemaGenerator } from "./schema-generator.js";
 import { DeterministicSelfReviewer } from "./self-reviewer.js";
-import {
+import type {
   CandidateGenerationOptions,
   CandidateRevision,
   GeneratedArtifactSet,
@@ -44,17 +44,24 @@ export class CandidateGenerationService {
   private readonly capabilityMapper: CapabilityMapper;
   private readonly workflowGenerator: WorkflowGenerator;
 
-  private readonly candidateStore: Map<string, { candidate: EvolutionCandidate; tenant: TenantContext }> = new Map();
+  private readonly candidateStore: Map<
+    string,
+    { candidate: EvolutionCandidate; tenant: TenantContext }
+  > = new Map();
   private readonly revisionStore: Map<string, CandidateRevision[]> = new Map();
 
   constructor(options: CandidateGenerationServiceOptions = {}) {
     this.schemaGenerator = options.schemaGenerator ?? new SchemaGenerator();
     this.capabilityMapper = options.capabilityMapper ?? new CapabilityMapper();
-    this.workflowGenerator = options.workflowGenerator ?? new WorkflowGenerator(this.schemaGenerator);
-    this.planner = options.planner ?? new CandidatePlanner(this.schemaGenerator, this.capabilityMapper);
-    this.codeGenerator = options.codeGenerator ?? new CodeGenerator(this.schemaGenerator, this.workflowGenerator);
+    this.workflowGenerator =
+      options.workflowGenerator ?? new WorkflowGenerator(this.schemaGenerator);
+    this.planner =
+      options.planner ?? new CandidatePlanner(this.schemaGenerator, this.capabilityMapper);
+    this.codeGenerator =
+      options.codeGenerator ?? new CodeGenerator(this.schemaGenerator, this.workflowGenerator);
     this.selfReviewer = options.selfReviewer ?? new DeterministicSelfReviewer();
-    this.repairOrchestrator = options.repairOrchestrator ?? new RepairOrchestrator(this.selfReviewer);
+    this.repairOrchestrator =
+      options.repairOrchestrator ?? new RepairOrchestrator(this.selfReviewer);
   }
 
   /**
@@ -63,7 +70,7 @@ export class CandidateGenerationService {
   async generateCandidate(
     tenant: TenantContext,
     opportunity: OpportunityDetection,
-    options: CandidateGenerationOptions = {}
+    options: CandidateGenerationOptions = {},
   ): Promise<GenerationResult> {
     const candidateId = `cand-${randomUUID()}`;
     const timestamp = new Date().toISOString();
@@ -127,7 +134,7 @@ export class CandidateGenerationService {
     const repairResult = this.repairOrchestrator.orchestrate(
       initialArtifacts,
       candidateId,
-      options
+      options,
     );
 
     const activeRevision = repairResult.activeRevision;
@@ -140,7 +147,8 @@ export class CandidateGenerationService {
       state: finalState,
       trigger: {
         reason: opportunity.triggerReason,
-        evidenceEventIds: opportunity.evidenceEventIds.length > 0 ? opportunity.evidenceEventIds : [randomUUID()],
+        evidenceEventIds:
+          opportunity.evidenceEventIds.length > 0 ? opportunity.evidenceEventIds : [randomUUID()],
         sessionOccurrences: opportunity.occurrenceCount,
         detectedAt: opportunity.createdAt || timestamp,
         patternFrequency: opportunity.occurrenceCount,
@@ -173,11 +181,14 @@ export class CandidateGenerationService {
    */
   async getCandidateById(
     tenant: TenantContext,
-    candidateId: string
+    candidateId: string,
   ): Promise<EvolutionCandidate | null> {
     const entry = this.candidateStore.get(candidateId);
     if (!entry) return null;
-    if (entry.tenant.accountId !== tenant.accountId || entry.tenant.workspaceId !== tenant.workspaceId) {
+    if (
+      entry.tenant.accountId !== tenant.accountId ||
+      entry.tenant.workspaceId !== tenant.workspaceId
+    ) {
       return null;
     }
     return entry.candidate;
@@ -188,11 +199,14 @@ export class CandidateGenerationService {
    */
   async getRevisionsByCandidateId(
     tenant: TenantContext,
-    candidateId: string
+    candidateId: string,
   ): Promise<CandidateRevision[]> {
     const entry = this.candidateStore.get(candidateId);
     if (!entry) return [];
-    if (entry.tenant.accountId !== tenant.accountId || entry.tenant.workspaceId !== tenant.workspaceId) {
+    if (
+      entry.tenant.accountId !== tenant.accountId ||
+      entry.tenant.workspaceId !== tenant.workspaceId
+    ) {
       return [];
     }
     return this.revisionStore.get(candidateId) ?? [];
@@ -203,7 +217,7 @@ export class CandidateGenerationService {
    */
   async getActiveRevision(
     tenant: TenantContext,
-    candidateId: string
+    candidateId: string,
   ): Promise<CandidateRevision | null> {
     const revisions = await this.getRevisionsByCandidateId(tenant, candidateId);
     if (revisions.length === 0) return null;
@@ -215,11 +229,14 @@ export class CandidateGenerationService {
    */
   async listCandidates(
     tenant: TenantContext,
-    filter?: { state?: CandidateState }
+    filter?: { state?: CandidateState },
   ): Promise<EvolutionCandidate[]> {
     const result: EvolutionCandidate[] = [];
     for (const entry of this.candidateStore.values()) {
-      if (entry.tenant.accountId === tenant.accountId && entry.tenant.workspaceId === tenant.workspaceId) {
+      if (
+        entry.tenant.accountId === tenant.accountId &&
+        entry.tenant.workspaceId === tenant.workspaceId
+      ) {
         if (!filter?.state || entry.candidate.state === filter.state) {
           result.push(entry.candidate);
         }
@@ -241,7 +258,7 @@ export class CandidateGenerationService {
  * Factory function creating a CandidateGenerationService instance.
  */
 export function createCandidateGenerationService(
-  options: CandidateGenerationServiceOptions = {}
+  options: CandidateGenerationServiceOptions = {},
 ): CandidateGenerationService {
   return new CandidateGenerationService(options);
 }

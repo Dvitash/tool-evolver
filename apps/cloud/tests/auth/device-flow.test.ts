@@ -1,12 +1,9 @@
 import { describe, expect, it } from "vitest";
-import {
-  AuthService,
-  createAuthService,
-} from "../../src/auth/index.js";
-import { CloudServer, createCloudServer } from "../../src/server/index.js";
+import { AuthService, createAuthService } from "../../src/auth/index.js";
 import { loadConfig } from "../../src/config.js";
 import { MemoryDatabasePool } from "../../src/db/index.js";
 import { MemoryDurableQueue } from "../../src/queue/index.js";
+import { CloudServer, createCloudServer } from "../../src/server/index.js";
 import { MemoryObjectStore } from "../../src/storage/index.js";
 
 describe("RFC 8628 Device Authorization Flow Engine", () => {
@@ -269,7 +266,9 @@ describe("End-to-End Device Auth HTTP Routes", () => {
       expect(pollPendingData.error).toBe("authorization_pending");
 
       // 3. User verification lookup (GET /v1/auth/device/verify?user_code=...)
-      const verifyRes = await fetch(`${baseUrl}/v1/auth/device/verify?user_code=${initData.userCode}`);
+      const verifyRes = await fetch(
+        `${baseUrl}/v1/auth/device/verify?user_code=${initData.userCode}`,
+      );
       expect(verifyRes.status).toBe(200);
       const verifyData = (await verifyRes.json()) as { userCode: string; status: string };
       expect(verifyData.userCode).toBe(initData.userCode);

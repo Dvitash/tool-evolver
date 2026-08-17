@@ -1,7 +1,7 @@
+import type { BrokerRequestHandlerFn, BrokeredFetchResponse } from "../worker/sdk.js";
+import type { CommandExecuteResult } from "./cmd-broker.js";
 import type { FileStatResult, ReadFileResult } from "./fs-broker.js";
 import type { NetResponseResult } from "./net-broker.js";
-import type { CommandExecuteResult } from "./cmd-broker.js";
-import type { BrokeredFetchResponse, BrokerRequestHandlerFn } from "../worker/sdk.js";
 
 export type { BrokeredFetchResponse } from "../worker/sdk.js";
 
@@ -37,11 +37,16 @@ export class FsClient {
   }
 
   async exists(filePath: string): Promise<boolean> {
-    const res = (await this.requestHandler("fs", "exists", { path: filePath })) as { exists: boolean };
+    const res = (await this.requestHandler("fs", "exists", { path: filePath })) as {
+      exists: boolean;
+    };
     return res.exists;
   }
 
-  async readFile(filePath: string, encoding: "utf-8" | "base64" | "buffer" = "utf-8"): Promise<string | Uint8Array> {
+  async readFile(
+    filePath: string,
+    encoding: "utf-8" | "base64" | "buffer" = "utf-8",
+  ): Promise<string | Uint8Array> {
     const wireEncoding = encoding === "buffer" ? "base64" : encoding;
     const res = (await this.requestHandler("fs", "readFile", {
       path: filePath,
@@ -56,7 +61,11 @@ export class FsClient {
     return res.content;
   }
 
-  async writeFile(filePath: string, content: string | Uint8Array, options: FsWriteOptions = {}): Promise<void> {
+  async writeFile(
+    filePath: string,
+    content: string | Uint8Array,
+    options: FsWriteOptions = {},
+  ): Promise<void> {
     let serialized: string;
     let encoding: "utf-8" | "base64";
 
@@ -64,9 +73,10 @@ export class FsClient {
       serialized = content;
       encoding = options.encoding ?? "utf-8";
     } else {
-      serialized = typeof Buffer !== "undefined"
-        ? Buffer.from(content).toString("base64")
-        : btoa(String.fromCharCode(...content));
+      serialized =
+        typeof Buffer !== "undefined"
+          ? Buffer.from(content).toString("base64")
+          : btoa(String.fromCharCode(...content));
       encoding = "base64";
     }
 
@@ -78,7 +88,11 @@ export class FsClient {
     });
   }
 
-  async appendFile(filePath: string, content: string | Uint8Array, options: { encoding?: "utf-8" | "base64" } = {}): Promise<void> {
+  async appendFile(
+    filePath: string,
+    content: string | Uint8Array,
+    options: { encoding?: "utf-8" | "base64" } = {},
+  ): Promise<void> {
     let serialized: string;
     let encoding: "utf-8" | "base64";
 
@@ -86,9 +100,10 @@ export class FsClient {
       serialized = content;
       encoding = options.encoding ?? "utf-8";
     } else {
-      serialized = typeof Buffer !== "undefined"
-        ? Buffer.from(content).toString("base64")
-        : btoa(String.fromCharCode(...content));
+      serialized =
+        typeof Buffer !== "undefined"
+          ? Buffer.from(content).toString("base64")
+          : btoa(String.fromCharCode(...content));
       encoding = "base64";
     }
 
@@ -112,21 +127,24 @@ export class FsClient {
   }
 
   async createDirectory(dirPath: string, options: { recursive?: boolean } = {}): Promise<void> {
-    await this.requestHandler("fs", "createDirectory", { path: dirPath, recursive: options.recursive });
+    await this.requestHandler("fs", "createDirectory", {
+      path: dirPath,
+      recursive: options.recursive,
+    });
   }
 
   async mkdir(dirPath: string, options: { recursive?: boolean } = {}): Promise<void> {
     await this.createDirectory(dirPath, options);
   }
 
-  async listDirectory(dirPath: string = ".", options: { recursive?: boolean } = {}): Promise<string[]> {
+  async listDirectory(dirPath = ".", options: { recursive?: boolean } = {}): Promise<string[]> {
     return (await this.requestHandler("fs", "listDirectory", {
       path: dirPath,
       recursive: options.recursive,
     })) as string[];
   }
 
-  async listDir(dirPath: string = ".", options: { recursive?: boolean } = {}): Promise<string[]> {
+  async listDir(dirPath = ".", options: { recursive?: boolean } = {}): Promise<string[]> {
     return this.listDirectory(dirPath, options);
   }
 }
@@ -155,9 +173,10 @@ export class NetClient {
       text: async () => raw.body,
       json: async <T = unknown>() => JSON.parse(raw.body) as T,
       arrayBuffer: async () => {
-        const buf = typeof Buffer !== "undefined"
-          ? Buffer.from(raw.body, "utf-8")
-          : new TextEncoder().encode(raw.body);
+        const buf =
+          typeof Buffer !== "undefined"
+            ? Buffer.from(raw.body, "utf-8")
+            : new TextEncoder().encode(raw.body);
         return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
       },
       bytes: async () => {
@@ -176,20 +195,38 @@ export class NetClient {
     return this.request(url, { method: "GET", headers });
   }
 
-  async post(url: string, body?: string | unknown, headers: Record<string, string> = {}): Promise<BrokeredFetchResponse> {
-    const serializedBody = typeof body === "string" ? body : body !== undefined ? JSON.stringify(body) : undefined;
-    const finalHeaders = typeof body === "object" && body !== null && !headers["content-type"] && !headers["Content-Type"]
-      ? { ...headers, "Content-Type": "application/json" }
-      : headers;
+  async post(
+    url: string,
+    body?: string | unknown,
+    headers: Record<string, string> = {},
+  ): Promise<BrokeredFetchResponse> {
+    const serializedBody =
+      typeof body === "string" ? body : body !== undefined ? JSON.stringify(body) : undefined;
+    const finalHeaders =
+      typeof body === "object" &&
+      body !== null &&
+      !headers["content-type"] &&
+      !headers["Content-Type"]
+        ? { ...headers, "Content-Type": "application/json" }
+        : headers;
 
     return this.request(url, { method: "POST", headers: finalHeaders, body: serializedBody });
   }
 
-  async put(url: string, body?: string | unknown, headers: Record<string, string> = {}): Promise<BrokeredFetchResponse> {
-    const serializedBody = typeof body === "string" ? body : body !== undefined ? JSON.stringify(body) : undefined;
-    const finalHeaders = typeof body === "object" && body !== null && !headers["content-type"] && !headers["Content-Type"]
-      ? { ...headers, "Content-Type": "application/json" }
-      : headers;
+  async put(
+    url: string,
+    body?: string | unknown,
+    headers: Record<string, string> = {},
+  ): Promise<BrokeredFetchResponse> {
+    const serializedBody =
+      typeof body === "string" ? body : body !== undefined ? JSON.stringify(body) : undefined;
+    const finalHeaders =
+      typeof body === "object" &&
+      body !== null &&
+      !headers["content-type"] &&
+      !headers["Content-Type"]
+        ? { ...headers, "Content-Type": "application/json" }
+        : headers;
 
     return this.request(url, { method: "PUT", headers: finalHeaders, body: serializedBody });
   }
@@ -205,7 +242,11 @@ export class NetClient {
 export class CommandClient {
   constructor(private readonly requestHandler: BrokerRequestHandlerFn) {}
 
-  async execute(executable: string, args: string[] = [], options: CommandExecuteOptions = {}): Promise<CommandExecuteResult> {
+  async execute(
+    executable: string,
+    args: string[] = [],
+    options: CommandExecuteOptions = {},
+  ): Promise<CommandExecuteResult> {
     return (await this.requestHandler("cmd", "execute", {
       executable,
       args,
@@ -213,7 +254,11 @@ export class CommandClient {
     })) as CommandExecuteResult;
   }
 
-  async exec(command: string, args: string[] = [], options: CommandExecuteOptions = {}): Promise<CommandExecuteResult> {
+  async exec(
+    command: string,
+    args: string[] = [],
+    options: CommandExecuteOptions = {},
+  ): Promise<CommandExecuteResult> {
     return this.execute(command, args, options);
   }
 }
@@ -225,7 +270,9 @@ export class SecretClient {
   constructor(private readonly requestHandler: BrokerRequestHandlerFn) {}
 
   async getSecret(name: string): Promise<string | null> {
-    const res = (await this.requestHandler("secret", "getSecret", { name })) as { secret: string | null };
+    const res = (await this.requestHandler("secret", "getSecret", { name })) as {
+      secret: string | null;
+    };
     return res.secret;
   }
 }

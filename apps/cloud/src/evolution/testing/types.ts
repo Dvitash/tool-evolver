@@ -9,11 +9,7 @@ import type { CandidateRevision } from "../generator/types.js";
 /**
  * Validation verdict status for a candidate evolution revision.
  */
-export type ValidationStatus =
-  | "pass"
-  | "repairable_fail"
-  | "terminal_fail"
-  | "infrastructure_fail";
+export type ValidationStatus = "pass" | "repairable_fail" | "terminal_fail" | "infrastructure_fail";
 
 /**
  * Category of a static analysis finding.

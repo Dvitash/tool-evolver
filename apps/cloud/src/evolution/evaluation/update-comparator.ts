@@ -3,8 +3,8 @@ import type {
   ToolManifest,
   ToolParameterSchema,
 } from "@tool-evolver/contracts";
-import type { CandidateValidationResult } from "../testing/types.js";
 import type { HistoricalReplayResult } from "../replay/types.js";
+import type { CandidateValidationResult } from "../testing/types.js";
 import type {
   ActiveToolBaseline,
   EvaluationPolicy,
@@ -50,7 +50,7 @@ export class UpdateComparator {
     const schemaRegressions = this.checkSchemaCompatibility(
       candidateManifest,
       baseline.manifest,
-      allowBreakingChanges || policy.regressionThresholds.allowBreakingSchemaChanges
+      allowBreakingChanges || policy.regressionThresholds.allowBreakingSchemaChanges,
     );
     findings.push(...schemaRegressions.findings);
     if (schemaRegressions.isBreaking) {
@@ -62,7 +62,7 @@ export class UpdateComparator {
       candidateValidation,
       candidateReplay,
       baseline,
-      policy.regressionThresholds.maxAllowedLatencyRegressionPercent
+      policy.regressionThresholds.maxAllowedLatencyRegressionPercent,
     );
     findings.push(...latencyRegressions);
 
@@ -70,7 +70,7 @@ export class UpdateComparator {
     const tokenRegressions = this.checkTokenRegression(
       candidateReplay,
       baseline,
-      policy.regressionThresholds.maxAllowedTokenRegressionPercent
+      policy.regressionThresholds.maxAllowedTokenRegressionPercent,
     );
     findings.push(...tokenRegressions);
 
@@ -78,21 +78,18 @@ export class UpdateComparator {
     const replayRegressions = this.checkReplayInvariantPreservation(
       candidateReplay,
       baseline,
-      policy.regressionThresholds.requireStrictInvariantPreservation
+      policy.regressionThresholds.requireStrictInvariantPreservation,
     );
     findings.push(...replayRegressions);
 
     // 5. Test Coverage Regression Check
-    const coverageRegressions = this.checkCoverageRegression(
-      candidateValidation,
-      baseline
-    );
+    const coverageRegressions = this.checkCoverageRegression(candidateValidation, baseline);
     findings.push(...coverageRegressions);
 
     // 6. Capability Expansion Check
     const capabilityRegressions = this.checkCapabilityEscalation(
       context.candidateCapabilities ?? candidateManifest.capabilities,
-      baseline.capabilities ?? baseline.manifest.capabilities
+      baseline.capabilities ?? baseline.manifest.capabilities,
     );
     findings.push(...capabilityRegressions);
 
@@ -127,13 +124,19 @@ export class UpdateComparator {
   private checkSchemaCompatibility(
     candidate: ToolManifest,
     baseline: ToolManifest,
-    allowBreaking: boolean
+    allowBreaking: boolean,
   ): { findings: UpdateRegressionFinding[]; isBreaking: boolean } {
     const findings: UpdateRegressionFinding[] = [];
     let isBreaking = false;
 
-    const baseProperties = (baseline.parameters?.properties ?? {}) as Record<string, Record<string, unknown>>;
-    const candProperties = (candidate.parameters?.properties ?? {}) as Record<string, Record<string, unknown>>;
+    const baseProperties = (baseline.parameters?.properties ?? {}) as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const candProperties = (candidate.parameters?.properties ?? {}) as Record<
+      string,
+      Record<string, unknown>
+    >;
     const candRequired = new Set(candidate.parameters?.required ?? []);
 
     // Check if any previously existing parameters were removed
@@ -174,17 +177,14 @@ export class UpdateComparator {
     candidateVal?: CandidateValidationResult,
     candidateRep?: HistoricalReplayResult,
     baseline?: ActiveToolBaseline,
-    maxAllowedRegressionPercent = 20
+    maxAllowedRegressionPercent = 20,
   ): UpdateRegressionFinding[] {
     const findings: UpdateRegressionFinding[] = [];
 
     const baselineLatency =
-      baseline?.metrics?.latencyMs ??
-      baseline?.validationReport?.testReport?.durationMs;
+      baseline?.metrics?.latencyMs ?? baseline?.validationReport?.testReport?.durationMs;
 
-    const candidateLatency =
-      candidateVal?.testReport?.durationMs ??
-      candidateRep?.durationMs;
+    const candidateLatency = candidateVal?.testReport?.durationMs ?? candidateRep?.durationMs;
     if (baselineLatency !== undefined && candidateLatency !== undefined && baselineLatency > 0) {
       const percentDiff = ((candidateLatency - baselineLatency) / baselineLatency) * 100;
       if (percentDiff > maxAllowedRegressionPercent) {
@@ -208,16 +208,14 @@ export class UpdateComparator {
   private checkTokenRegression(
     candidateRep?: HistoricalReplayResult,
     baseline?: ActiveToolBaseline,
-    maxAllowedRegressionPercent = 15
+    maxAllowedRegressionPercent = 15,
   ): UpdateRegressionFinding[] {
     const findings: UpdateRegressionFinding[] = [];
 
     const baselineTokens =
-      baseline?.metrics?.tokenUsage ??
-      baseline?.replayReport?.overallMetrics?.candidateStepCount;
+      baseline?.metrics?.tokenUsage ?? baseline?.replayReport?.overallMetrics?.candidateStepCount;
 
-    const candidateTokens =
-      candidateRep?.overallMetrics?.candidateStepCount;
+    const candidateTokens = candidateRep?.overallMetrics?.candidateStepCount;
 
     if (baselineTokens !== undefined && candidateTokens !== undefined && baselineTokens > 0) {
       const percentDiff = ((candidateTokens - baselineTokens) / baselineTokens) * 100;
@@ -242,7 +240,7 @@ export class UpdateComparator {
   private checkReplayInvariantPreservation(
     candidateRep?: HistoricalReplayResult,
     baseline?: ActiveToolBaseline,
-    strictPreservation = true
+    strictPreservation = true,
   ): UpdateRegressionFinding[] {
     const findings: UpdateRegressionFinding[] = [];
 
@@ -280,7 +278,7 @@ export class UpdateComparator {
    */
   private checkCoverageRegression(
     candidateVal?: CandidateValidationResult,
-    baseline?: ActiveToolBaseline
+    baseline?: ActiveToolBaseline,
   ): UpdateRegressionFinding[] {
     const findings: UpdateRegressionFinding[] = [];
 
@@ -309,7 +307,7 @@ export class UpdateComparator {
    */
   private checkCapabilityEscalation(
     candidateCap?: CapabilityManifest,
-    baselineCap?: CapabilityManifest
+    baselineCap?: CapabilityManifest,
   ): UpdateRegressionFinding[] {
     const findings: UpdateRegressionFinding[] = [];
 
@@ -326,7 +324,8 @@ export class UpdateComparator {
         severity: "warning",
         baselineValue: "none",
         candidateValue: "secrets_requested",
-        message: "Privilege escalation: Candidate requests secret access capabilities not requested by prior baseline.",
+        message:
+          "Privilege escalation: Candidate requests secret access capabilities not requested by prior baseline.",
       });
     }
 
@@ -339,7 +338,8 @@ export class UpdateComparator {
         severity: "warning",
         baselineValue: "none",
         candidateValue: "commands_requested",
-        message: "Privilege escalation: Candidate requests command execution capabilities not present in prior baseline.",
+        message:
+          "Privilege escalation: Candidate requests command execution capabilities not present in prior baseline.",
       });
     }
 

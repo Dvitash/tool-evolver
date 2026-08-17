@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { type AuditActor } from "@tool-evolver/contracts";
+import type { AuditActor } from "@tool-evolver/contracts";
 import type { LocalDatabaseConnection } from "@tool-evolver/db";
 import { inspectLockFile } from "../lock.js";
 import type { AuditTrailManager } from "./audit-trail.js";
@@ -59,7 +59,9 @@ export class CircuitBreaker {
   async execute<T>(op: () => Promise<T>): Promise<T> {
     const currentState = this.getState();
     if (currentState === "OPEN") {
-      throw new Error(`Circuit breaker is OPEN (failed ${this.failureCount} times, cooldown active)`);
+      throw new Error(
+        `Circuit breaker is OPEN (failed ${this.failureCount} times, cooldown active)`,
+      );
     }
 
     try {
@@ -206,7 +208,7 @@ export class RecoveryController {
           throw new Error(`Retry budget exhausted for operation '${operationName}'`);
         }
 
-        let delayMs = policy.initialDelayMs * Math.pow(policy.backoffMultiplier, attempt - 1);
+        let delayMs = policy.initialDelayMs * policy.backoffMultiplier ** (attempt - 1);
         delayMs = Math.min(delayMs, policy.maxDelayMs);
 
         if (policy.jitter) {
@@ -393,11 +395,10 @@ export class RecoveryController {
     }
 
     if (this.killSwitches) {
-      void this.killSwitches.disableTool(
-        toolId,
-        `Quarantined: ${reason}`,
-        { type: "daemon", id: "recovery-controller" },
-      );
+      void this.killSwitches.disableTool(toolId, `Quarantined: ${reason}`, {
+        type: "daemon",
+        id: "recovery-controller",
+      });
     }
   }
 

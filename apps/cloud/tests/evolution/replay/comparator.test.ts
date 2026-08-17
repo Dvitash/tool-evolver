@@ -129,7 +129,9 @@ describe("ReplayTraceComparator", () => {
 
       expect(result.status).toBe("terminal_divergence");
       expect(result.passed).toBe(false);
-      expect(result.divergenceFindings.some((f) => f.category === "unauthorized_side_effect")).toBe(true);
+      expect(result.divergenceFindings.some((f) => f.category === "unauthorized_side_effect")).toBe(
+        true,
+      );
     });
 
     it("detects unauthorized file mutations in state snapshot", async () => {
@@ -215,7 +217,9 @@ describe("ReplayTraceComparator", () => {
 
       const resFailing = await comparator.compareTrace(negScenario, traceFailing);
       expect(resFailing.status).toBe("repairable_divergence");
-      expect(resFailing.divergenceFindings.some((f) => f.category === "unhandled_negative_case")).toBe(true);
+      expect(
+        resFailing.divergenceFindings.some((f) => f.category === "unhandled_negative_case"),
+      ).toBe(true);
     });
   });
 

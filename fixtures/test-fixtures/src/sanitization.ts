@@ -121,7 +121,8 @@ const SECRET_PATTERNS: Array<{
   // PEM Private Keys
   {
     name: "pem_private_key",
-    pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/g,
+    pattern:
+      /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/g,
     replacement: "<REDACTED_PRIVATE_KEY>",
   },
   // Bearer Token headers
@@ -177,9 +178,13 @@ const USER_PATH_PATTERNS: Array<{
   // Windows user profile: C:\Users\username\...
   {
     name: "windows_user_home",
-    pattern: /[a-zA-Z]:\\(?:Users|Documents and Settings)\\(?!sandbox\b)[a-zA-Z0-9._-]+(\\[^\s"'`\\]*)?/g,
+    pattern:
+      /[a-zA-Z]:\\(?:Users|Documents and Settings)\\(?!sandbox\b)[a-zA-Z0-9._-]+(\\[^\s"'`\\]*)?/g,
     normalizeReplacement: (m) =>
-      m.replace(/[a-zA-Z]:\\(?:Users|Documents and Settings)\\[a-zA-Z0-9._-]+/, "C:\\Users\\sandbox"),
+      m.replace(
+        /[a-zA-Z]:\\(?:Users|Documents and Settings)\\[a-zA-Z0-9._-]+/,
+        "C:\\Users\\sandbox",
+      ),
     genericReplacement: "<REDACTED_USER_PATH>",
   },
   // Tilde path
@@ -200,25 +205,29 @@ const PRIVATE_IP_PATTERNS: Array<{
   // 10.0.0.0/8
   {
     name: "private_ip_10",
-    pattern: /\b10\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b/g,
+    pattern:
+      /\b10\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b/g,
     replacement: "<REDACTED_PRIVATE_IP>",
   },
   // 172.16.0.0/12
   {
     name: "private_ip_172",
-    pattern: /\b172\.(?:1[6-9]|2\d|3[0-1])\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b/g,
+    pattern:
+      /\b172\.(?:1[6-9]|2\d|3[0-1])\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b/g,
     replacement: "<REDACTED_PRIVATE_IP>",
   },
   // 192.168.0.0/16
   {
     name: "private_ip_192_168",
-    pattern: /\b192\.168\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b/g,
+    pattern:
+      /\b192\.168\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b/g,
     replacement: "<REDACTED_PRIVATE_IP>",
   },
   // 127.0.0.0/8 loopback (when loopback is not allowed)
   {
     name: "loopback_ip",
-    pattern: /\b127\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b/g,
+    pattern:
+      /\b127\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b/g,
     replacement: "<REDACTED_LOOPBACK_IP>",
     isLoopback: true,
   },
@@ -385,10 +394,7 @@ export function scanForSensitiveData(
 /**
  * Redact sensitive substrings inside a text string.
  */
-export function redactSensitiveText(
-  text: string,
-  options: SanitizationOptions = {},
-): string {
+export function redactSensitiveText(text: string, options: SanitizationOptions = {}): string {
   let result = text;
   const allowLoopback = options.allowLoopback ?? true;
   const normalizePaths = options.normalizeUserPaths ?? true;

@@ -34,9 +34,7 @@ export function createCatalogToolSummary(entry: CatalogEntry): CatalogToolSummar
 /**
  * Computes a deterministic SHA-256 canonical digest for a catalog tools mapping.
  */
-export function computeCatalogDigest(
-  tools: Record<string, CatalogToolSummary>
-): string {
+export function computeCatalogDigest(tools: Record<string, CatalogToolSummary>): string {
   return hashCanonicalContent(tools);
 }
 
@@ -53,9 +51,7 @@ export interface BuildCatalogSnapshotOptions {
 /**
  * Builds an immutable, canonically digested CatalogSnapshotRecord.
  */
-export function buildCatalogSnapshot(
-  options: BuildCatalogSnapshotOptions
-): CatalogSnapshotRecord {
+export function buildCatalogSnapshot(options: BuildCatalogSnapshotOptions): CatalogSnapshotRecord {
   const timestamp = options.timestamp ?? new Date().toISOString();
   const safeWorkspace = options.workspaceId.replace(/[^a-zA-Z0-9_-]/g, "_");
   const randSuffix = Math.random().toString(36).slice(2, 8);
@@ -107,7 +103,7 @@ export function buildCatalogSnapshot(
  */
 export function isCatalogSnapshotEqual(
   a?: CatalogSnapshot | null,
-  b?: CatalogSnapshot | null
+  b?: CatalogSnapshot | null,
 ): boolean {
   if (!a || !b) {
     return a === b;

@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { CapabilityEnvelope, ToolRuntimeRequirement } from "@tool-evolver/contracts";
-import { OpportunityDetection, WorkflowCluster } from "../opportunity/types.js";
+import type { CapabilityEnvelope, ToolRuntimeRequirement } from "@tool-evolver/contracts";
+import type { OpportunityDetection, WorkflowCluster } from "../opportunity/types.js";
 import { CapabilityMapper } from "./capability-mapper.js";
 import { SchemaGenerator } from "./schema-generator.js";
-import {
+import type {
   InvariantInputDefinition,
   ToolPlan,
   VariableInputDefinition,
@@ -27,10 +27,7 @@ export class CandidatePlanner {
   private readonly schemaGenerator: SchemaGenerator;
   private readonly capabilityMapper: CapabilityMapper;
 
-  constructor(
-    schemaGenerator?: SchemaGenerator,
-    capabilityMapper?: CapabilityMapper
-  ) {
+  constructor(schemaGenerator?: SchemaGenerator, capabilityMapper?: CapabilityMapper) {
     this.schemaGenerator = schemaGenerator ?? new SchemaGenerator();
     this.capabilityMapper = capabilityMapper ?? new CapabilityMapper();
   }
@@ -62,7 +59,9 @@ export class CandidatePlanner {
         .replace(/^_+|_+$/g, "");
     const name = this.sanitizeIdentifier(rawName || `tool_${opportunity.id.slice(0, 8)}`);
     const intent = classification.title || "Automate repetitive developer workflow";
-    const description = classification.description || `Tool automatically synthesized for pattern ${classification.pattern}`;
+    const description =
+      classification.description ||
+      `Tool automatically synthesized for pattern ${classification.pattern}`;
 
     // 3. Extract variable and invariant inputs
     const { variableInputs, invariantInputs } = this.extractInputs(opportunity);
@@ -75,13 +74,13 @@ export class CandidatePlanner {
     const outputSchema = this.schemaGenerator.deriveOutputSchema(
       classification.candidateOutputSchema,
       steps,
-      targetType
+      targetType,
     );
 
     // 6. Map required capabilities
     const capabilityRequirements = this.capabilityMapper.mapRequiredCapabilities(
       steps,
-      options.envelope
+      options.envelope,
     );
 
     // 7. Define runtime requirements
@@ -130,7 +129,12 @@ export class CandidatePlanner {
     if (inferred.length > 0) {
       for (const inf of inferred) {
         let type: VariableInputDefinition["type"] = "string";
-        if (inf.type === "number" || inf.type === "boolean" || inf.type === "array" || inf.type === "object") {
+        if (
+          inf.type === "number" ||
+          inf.type === "boolean" ||
+          inf.type === "array" ||
+          inf.type === "object"
+        ) {
           type = inf.type;
         }
         variableInputs.push({
@@ -190,7 +194,7 @@ export class CandidatePlanner {
   private constructSteps(
     opportunity: OpportunityDetection,
     targetType: "single_tool" | "workflow",
-    variableInputs: VariableInputDefinition[]
+    variableInputs: VariableInputDefinition[],
   ): WorkflowStep[] {
     const pattern = opportunity.classification.pattern.toLowerCase();
     const taskClass = opportunity.classification.taskClass.toLowerCase();
@@ -258,12 +262,21 @@ export class CandidatePlanner {
       action = "fs.readFile";
       toolClass = "file_read";
       inputs.path = "$input.path";
-    } else if (pattern.includes("file_edit") || pattern.includes("write") || taskClass === "file_edit") {
+    } else if (
+      pattern.includes("file_edit") ||
+      pattern.includes("write") ||
+      taskClass === "file_edit"
+    ) {
       action = "fs.writeFile";
       toolClass = "file_edit";
       inputs.path = "$input.path";
       inputs.content = "$input.content";
-    } else if (pattern.includes("command") || pattern.includes("exec") || taskClass === "command" || taskClass === "test_runner") {
+    } else if (
+      pattern.includes("command") ||
+      pattern.includes("exec") ||
+      taskClass === "command" ||
+      taskClass === "test_runner"
+    ) {
       action = "cmd.exec";
       toolClass = "command";
       inputs.command = "$input.command";

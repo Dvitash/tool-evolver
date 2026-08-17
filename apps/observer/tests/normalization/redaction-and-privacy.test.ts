@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { RawHarnessRecord } from "@tool-evolver/harness-contracts";
+import { describe, expect, it } from "vitest";
 import {
   ContentScanner,
   NormalizationPipeline,
@@ -56,7 +56,8 @@ describe("Privacy Redaction & Secret Scrubbing", () => {
     });
 
     const payload = {
-      message: "Connected to repo at /home/developer/projects/my-app/src/index.ts in /home/developer.",
+      message:
+        "Connected to repo at /home/developer/projects/my-app/src/index.ts in /home/developer.",
       authInfo: {
         apiKey: "sk-proj-99887766554433221100aabbccddeeff",
         custom: "Here is SuperSpecialSecret9988 for authentication.",
@@ -111,7 +112,8 @@ describe("Privacy Redaction & Secret Scrubbing", () => {
     });
 
     const highEntropyString = "K9#mQ2$vL8!zX4@wP7^rN1&bT5*cY3~e";
-    const longString = "This is a very long string that should exceed the 50 character limit configured for content truncation testing.";
+    const longString =
+      "This is a very long string that should exceed the 50 character limit configured for content truncation testing.";
 
     const result = engine.redact({
       secret: highEntropyString,

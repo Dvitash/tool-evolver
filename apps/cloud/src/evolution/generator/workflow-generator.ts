@@ -1,5 +1,5 @@
 import { SchemaGenerator } from "./schema-generator.js";
-import { ToolPlan, WorkflowStep } from "./types.js";
+import type { ToolPlan, WorkflowStep } from "./types.js";
 
 /**
  * Generates reusable workflow step graphs and executable TypeScript orchestrator source.
@@ -110,20 +110,28 @@ export class WorkflowGenerator {
 
       let actionCall = "";
       if (step.action === "fs.readFile") {
-        const filePathExpr = this.resolveInputExpression(step.inputs.path ?? step.inputs.filePath ?? "filePath");
+        const filePathExpr = this.resolveInputExpression(
+          step.inputs.path ?? step.inputs.filePath ?? "filePath",
+        );
         actionCall = `const ${outVar} = await broker.fs.readFile(${filePathExpr});`;
       } else if (step.action === "fs.writeFile") {
-        const filePathExpr = this.resolveInputExpression(step.inputs.path ?? step.inputs.filePath ?? "filePath");
+        const filePathExpr = this.resolveInputExpression(
+          step.inputs.path ?? step.inputs.filePath ?? "filePath",
+        );
         const contentExpr = this.resolveInputExpression(step.inputs.content ?? "content");
         actionCall = `await broker.fs.writeFile(${filePathExpr}, ${contentExpr});\n      const ${outVar} = { path: ${filePathExpr}, written: true };`;
       } else if (step.action === "cmd.exec") {
-        const cmdExpr = this.resolveInputExpression(step.inputs.command ?? step.inputs.cmd ?? "cmd");
+        const cmdExpr = this.resolveInputExpression(
+          step.inputs.command ?? step.inputs.cmd ?? "cmd",
+        );
         actionCall = `const ${outVar} = await broker.cmd.exec(${cmdExpr});`;
       } else if (step.action === "net.fetch") {
         const urlExpr = this.resolveInputExpression(step.inputs.url ?? "url");
         actionCall = `const res = await broker.net.fetch(${urlExpr});\n      const ${outVar} = await res.json();`;
       } else if (step.action === "secret.getSecret") {
-        const keyExpr = this.resolveInputExpression(step.inputs.name ?? step.inputs.key ?? "secretName");
+        const keyExpr = this.resolveInputExpression(
+          step.inputs.name ?? step.inputs.key ?? "secretName",
+        );
         actionCall = `const ${outVar} = await broker.secret.getSecret(${keyExpr});`;
       } else {
         // Generic / compute action
@@ -133,7 +141,9 @@ export class WorkflowGenerator {
       let compensationCode = "";
       if (step.compensation) {
         if (step.compensation.action === "fs.removeFile") {
-          const compPathExpr = this.resolveInputExpression(step.compensation.inputs.path ?? step.compensation.inputs.filePath ?? "filePath");
+          const compPathExpr = this.resolveInputExpression(
+            step.compensation.inputs.path ?? step.compensation.inputs.filePath ?? "filePath",
+          );
           compensationCode = `
       compensationStack.push(async () => {
         await logger.warn("Executing rollback compensation: removeFile", { path: ${compPathExpr} });

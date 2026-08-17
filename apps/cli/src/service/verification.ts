@@ -70,8 +70,7 @@ export class VerificationSuite {
 
   constructor(options: VerificationSuiteOptions = {}) {
     this.homeDir = options.homeDir ?? os.homedir();
-    this.toolEvolverHome =
-      options.toolEvolverHome ?? path.join(this.homeDir, ".tool-evolver");
+    this.toolEvolverHome = options.toolEvolverHome ?? path.join(this.homeDir, ".tool-evolver");
     this.gatewayUrl = options.gatewayUrl ?? "http://127.0.0.1:9400";
     this.cloudUrl = options.cloudUrl ?? "https://api.tool-evolver.dev";
     this.fsBridge = options.fsBridge ?? defaultFsBridge;
@@ -223,7 +222,8 @@ export class VerificationSuite {
       return {
         status: "fail",
         message: `Tool Evolver home directory not found at ${this.toolEvolverHome}`,
-        remediation: "Run `tool-evolver init` or `tool-evolver repair` to create state directories.",
+        remediation:
+          "Run `tool-evolver init` or `tool-evolver repair` to create state directories.",
       };
     }
 
@@ -247,7 +247,8 @@ export class VerificationSuite {
       return {
         status: "warn",
         message: `User autostart service is not installed (${this.serviceManager.platform})`,
-        remediation: "Run `tool-evolver repair` to install and enable the background daemon service.",
+        remediation:
+          "Run `tool-evolver repair` to install and enable the background daemon service.",
         details: { platform: this.serviceManager.platform },
       };
     }

@@ -4,13 +4,13 @@
 
 import type { DatabasePool } from "../../db/client.js";
 import type { ToolRegistryRepository } from "../../evolution/artifacts/repositories/tool-registry-repository.js";
+import { McpInvocationError } from "../middleware.js";
 import type {
   CallToolResult,
   CloudMcpInvocationContext,
   CloudMcpToolDefinition,
 } from "../types.js";
 import { MCP_ERROR_CODES } from "../types.js";
-import { McpInvocationError } from "../middleware.js";
 
 /**
  * Options for configuring get_tool_lineage tool.
@@ -96,8 +96,7 @@ export function createGetToolLineageTool(
       context: CloudMcpInvocationContext,
     ): Promise<CallToolResult> => {
       const toolId = params.toolId as string;
-      const targetWorkspaceId =
-        (params.workspaceId as string) || context.tenant.workspaceId;
+      const targetWorkspaceId = (params.workspaceId as string) || context.tenant.workspaceId;
       const limit = (params.limit as number) || 20;
 
       // Enforce tenant isolation
@@ -133,7 +132,12 @@ export function createGetToolLineageTool(
                 evaluation: {
                   overallDecision: v.status === "active" ? "approved" : "skipped",
                   score: 0.98,
-                  passedGates: ["type_check", "static_analysis", "replay_validation", "security_gate"],
+                  passedGates: [
+                    "type_check",
+                    "static_analysis",
+                    "replay_validation",
+                    "security_gate",
+                  ],
                   failedGates: [],
                 },
               });
@@ -216,7 +220,11 @@ export function createGetToolLineageTool(
 
       // Compute eligible rollback targets (stable prior versions)
       const rollbackTargets = versions
-        .filter((v) => v.version !== activeVersion && (v.status === "promoted" || v.status === "active" || v.status === "deprecated"))
+        .filter(
+          (v) =>
+            v.version !== activeVersion &&
+            (v.status === "promoted" || v.status === "active" || v.status === "deprecated"),
+        )
         .map((v) => ({
           version: v.version,
           manifestDigest: v.manifestDigest,

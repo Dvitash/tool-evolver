@@ -1,9 +1,9 @@
 import {
-  CandidateTriggerReason,
-  CapabilityEnvelope,
+  type CandidateTriggerReason,
+  type CapabilityEnvelope,
   CapabilityManifest,
-  NormalizedSessionEvent,
-  ToolManifest,
+  type NormalizedSessionEvent,
+  type ToolManifest,
 } from "@tool-evolver/contracts";
 import { z } from "zod";
 

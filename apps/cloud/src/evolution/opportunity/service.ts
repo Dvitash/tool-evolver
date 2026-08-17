@@ -1,14 +1,18 @@
 import { randomUUID } from "node:crypto";
-import { CapabilityEnvelope, NormalizedSessionEvent, ToolManifest } from "@tool-evolver/contracts";
-import { InferenceService } from "../../models/service.js";
-import { TenantContext } from "../../tenant.js";
+import type {
+  CapabilityEnvelope,
+  NormalizedSessionEvent,
+  ToolManifest,
+} from "@tool-evolver/contracts";
+import type { InferenceService } from "../../models/service.js";
+import type { TenantContext } from "../../tenant.js";
 import { OpportunityClassifier } from "./classifier.js";
 import { StructuralClusterer } from "./clustering.js";
 import { CoverageEngine } from "./coverage.js";
 import { EpisodeSegmenter } from "./episode.js";
 import { SuppressionEngine } from "./suppression.js";
 import { TriggerEvaluator } from "./triggers.js";
-import {
+import type {
   ClustererOptions,
   DetectOpportunitiesParams,
   OpportunityDetection,
@@ -67,7 +71,9 @@ export class OpportunityDetectionService {
   /**
    * Runs the complete opportunity detection pipeline over a stream of normalized session events.
    */
-  async detectOpportunities(params: DetectOpportunitiesParams): Promise<OpportunityDetectionResult> {
+  async detectOpportunities(
+    params: DetectOpportunitiesParams,
+  ): Promise<OpportunityDetectionResult> {
     const { accountId, workspaceId, events, existingTools = [], envelope } = params;
     const now = params.now ?? Date.now();
     const timestamp = new Date(now).toISOString();

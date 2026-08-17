@@ -3,7 +3,7 @@ import {
   HistoricalReplayService,
   createHistoricalReplayService,
 } from "../../../src/evolution/replay/service.js";
-import { TenantContext } from "../../../src/tenant.js";
+import type { TenantContext } from "../../../src/tenant.js";
 import {
   FS_SEARCH_CANDIDATE_SOURCE,
   PURE_COMPUTE_CANDIDATE_SOURCE,
@@ -83,7 +83,7 @@ describe("HistoricalReplayService (End-to-End Replay Engine)", () => {
             denyPaths: ["/etc/.*"],
             maxFileSizeBytes: 1048576,
           },
-        }
+        },
       );
 
       const result = await service.replayCandidate(tenant, {
@@ -93,7 +93,9 @@ describe("HistoricalReplayService (End-to-End Replay Engine)", () => {
 
       expect(result.status).toBe("terminal_divergence");
       expect(result.passed).toBe(false);
-      expect(result.divergenceFindings.some((f) => f.category === "unauthorized_side_effect")).toBe(true);
+      expect(result.divergenceFindings.some((f) => f.category === "unauthorized_side_effect")).toBe(
+        true,
+      );
     });
 
     it("throws clear error when neither evidence nor valid evidenceSetId is supplied", async () => {
@@ -101,7 +103,7 @@ describe("HistoricalReplayService (End-to-End Replay Engine)", () => {
       await expect(
         service.replayCandidate(tenant, {
           candidate,
-        })
+        }),
       ).rejects.toThrow("No evidence source provided");
     });
   });

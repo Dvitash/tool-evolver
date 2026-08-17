@@ -26,11 +26,43 @@ function makeTool(id: string, name: string): ToolManifest {
       maxOutputSizeBytes: 1048576,
     },
     capabilities: {
-      fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-      net: { allowOutbound: true, allowedDomains: [], allowedHosts: [], allowedPorts: [443], allowedProtocols: ["https" as const], allowLocalhost: false, denyPrivateRanges: true },
-      command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-      secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-      limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+      fs: {
+        readPaths: [],
+        writePaths: [],
+        allowWorkspaceRoot: false,
+        allowTemp: false,
+        denyPaths: [],
+        maxFileSizeBytes: 10485760,
+      },
+      net: {
+        allowOutbound: true,
+        allowedDomains: [],
+        allowedHosts: [],
+        allowedPorts: [443],
+        allowedProtocols: ["https" as const],
+        allowLocalhost: false,
+        denyPrivateRanges: true,
+      },
+      command: {
+        allowShellExecution: false,
+        allowedCommands: [],
+        allowedBinaries: [],
+        forbiddenPatterns: [],
+        allowEnvPassthrough: [],
+      },
+      secrets: {
+        allowedSecretNames: [],
+        allowedPrefixes: [],
+        denyDirectRead: true,
+        injectAsEnv: true,
+      },
+      limits: {
+        maxConcurrentExecutions: 4,
+        maxCpuUsagePercent: 100,
+        maxMemoryMb: 128,
+        maxExecutionTimeMs: 30000,
+        maxOutputSizeBytes: 1048576,
+      },
     },
     limits: {
       timeoutMs: 30000,
@@ -88,7 +120,11 @@ describe("Zero Silent Queuing Invariant", () => {
     });
 
     // 1. First execution succeeds
-    const res1 = await router.forwardInvocation("cloud_transfer", { amount: 100 }, mockWorkspaceContext);
+    const res1 = await router.forwardInvocation(
+      "cloud_transfer",
+      { amount: 100 },
+      mockWorkspaceContext,
+    );
     expect(res1.content[0]).toEqual({ type: "text", text: "Transferred at count 1" });
     expect(executionCount).toBe(1);
 
@@ -97,8 +133,16 @@ describe("Zero Silent Queuing Invariant", () => {
     circuitBreaker.recordFailure(new Error("Network partitioned"));
 
     // 3. Attempt multiple invocations while offline
-    const call1Promise = router.forwardInvocation("cloud_transfer", { amount: 500 }, mockWorkspaceContext);
-    const call2Promise = router.forwardInvocation("cloud_transfer", { amount: 1000 }, mockWorkspaceContext);
+    const call1Promise = router.forwardInvocation(
+      "cloud_transfer",
+      { amount: 500 },
+      mockWorkspaceContext,
+    );
+    const call2Promise = router.forwardInvocation(
+      "cloud_transfer",
+      { amount: 1000 },
+      mockWorkspaceContext,
+    );
 
     // Both calls MUST fail immediately and synchronously return errors to caller
     await expect(call1Promise).rejects.toThrow(McpProtocolError);
@@ -118,7 +162,11 @@ describe("Zero Silent Queuing Invariant", () => {
     expect(executionCount).toBe(1);
 
     // 5. New explicit call from caller succeeds as call #2
-    const res3 = await router.forwardInvocation("cloud_transfer", { amount: 200 }, mockWorkspaceContext);
+    const res3 = await router.forwardInvocation(
+      "cloud_transfer",
+      { amount: 200 },
+      mockWorkspaceContext,
+    );
     expect(res3.content[0]).toEqual({ type: "text", text: "Transferred at count 2" });
     expect(executionCount).toBe(2);
   });
@@ -141,7 +189,9 @@ describe("Zero Silent Queuing Invariant", () => {
     // Induce latency exceeding timeout
     mockService.setFaultConfig({ latencyMs: 100 });
 
-    const callPromise = router.forwardInvocation("cloud_long_op", {}, mockWorkspaceContext, { timeoutMs: 10 });
+    const callPromise = router.forwardInvocation("cloud_long_op", {}, mockWorkspaceContext, {
+      timeoutMs: 10,
+    });
     vi.advanceTimersByTime(20);
 
     try {

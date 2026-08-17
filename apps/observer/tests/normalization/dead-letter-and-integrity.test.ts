@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
 import { DeadLetterRecordSchema } from "@tool-evolver/contracts";
 import { createInMemoryStateStore } from "@tool-evolver/db";
 import type { RawHarnessRecord } from "@tool-evolver/harness-contracts";
+import { describe, expect, it } from "vitest";
 import {
   DecodeError,
   type HarnessRecordDecoder,

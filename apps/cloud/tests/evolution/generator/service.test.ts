@@ -1,13 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  CandidateGenerationService,
+  type CandidateGenerationService,
   createCandidateGenerationService,
 } from "../../../src/evolution/generator/service.js";
-import {
-  createMockEnvelope,
-  createMockOpportunity,
-  createMockTenant,
-} from "./helpers.js";
+import { createMockEnvelope, createMockOpportunity, createMockTenant } from "./helpers.js";
 
 describe("CandidateGenerationService (End-to-End)", () => {
   const service: CandidateGenerationService = createCandidateGenerationService();

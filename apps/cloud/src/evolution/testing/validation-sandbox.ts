@@ -3,10 +3,7 @@ import nodeCrypto from "node:crypto";
 import nodePath from "node:path";
 import nodeUtil from "node:util";
 import vm from "node:vm";
-import type {
-  CapabilityManifest,
-  ToolManifest,
-} from "@tool-evolver/contracts";
+import type { CapabilityManifest, ToolManifest } from "@tool-evolver/contracts";
 import type {
   CmdBrokerClient,
   FsBrokerClient,
@@ -18,12 +15,12 @@ import type {
 import ts from "typescript";
 import { z } from "zod";
 import {
-  CoverageReport,
-  MockBrokerScenario,
+  type CoverageReport,
+  type MockBrokerScenario,
   SynthesizedTestCase,
-  SynthesizedTestSuite,
-  TestCaseResult,
-  TestExecutionReport,
+  type SynthesizedTestSuite,
+  type TestCaseResult,
+  type TestExecutionReport,
 } from "./types.js";
 
 /**
@@ -53,12 +50,19 @@ export class FakeFsBroker implements FsBrokerClient {
     if (!this.files.has("/workspace/data.json")) {
       this.files.set(
         "/workspace/data.json",
-        JSON.stringify({ status: "ok", items: [1, 2, 3], timestamp: "2026-08-17T00:00:00Z" }, null, 2)
+        JSON.stringify(
+          { status: "ok", items: [1, 2, 3], timestamp: "2026-08-17T00:00:00Z" },
+          null,
+          2,
+        ),
       );
     }
   }
 
-  async readFile(filePath: string, encoding: "utf-8" | "base64" | "buffer" = "utf-8"): Promise<string | Uint8Array> {
+  async readFile(
+    filePath: string,
+    encoding: "utf-8" | "base64" | "buffer" = "utf-8",
+  ): Promise<string | Uint8Array> {
     const normalized = nodePath.normalize(filePath);
     if (this.simulateErrors[normalized] === "ENOENT") {
       throw new Error(`ENOENT: no such file or directory, open '${filePath}'`);
@@ -110,13 +114,16 @@ export class FakeFsBroker implements FsBrokerClient {
     return results;
   }
 
-  async stat(targetPath: string): Promise<{ size: number; isFile: boolean; isDirectory: boolean; mtime: string }> {
+  async stat(
+    targetPath: string,
+  ): Promise<{ size: number; isFile: boolean; isDirectory: boolean; mtime: string }> {
     const normalized = nodePath.normalize(targetPath);
     const content = this.files.get(normalized);
     if (content === undefined) {
       throw new Error(`ENOENT: no such file or directory, stat '${targetPath}'`);
     }
-    const size = typeof content === "string" ? Buffer.byteLength(content, "utf-8") : content.byteLength;
+    const size =
+      typeof content === "string" ? Buffer.byteLength(content, "utf-8") : content.byteLength;
     return {
       size,
       isFile: true,
@@ -169,7 +176,7 @@ export class FakeNetBroker implements NetBrokerClient {
       method?: string;
       headers?: Record<string, string>;
       body?: string;
-    }
+    },
   ) {
     if (this.simulateTimeout) {
       throw new Error(`Network timeout fetching '${url}'`);
@@ -203,7 +210,8 @@ export class FakeNetBroker implements NetBrokerClient {
       url,
       redirected: false,
       text: async () => bodyStr,
-      json: async <T = unknown>() => (typeof bodyObj === "string" ? JSON.parse(bodyObj) : bodyObj) as T,
+      json: async <T = unknown>() =>
+        (typeof bodyObj === "string" ? JSON.parse(bodyObj) : bodyObj) as T,
       arrayBuffer: async () => Buffer.from(bodyStr, "utf-8").buffer as ArrayBuffer,
       bytes: async () => Buffer.from(bodyStr, "utf-8"),
     };
@@ -215,7 +223,7 @@ export class FakeNetBroker implements NetBrokerClient {
       method?: string;
       headers?: Record<string, string>;
       body?: string;
-    }
+    },
   ): Promise<{ status: number; data: T }> {
     const res = await this.fetch(url, options);
     const data = (await res.json()) as T;
@@ -238,14 +246,14 @@ export class FakeCmdBroker implements CmdBrokerClient {
     this.simulateFailure = options.simulateFailure ?? false;
 
     // Default common deterministic commands
-    if (!this.commands["echo"]) {
-      this.commands["echo"] = { stdout: "hello world\n", exitCode: 0 };
+    if (!this.commands.echo) {
+      this.commands.echo = { stdout: "hello world\n", exitCode: 0 };
     }
     if (!this.commands["git status"]) {
       this.commands["git status"] = { stdout: "On branch main\nnothing to commit\n", exitCode: 0 };
     }
-    if (!this.commands["ls"]) {
-      this.commands["ls"] = { stdout: "sample.txt\ndata.json\n", exitCode: 0 };
+    if (!this.commands.ls) {
+      this.commands.ls = { stdout: "sample.txt\ndata.json\n", exitCode: 0 };
     }
   }
 
@@ -256,7 +264,7 @@ export class FakeCmdBroker implements CmdBrokerClient {
       cwd?: string;
       env?: Record<string, string>;
       timeoutMs?: number;
-    } = {}
+    } = {},
   ): Promise<{ stdout: string; stderr: string; exitCode: number; durationMs: number }> {
     if (this.simulateFailure) {
       return {
@@ -268,7 +276,7 @@ export class FakeCmdBroker implements CmdBrokerClient {
     }
 
     const fullCmd = [command, ...args].join(" ");
-    let matched = this.commands[fullCmd] ?? this.commands[command];
+    const matched = this.commands[fullCmd] ?? this.commands[command];
 
     if (!matched) {
       // Return sensible deterministic output
@@ -295,7 +303,7 @@ export class FakeCmdBroker implements CmdBrokerClient {
       cwd?: string;
       env?: Record<string, string>;
       timeoutMs?: number;
-    } = {}
+    } = {},
   ): Promise<{ stdout: string; stderr: string; exitCode: number; durationMs: number }> {
     return this.exec(command, args, options);
   }
@@ -344,16 +352,20 @@ export class FakeToolBrokerClient implements ToolBrokerClient {
   async request<T = unknown>(
     service: "fs" | "net" | "cmd" | "secret",
     action: string,
-    payload: Record<string, unknown> = {}
+    payload: Record<string, unknown> = {},
   ): Promise<T> {
     switch (service) {
       case "fs": {
         if (action === "readFile") {
-          const encoding = (payload.encoding as "utf-8" | "base64" | "buffer" | undefined) ?? "utf-8";
+          const encoding =
+            (payload.encoding as "utf-8" | "base64" | "buffer" | undefined) ?? "utf-8";
           return (await this.fs.readFile(payload.path as string, encoding)) as T;
         }
         if (action === "writeFile") {
-          return (await this.fs.writeFile(payload.path as string, payload.content as string | Uint8Array)) as T;
+          return (await this.fs.writeFile(
+            payload.path as string,
+            payload.content as string | Uint8Array,
+          )) as T;
         }
         if (action === "exists") {
           return (await this.fs.exists(payload.path as string)) as T;
@@ -371,19 +383,37 @@ export class FakeToolBrokerClient implements ToolBrokerClient {
       }
       case "net": {
         if (action === "fetch" || action === "request") {
-          const rawOptions = payload.options as { method?: string; headers?: Record<string, string>; body?: string | Uint8Array; timeoutMs?: number } | undefined;
-          const netOptions = rawOptions ? {
-            method: rawOptions.method,
-            headers: rawOptions.headers,
-            body: typeof rawOptions.body === "string" ? rawOptions.body : rawOptions.body ? Buffer.from(rawOptions.body).toString("utf-8") : undefined,
-          } : undefined;
+          const rawOptions = payload.options as
+            | {
+                method?: string;
+                headers?: Record<string, string>;
+                body?: string | Uint8Array;
+                timeoutMs?: number;
+              }
+            | undefined;
+          const netOptions = rawOptions
+            ? {
+                method: rawOptions.method,
+                headers: rawOptions.headers,
+                body:
+                  typeof rawOptions.body === "string"
+                    ? rawOptions.body
+                    : rawOptions.body
+                      ? Buffer.from(rawOptions.body).toString("utf-8")
+                      : undefined,
+              }
+            : undefined;
           return (await this.net.fetch(payload.url as string, netOptions)) as T;
         }
         throw new Error(`Unknown net action '${action}'`);
       }
       case "cmd": {
         if (action === "exec" || action === "spawn") {
-          return (await this.cmd.exec(payload.command as string, payload.args as string[], payload.options as Parameters<FakeCmdBroker["exec"]>[2])) as T;
+          return (await this.cmd.exec(
+            payload.command as string,
+            payload.args as string[],
+            payload.options as Parameters<FakeCmdBroker["exec"]>[2],
+          )) as T;
         }
         throw new Error(`Unknown cmd action '${action}'`);
       }
@@ -414,7 +444,7 @@ export class ValidationSandbox {
       timeoutMs?: number;
       maxExecutionTimeMs?: number;
       capabilities?: CapabilityManifest;
-    } = {}
+    } = {},
   ): Promise<TestExecutionReport> {
     const startTime = Date.now();
     const results: TestCaseResult[] = [];
@@ -445,7 +475,7 @@ export class ValidationSandbox {
           testCase.input,
           brokerClient,
           logs,
-          testCase.timeoutMs ?? options.timeoutMs ?? 5000
+          testCase.timeoutMs ?? options.timeoutMs ?? 5000,
         );
 
         const execResult = await executionPromise;
@@ -481,12 +511,17 @@ export class ValidationSandbox {
               assertionsPassed: 1,
             });
           }
-        } else if (testCase.expectedOutcome === "validation_error" || testCase.expectedOutcome === "execution_error") {
+        } else if (
+          testCase.expectedOutcome === "validation_error" ||
+          testCase.expectedOutcome === "execution_error"
+        ) {
           if (execResult.error) {
             // Check substring if specified
             const matchesExpected =
               !testCase.expectedErrorSubstring ||
-              execResult.error.toLowerCase().includes(testCase.expectedErrorSubstring.toLowerCase());
+              execResult.error
+                .toLowerCase()
+                .includes(testCase.expectedErrorSubstring.toLowerCase());
 
             if (matchesExpected) {
               passed++;
@@ -549,7 +584,10 @@ export class ValidationSandbox {
             error: errMsg,
             logs,
           });
-        } else if (testCase.expectedOutcome === "execution_error" || testCase.expectedOutcome === "validation_error") {
+        } else if (
+          testCase.expectedOutcome === "execution_error" ||
+          testCase.expectedOutcome === "validation_error"
+        ) {
           passed++;
           results.push({
             testId: testCase.id,
@@ -606,7 +644,7 @@ export class ValidationSandbox {
       timeoutMs?: number;
       seed?: number | string;
       capabilities?: CapabilityManifest;
-    } = {}
+    } = {},
   ): Promise<{
     output?: unknown;
     error?: string;
@@ -615,7 +653,11 @@ export class ValidationSandbox {
   }> {
     const startTime = Date.now();
     const timeoutMs = options.timeoutMs ?? 5000;
-    const logs: Array<{ level: "info" | "warn" | "error" | "debug"; message: string; timestamp: string }> = [];
+    const logs: Array<{
+      level: "info" | "warn" | "error" | "debug";
+      message: string;
+      timestamp: string;
+    }> = [];
 
     try {
       const transpileResult = ts.transpileModule(sourceCode, {
@@ -651,20 +693,36 @@ export class ValidationSandbox {
     input: unknown,
     broker: ToolBrokerClient,
     logs: Array<{ level: string; message: string; timestamp: string }>,
-    timeoutMs: number
+    timeoutMs: number,
   ): Promise<{ output?: unknown; error?: string }> {
     const logger = {
       debug: async (message: string, meta?: Record<string, unknown>) => {
-        logs.push({ level: "debug", message: meta ? `${message} ${JSON.stringify(meta)}` : message, timestamp: new Date().toISOString() });
+        logs.push({
+          level: "debug",
+          message: meta ? `${message} ${JSON.stringify(meta)}` : message,
+          timestamp: new Date().toISOString(),
+        });
       },
       info: async (message: string, meta?: Record<string, unknown>) => {
-        logs.push({ level: "info", message: meta ? `${message} ${JSON.stringify(meta)}` : message, timestamp: new Date().toISOString() });
+        logs.push({
+          level: "info",
+          message: meta ? `${message} ${JSON.stringify(meta)}` : message,
+          timestamp: new Date().toISOString(),
+        });
       },
       warn: async (message: string, meta?: Record<string, unknown>) => {
-        logs.push({ level: "warn", message: meta ? `${message} ${JSON.stringify(meta)}` : message, timestamp: new Date().toISOString() });
+        logs.push({
+          level: "warn",
+          message: meta ? `${message} ${JSON.stringify(meta)}` : message,
+          timestamp: new Date().toISOString(),
+        });
       },
       error: async (message: string, meta?: Record<string, unknown>) => {
-        logs.push({ level: "error", message: meta ? `${message} ${JSON.stringify(meta)}` : message, timestamp: new Date().toISOString() });
+        logs.push({
+          level: "error",
+          message: meta ? `${message} ${JSON.stringify(meta)}` : message,
+          timestamp: new Date().toISOString(),
+        });
       },
     };
 
@@ -680,7 +738,13 @@ export class ValidationSandbox {
     const timeoutId = setTimeout(() => abortController.abort(), timeoutMs);
     let validatedInput = input;
     try {
-      const moduleObj = { exports: {} as { default?: unknown; InputSchema?: z.ZodTypeAny; OutputSchema?: z.ZodTypeAny } };
+      const moduleObj = {
+        exports: {} as {
+          default?: unknown;
+          InputSchema?: z.ZodTypeAny;
+          OutputSchema?: z.ZodTypeAny;
+        },
+      };
       const sandboxObj = {
         module: moduleObj,
         exports: moduleObj.exports,
@@ -702,18 +766,31 @@ export class ValidationSandbox {
           if (specifier === "node:path" || specifier === "path") return nodePath;
           if (specifier === "node:crypto" || specifier === "crypto") return nodeCrypto;
           if (specifier === "node:util" || specifier === "util") return nodeUtil;
-          if (specifier === "node:buffer" || specifier === "buffer") return { Buffer, default: { Buffer } };
+          if (specifier === "node:buffer" || specifier === "buffer")
+            return { Buffer, default: { Buffer } };
           throw new Error(`Module '${specifier}' is not permitted in test sandbox`);
         },
         console: {
           log: (...args: unknown[]) => {
-            logs.push({ level: "info", message: args.map(String).join(" "), timestamp: new Date().toISOString() });
+            logs.push({
+              level: "info",
+              message: args.map(String).join(" "),
+              timestamp: new Date().toISOString(),
+            });
           },
           error: (...args: unknown[]) => {
-            logs.push({ level: "error", message: args.map(String).join(" "), timestamp: new Date().toISOString() });
+            logs.push({
+              level: "error",
+              message: args.map(String).join(" "),
+              timestamp: new Date().toISOString(),
+            });
           },
           warn: (...args: unknown[]) => {
-            logs.push({ level: "warn", message: args.map(String).join(" "), timestamp: new Date().toISOString() });
+            logs.push({
+              level: "warn",
+              message: args.map(String).join(" "),
+              timestamp: new Date().toISOString(),
+            });
           },
         },
         Buffer,
@@ -741,8 +818,13 @@ export class ValidationSandbox {
       const vmContext = vm.createContext(sandboxObj);
       const script = new vm.Script(jsCode, { filename: "candidate.js" });
       script.runInContext(vmContext, { timeout: timeoutMs });
-      let handler: unknown = moduleObj.exports.default ?? sandboxObj.exports.default ?? moduleObj.exports;
-      if (handler && typeof handler === "object" && typeof (handler as { execute?: unknown }).execute === "function") {
+      let handler: unknown =
+        moduleObj.exports.default ?? sandboxObj.exports.default ?? moduleObj.exports;
+      if (
+        handler &&
+        typeof handler === "object" &&
+        typeof (handler as { execute?: unknown }).execute === "function"
+      ) {
         handler = (handler as { execute: unknown }).execute;
       }
       if (typeof handler !== "function") {
@@ -757,7 +839,9 @@ export class ValidationSandbox {
       const fnHandler = handler as (arg1: unknown, arg2?: unknown) => Promise<unknown> | unknown;
 
       // If InputSchema is exported, validate input before running handler
-      const inputSchema = moduleObj.exports.InputSchema ?? (sandboxObj.exports as { InputSchema?: z.ZodTypeAny }).InputSchema;
+      const inputSchema =
+        moduleObj.exports.InputSchema ??
+        (sandboxObj.exports as { InputSchema?: z.ZodTypeAny }).InputSchema;
       if (inputSchema && typeof inputSchema.safeParse === "function") {
         const parseResult = inputSchema.safeParse(input);
         if (!parseResult.success) {
@@ -774,7 +858,9 @@ export class ValidationSandbox {
         metadata: {},
         logger,
         progress,
-        log: async (msg: string) => { await logger.info(msg); },
+        log: async (msg: string) => {
+          await logger.info(msg);
+        },
         broker,
       };
 
@@ -796,7 +882,9 @@ export class ValidationSandbox {
       }
 
       // If OutputSchema is exported, validate output
-      const outputSchema = moduleObj.exports.OutputSchema ?? (sandboxObj.exports as { OutputSchema?: z.ZodTypeAny }).OutputSchema;
+      const outputSchema =
+        moduleObj.exports.OutputSchema ??
+        (sandboxObj.exports as { OutputSchema?: z.ZodTypeAny }).OutputSchema;
       if (outputSchema && typeof outputSchema.safeParse === "function") {
         const outputParse = outputSchema.safeParse(output);
         if (!outputParse.success) {
@@ -817,7 +905,13 @@ export class ValidationSandbox {
    * Computes coverage report from AST analysis and test execution.
    */
   private computeCoverage(sourceCode: string, testResults: TestCaseResult[]): CoverageReport {
-    const sourceFile = ts.createSourceFile("candidate.ts", sourceCode, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
+    const sourceFile = ts.createSourceFile(
+      "candidate.ts",
+      sourceCode,
+      ts.ScriptTarget.ES2022,
+      true,
+      ts.ScriptKind.TS,
+    );
 
     let statementCount = 0;
     let branchCount = 0;
@@ -864,15 +958,15 @@ export class ValidationSandbox {
     // Estimate covered items based on tests exercised
     const coveredStatements = Math.min(
       safeStatementCount,
-      Math.max(1, Math.round(safeStatementCount * (0.6 + 0.4 * passRatio)))
+      Math.max(1, Math.round(safeStatementCount * (0.6 + 0.4 * passRatio))),
     );
     const coveredBranches = Math.min(
       safeBranchCount,
-      Math.max(1, Math.round(safeBranchCount * (0.5 + 0.5 * passRatio)))
+      Math.max(1, Math.round(safeBranchCount * (0.5 + 0.5 * passRatio))),
     );
     const coveredFunctions = Math.min(
       safeFunctionCount,
-      Math.max(1, Math.round(safeFunctionCount * (0.8 + 0.2 * passRatio)))
+      Math.max(1, Math.round(safeFunctionCount * (0.8 + 0.2 * passRatio))),
     );
 
     return {

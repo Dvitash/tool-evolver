@@ -1,10 +1,7 @@
 import path from "node:path";
 import process from "node:process";
 import { describe, expect, it, vi } from "vitest";
-import {
-  logoutCommand,
-  parseLogoutFlags,
-} from "../src/commands/logout.js";
+import { logoutCommand, parseLogoutFlags } from "../src/commands/logout.js";
 import {
   parseUninstallFlags,
   removeHarnessMcpConfigurations,
@@ -201,7 +198,9 @@ url = "http://localhost:9400"
     const fsBridge = createMockFsBridge({
       [toolEvolverHome]: "dir",
       [unitPath]: "service unit",
-      [claudePath]: JSON.stringify({ mcpServers: { "tool-evolver": { url: "http://localhost:9400" } } }),
+      [claudePath]: JSON.stringify({
+        mcpServers: { "tool-evolver": { url: "http://localhost:9400" } },
+      }),
     });
 
     const stdoutChunks: string[] = [];

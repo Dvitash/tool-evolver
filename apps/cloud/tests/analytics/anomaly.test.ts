@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { AnomalyDetector } from "../../src/analytics/anomaly.js";
 import { MetricsRepository } from "../../src/analytics/repositories/metrics-repository.js";
 import type { TelemetryBatchRequest } from "../../src/analytics/types.js";
@@ -143,11 +143,23 @@ describe("AnomalyDetector: Lifecycle Sequences & Cardinality Integrity", () => {
 
   it("should detect monotonic counter resets in a session", async () => {
     // Sequence 1: 10
-    const alert1 = await detector.checkSequenceCounter(workspaceId, "sess_1", "tool_x", "1.0.0", 10);
+    const alert1 = await detector.checkSequenceCounter(
+      workspaceId,
+      "sess_1",
+      "tool_x",
+      "1.0.0",
+      10,
+    );
     expect(alert1).toBeNull();
 
     // Sequence 2: 25 (increasing, normal)
-    const alert2 = await detector.checkSequenceCounter(workspaceId, "sess_1", "tool_x", "1.0.0", 25);
+    const alert2 = await detector.checkSequenceCounter(
+      workspaceId,
+      "sess_1",
+      "tool_x",
+      "1.0.0",
+      25,
+    );
     expect(alert2).toBeNull();
 
     // Sequence 3: 5 (counter decreased -> reset anomaly)
@@ -157,7 +169,13 @@ describe("AnomalyDetector: Lifecycle Sequences & Cardinality Integrity", () => {
   });
 
   it("should resolve anomaly alerts via repository", async () => {
-    const alert = await detector.checkSequenceCounter(workspaceId, "sess_res", "tool_r", "1.0.0", 100);
+    const alert = await detector.checkSequenceCounter(
+      workspaceId,
+      "sess_res",
+      "tool_r",
+      "1.0.0",
+      100,
+    );
     await detector.checkSequenceCounter(workspaceId, "sess_res", "tool_r", "1.0.0", 50);
 
     const alerts = await repo.queryAnomalyAlerts({ workspaceId, resolved: false });

@@ -261,10 +261,7 @@ export class SourceRecoveryEngine {
   /**
    * Creates an updated reset SourceCursor following a rotation or truncation event.
    */
-  createRecoveryCursor(
-    assessment: RecoveryAssessment,
-    sequence: number,
-  ): SourceCursor {
+  createRecoveryCursor(assessment: RecoveryAssessment, sequence: number): SourceCursor {
     return {
       offset: assessment.suggestedOffset,
       line: assessment.suggestedLine,

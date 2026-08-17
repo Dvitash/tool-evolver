@@ -1,8 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type {
-  NormalizedSessionEvent,
-  ToolManifest,
-} from "@tool-evolver/contracts";
+import type { NormalizedSessionEvent, ToolManifest } from "@tool-evolver/contracts";
 import type {
   AllowedBrokerOperation,
   CandidateTarget,
@@ -14,10 +11,7 @@ import type {
   ReplayScenarioType,
   VirtualBrokerState,
 } from "./types.js";
-import {
-  DeterministicRandom,
-  VirtualBrokerReconstructor,
-} from "./virtual-broker.js";
+import { DeterministicRandom, VirtualBrokerReconstructor } from "./virtual-broker.js";
 
 /**
  * Derives inputs, expected invariants, and baseline metrics from historical workflow episodes.
@@ -29,13 +23,19 @@ export class ReplayScenarioBuilder {
   buildScenarios(
     evidence: EvidenceSource,
     candidate: CandidateTarget,
-    options: HistoricalReplayOptions = {}
+    options: HistoricalReplayOptions = {},
   ): ReplayScenario[] {
     const events = VirtualBrokerReconstructor.extractEvents(evidence);
     const rng = new DeterministicRandom(options.seed ?? 42);
     const scenarios: ReplayScenario[] = [];
 
-    const evidenceEventIds = events.map((e) => ("eventId" in e ? e.eventId : "id" in e ? String((e as { id: unknown }).id) : "unknown-event-id"));
+    const evidenceEventIds = events.map((e) =>
+      "eventId" in e
+        ? e.eventId
+        : "id" in e
+          ? String((e as { id: unknown }).id)
+          : "unknown-event-id",
+    );
     const evidenceRevision =
       "evidenceSet" in evidence && typeof evidence.evidenceSet?.revision === "number"
         ? evidence.evidenceSet.revision
@@ -93,7 +93,7 @@ export class ReplayScenarioBuilder {
       const counterfactualScenario = this.synthesizeCounterfactualScenario(
         primaryScenario,
         manifest,
-        rng
+        rng,
       );
       if (counterfactualScenario) {
         scenarios.push(counterfactualScenario);
@@ -106,7 +106,7 @@ export class ReplayScenarioBuilder {
         primaryScenario,
         manifest,
         rng,
-        candidate
+        candidate,
       );
       scenarios.push(...negativeScenarios);
     }
@@ -163,7 +163,12 @@ export class ReplayScenarioBuilder {
       }
     }
 
-    if (totalDurationMs === 0 && minTimestamp !== null && maxTimestamp !== null && maxTimestamp >= minTimestamp) {
+    if (
+      totalDurationMs === 0 &&
+      minTimestamp !== null &&
+      maxTimestamp !== null &&
+      maxTimestamp >= minTimestamp
+    ) {
       totalDurationMs = maxTimestamp - minTimestamp;
     }
     if (totalDurationMs === 0) {
@@ -194,11 +199,13 @@ export class ReplayScenarioBuilder {
   private derivePrimaryInput(
     events: NormalizedSessionEvent[],
     manifest: ToolManifest | Partial<ToolManifest>,
-    virtualState: VirtualBrokerState
+    virtualState: VirtualBrokerState,
   ): Record<string, unknown> {
     const derived: Record<string, unknown> = {};
 
-    const paramsSchema = manifest.parameters as { properties?: Record<string, { type?: string; default?: unknown }> } | undefined;
+    const paramsSchema = manifest.parameters as
+      | { properties?: Record<string, { type?: string; default?: unknown }> }
+      | undefined;
     const properties = paramsSchema?.properties ?? {};
 
     const observedPaths: string[] = [];
@@ -212,10 +219,18 @@ export class ReplayScenarioBuilder {
         const p = tc.parameters ?? {};
         for (const [k, v] of Object.entries(p)) {
           if (typeof v === "string") {
-            if (k.toLowerCase().includes("path") || k.toLowerCase().includes("file")) observedPaths.push(v);
-            if (k.toLowerCase().includes("query") || k.toLowerCase().includes("pattern") || k.toLowerCase().includes("search")) observedQueries.push(v);
-            if (k.toLowerCase().includes("cmd") || k.toLowerCase().includes("command")) observedCommands.push(v);
-            if (k.toLowerCase().includes("url") || k.toLowerCase().includes("uri")) observedUrls.push(v);
+            if (k.toLowerCase().includes("path") || k.toLowerCase().includes("file"))
+              observedPaths.push(v);
+            if (
+              k.toLowerCase().includes("query") ||
+              k.toLowerCase().includes("pattern") ||
+              k.toLowerCase().includes("search")
+            )
+              observedQueries.push(v);
+            if (k.toLowerCase().includes("cmd") || k.toLowerCase().includes("command"))
+              observedCommands.push(v);
+            if (k.toLowerCase().includes("url") || k.toLowerCase().includes("uri"))
+              observedUrls.push(v);
           }
         }
       }
@@ -237,7 +252,12 @@ export class ReplayScenarioBuilder {
       const lower = propName.toLowerCase();
       if (lower.includes("path") || lower.includes("file") || lower.includes("target")) {
         derived[propName] = observedPaths[0] ?? availableFiles[0] ?? "/workspace/main.ts";
-      } else if (lower.includes("query") || lower.includes("pattern") || lower.includes("search") || lower.includes("filter")) {
+      } else if (
+        lower.includes("query") ||
+        lower.includes("pattern") ||
+        lower.includes("search") ||
+        lower.includes("filter")
+      ) {
         derived[propName] = observedQueries[0] ?? "export";
       } else if (lower.includes("cmd") || lower.includes("command")) {
         derived[propName] = observedCommands[0] ?? "npm test";
@@ -274,9 +294,7 @@ export class ReplayScenarioBuilder {
   /**
    * Derives allowed broker operations based on required capabilities and manifests.
    */
-  private deriveAllowedBrokerOperations(
-    candidate: CandidateTarget
-  ): AllowedBrokerOperation[] {
+  private deriveAllowedBrokerOperations(candidate: CandidateTarget): AllowedBrokerOperation[] {
     const allowed: AllowedBrokerOperation[] = [];
     const caps =
       "requiredCapabilities" in candidate && candidate.requiredCapabilities
@@ -339,7 +357,7 @@ export class ReplayScenarioBuilder {
    */
   private buildPrimaryInvariants(
     manifest: ToolManifest | Partial<ToolManifest>,
-    events: NormalizedSessionEvent[]
+    events: NormalizedSessionEvent[],
   ): ReplayInvariant[] {
     const invariants: ReplayInvariant[] = [];
 
@@ -357,7 +375,8 @@ export class ReplayScenarioBuilder {
       id: "inv-side-effects",
       name: "Side-Effect Containment",
       type: "side_effect_containment",
-      description: "Candidate must not invoke unauthorized broker operations outside declared boundaries.",
+      description:
+        "Candidate must not invoke unauthorized broker operations outside declared boundaries.",
       severity: "critical",
     });
 
@@ -375,7 +394,8 @@ export class ReplayScenarioBuilder {
       id: "inv-operation-ordering",
       name: "Causal Operation Ordering",
       type: "operation_ordering",
-      description: "Operations must execute in valid causal order (e.g. read before write/execute).",
+      description:
+        "Operations must execute in valid causal order (e.g. read before write/execute).",
       severity: "warning",
     });
 
@@ -384,7 +404,9 @@ export class ReplayScenarioBuilder {
     if (lastResultEvent) {
       const tr = lastResultEvent as unknown as { result?: unknown };
       if (tr.result !== undefined && tr.result !== null) {
-        const outSchema = manifest.outputSchema as { properties?: Record<string, unknown> } | undefined;
+        const outSchema = manifest.outputSchema as
+          | { properties?: Record<string, unknown> }
+          | undefined;
         const schemaProps = outSchema?.properties ? Object.keys(outSchema.properties) : [];
         const isCompatible =
           schemaProps.length === 0 ||
@@ -414,20 +436,28 @@ export class ReplayScenarioBuilder {
   private synthesizeCounterfactualScenario(
     primary: ReplayScenario,
     manifest: ToolManifest | Partial<ToolManifest>,
-    rng: DeterministicRandom
+    rng: DeterministicRandom,
   ): ReplayScenario | null {
     const counterInput = { ...primary.input };
     const counterFsFiles = { ...(primary.virtualState.fs?.files ?? {}) };
 
     let modified = false;
     for (const [key, val] of Object.entries(counterInput)) {
-      if (typeof val === "string" && (key.toLowerCase().includes("path") || key.toLowerCase().includes("file"))) {
+      if (
+        typeof val === "string" &&
+        (key.toLowerCase().includes("path") || key.toLowerCase().includes("file"))
+      ) {
         const altPath = "/workspace/counterfactual_target.ts";
         counterInput[key] = altPath;
-        counterFsFiles[altPath] = "// Counterfactual file content\nexport const counterfactual = true;\n";
+        counterFsFiles[altPath] =
+          "// Counterfactual file content\nexport const counterfactual = true;\n";
         modified = true;
         break;
-      } else if (typeof val === "string" && (key.toLowerCase().includes("query") || key.toLowerCase().includes("pattern"))) {
+      }
+      if (
+        typeof val === "string" &&
+        (key.toLowerCase().includes("query") || key.toLowerCase().includes("pattern"))
+      ) {
         counterInput[key] = `alt_${val}`;
         modified = true;
         break;
@@ -480,15 +510,22 @@ export class ReplayScenarioBuilder {
     primary: ReplayScenario,
     manifest: ToolManifest | Partial<ToolManifest>,
     rng: DeterministicRandom,
-    candidate?: CandidateTarget
+    candidate?: CandidateTarget,
   ): ReplayScenario[] {
     const negatives: ReplayScenario[] = [];
-    const caps = candidate && "requiredCapabilities" in candidate ? candidate.requiredCapabilities : undefined;
+    const caps =
+      candidate && "requiredCapabilities" in candidate ? candidate.requiredCapabilities : undefined;
 
     // 1. Missing file and permission error scenarios (if filesystem operations are involved)
-    const targetFile = Object.values(primary.input).find((v) => typeof v === "string" && (v.startsWith("/") || v.includes("."))) as string | undefined;
-    const hasFsCapability = caps?.fs ? ((caps.fs.readPaths && caps.fs.readPaths.length > 0) || (caps.fs.writePaths && caps.fs.writePaths.length > 0)) : false;
-    const hasFiles = hasFsCapability && Object.keys(primary.virtualState.fs?.files ?? {}).length > 0;
+    const targetFile = Object.values(primary.input).find(
+      (v) => typeof v === "string" && (v.startsWith("/") || v.includes(".")),
+    ) as string | undefined;
+    const hasFsCapability = caps?.fs
+      ? (caps.fs.readPaths && caps.fs.readPaths.length > 0) ||
+        (caps.fs.writePaths && caps.fs.writePaths.length > 0)
+      : false;
+    const hasFiles =
+      hasFsCapability && Object.keys(primary.virtualState.fs?.files ?? {}).length > 0;
 
     if (targetFile || hasFiles) {
       const fileToFail = targetFile ?? Object.keys(primary.virtualState.fs?.files ?? {})[0]!;
@@ -561,7 +598,9 @@ export class ReplayScenarioBuilder {
 
     // 2. Network error scenario (if network routes, URLs, or network capabilities are present)
     const hasNetRoutes = Object.keys(primary.virtualState.net?.routes ?? {}).length > 0;
-    const hasUrlInput = Object.values(primary.input).some((v) => typeof v === "string" && (v.startsWith("http://") || v.startsWith("https://")));
+    const hasUrlInput = Object.values(primary.input).some(
+      (v) => typeof v === "string" && (v.startsWith("http://") || v.startsWith("https://")),
+    );
     const hasNetCapability = caps?.net?.allowOutbound === true;
 
     if (hasNetRoutes || hasUrlInput || hasNetCapability) {
@@ -598,8 +637,12 @@ export class ReplayScenarioBuilder {
 
     // 3. Command failure scenario (if commands or command capabilities are present)
     const hasCommands = Object.keys(primary.virtualState.cmd?.commands ?? {}).length > 0;
-    const hasCmdInput = Object.keys(primary.input).some((k) => k.toLowerCase().includes("cmd") || k.toLowerCase().includes("command"));
-    const hasCmdCapability = caps?.command?.allowShellExecution === true || (caps?.command?.allowedCommands && caps.command.allowedCommands.length > 0);
+    const hasCmdInput = Object.keys(primary.input).some(
+      (k) => k.toLowerCase().includes("cmd") || k.toLowerCase().includes("command"),
+    );
+    const hasCmdCapability =
+      caps?.command?.allowShellExecution === true ||
+      (caps?.command?.allowedCommands && caps.command.allowedCommands.length > 0);
 
     if (hasCommands || hasCmdInput || hasCmdCapability) {
       negatives.push({

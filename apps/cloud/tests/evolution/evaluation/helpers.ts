@@ -4,11 +4,17 @@ import type {
   EvolutionCandidate,
   ToolManifest,
 } from "@tool-evolver/contracts";
-import type { CandidateRevision } from "../../../src/evolution/generator/types.js";
-import type { CandidateValidationResult, StaticAnalysisFinding } from "../../../src/evolution/testing/types.js";
-import type { HistoricalReplayResult, ReplayScenarioExecutionResult } from "../../../src/evolution/replay/types.js";
-import type { OpportunityDetection } from "../../../src/evolution/opportunity/types.js";
 import type { ActiveToolBaseline } from "../../../src/evolution/evaluation/types.js";
+import type { CandidateRevision } from "../../../src/evolution/generator/types.js";
+import type { OpportunityDetection } from "../../../src/evolution/opportunity/types.js";
+import type {
+  HistoricalReplayResult,
+  ReplayScenarioExecutionResult,
+} from "../../../src/evolution/replay/types.js";
+import type {
+  CandidateValidationResult,
+  StaticAnalysisFinding,
+} from "../../../src/evolution/testing/types.js";
 
 /**
  * Creates a mock ToolManifest.
@@ -101,7 +107,7 @@ export function createMockCandidateRevision(
     manifest?: Partial<ToolManifest>;
     sourceCode?: string;
     capabilities?: Partial<CapabilityManifest>;
-  } = {}
+  } = {},
 ): CandidateRevision {
   const candidateId = overrides.candidateId ?? "cand-math-123";
   const manifest = createMockToolManifest(overrides.manifest);
@@ -148,7 +154,7 @@ export default defineTool({
  * Creates a mock CandidateValidationResult.
  */
 export function createMockValidationResult(
-  overrides: Partial<CandidateValidationResult> = {}
+  overrides: Partial<CandidateValidationResult> = {},
 ): CandidateValidationResult {
   return {
     candidateId: overrides.candidateId ?? "cand-math-123",
@@ -217,7 +223,7 @@ export function createMockValidationResult(
  * Creates a mock HistoricalReplayResult.
  */
 export function createMockReplayResult(
-  overrides: Partial<HistoricalReplayResult> = {}
+  overrides: Partial<HistoricalReplayResult> = {},
 ): HistoricalReplayResult {
   const scenarioResults: ReplayScenarioExecutionResult[] = overrides.scenarioResults ?? [
     {
@@ -354,7 +360,8 @@ export function createMockReplayResult(
     },
     divergenceFindings: overrides.divergenceFindings ?? [],
     reproducibilitySeed: overrides.reproducibilitySeed ?? "repro-seed-42",
-    passedScenarioCount: overrides.passedScenarioCount ?? scenarioResults.filter((s) => s.passed).length,
+    passedScenarioCount:
+      overrides.passedScenarioCount ?? scenarioResults.filter((s) => s.passed).length,
     totalScenarioCount: overrides.totalScenarioCount ?? scenarioResults.length,
     executedAt: overrides.executedAt ?? "2026-01-01T00:00:00.000Z",
     durationMs: overrides.durationMs ?? 155,
@@ -366,7 +373,7 @@ export function createMockReplayResult(
  * Creates a mock OpportunityDetection.
  */
 export function createMockOpportunity(
-  overrides: Partial<OpportunityDetection> = {}
+  overrides: Partial<OpportunityDetection> = {},
 ): OpportunityDetection {
   return {
     id: overrides.id ?? "opp-math-001",
@@ -413,7 +420,9 @@ export function createMockOpportunity(
 /**
  * Creates a mock CapabilityEnvelope.
  */
-export function createMockEnvelope(overrides: Partial<CapabilityEnvelope> = {}): CapabilityEnvelope {
+export function createMockEnvelope(
+  overrides: Partial<CapabilityEnvelope> = {},
+): CapabilityEnvelope {
   return {
     envelopeId: overrides.envelopeId ?? "env-default",
     fs: overrides.fs ?? {
@@ -461,7 +470,7 @@ export function createMockEnvelope(overrides: Partial<CapabilityEnvelope> = {}):
  * Creates a mock ActiveToolBaseline.
  */
 export function createMockActiveBaseline(
-  overrides: Partial<ActiveToolBaseline> = {}
+  overrides: Partial<ActiveToolBaseline> = {},
 ): ActiveToolBaseline {
   const manifest = createMockToolManifest({
     version: "1.0.0",

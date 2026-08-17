@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { CodeGenerator } from "../../../src/evolution/generator/code-generator.js";
 import { CandidatePlanner } from "../../../src/evolution/generator/planner.js";
 import { RepairOrchestrator } from "../../../src/evolution/generator/repair-orchestrator.js";
-import { GeneratedArtifactSet } from "../../../src/evolution/generator/types.js";
+import type { GeneratedArtifactSet } from "../../../src/evolution/generator/types.js";
 import { createMockOpportunity } from "./helpers.js";
 
 describe("RepairOrchestrator", () => {
@@ -37,7 +37,12 @@ describe("RepairOrchestrator", () => {
         outputSchema: plan.outputSchema,
         runtime: plan.runtime,
         capabilities: plan.capabilityRequirements,
-        limits: { timeoutMs: 30000, maxOutputBytes: 1048576, maxMemoryBytes: 134217728, maxConcurrentInvocations: 4 },
+        limits: {
+          timeoutMs: 30000,
+          maxOutputBytes: 1048576,
+          maxMemoryBytes: 134217728,
+          maxConcurrentInvocations: 4,
+        },
         scope: "workspace",
         digest: "hash-123",
         metadata: {},
@@ -88,11 +93,43 @@ export default defineTool(async (context: ToolContext) => {
 
     // Empty capabilities in initial artifacts
     const emptyCapabilities = {
-      fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 1048576 },
-      net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"] as ("https")[], allowLocalhost: false, denyPrivateRanges: true },
-      command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-      secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-      limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+      fs: {
+        readPaths: [],
+        writePaths: [],
+        allowWorkspaceRoot: false,
+        allowTemp: false,
+        denyPaths: [],
+        maxFileSizeBytes: 1048576,
+      },
+      net: {
+        allowOutbound: false,
+        allowedDomains: [],
+        allowedHosts: [],
+        allowedPorts: [],
+        allowedProtocols: ["https"] as "https"[],
+        allowLocalhost: false,
+        denyPrivateRanges: true,
+      },
+      command: {
+        allowShellExecution: false,
+        allowedCommands: [],
+        allowedBinaries: [],
+        forbiddenPatterns: [],
+        allowEnvPassthrough: [],
+      },
+      secrets: {
+        allowedSecretNames: [],
+        allowedPrefixes: [],
+        denyDirectRead: true,
+        injectAsEnv: true,
+      },
+      limits: {
+        maxConcurrentExecutions: 4,
+        maxCpuUsagePercent: 100,
+        maxMemoryMb: 128,
+        maxExecutionTimeMs: 30000,
+        maxOutputSizeBytes: 1048576,
+      },
     };
 
     const artifacts: GeneratedArtifactSet = {
@@ -106,7 +143,12 @@ export default defineTool(async (context: ToolContext) => {
         outputSchema: plan.outputSchema,
         runtime: plan.runtime,
         capabilities: emptyCapabilities,
-        limits: { timeoutMs: 30000, maxOutputBytes: 1048576, maxMemoryBytes: 134217728, maxConcurrentInvocations: 4 },
+        limits: {
+          timeoutMs: 30000,
+          maxOutputBytes: 1048576,
+          maxMemoryBytes: 134217728,
+          maxConcurrentInvocations: 4,
+        },
         scope: "workspace",
         digest: "hash-123",
         metadata: {},
@@ -151,7 +193,12 @@ export default defineTool(async (context: ToolContext) => {
         parameters: plan.inputSchema,
         runtime: plan.runtime,
         capabilities: plan.capabilityRequirements,
-        limits: { timeoutMs: 30000, maxOutputBytes: 1048576, maxMemoryBytes: 134217728, maxConcurrentInvocations: 4 },
+        limits: {
+          timeoutMs: 30000,
+          maxOutputBytes: 1048576,
+          maxMemoryBytes: 134217728,
+          maxConcurrentInvocations: 4,
+        },
         scope: "workspace",
         digest: "hash-123",
         metadata: {},

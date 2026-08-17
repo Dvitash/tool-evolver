@@ -1,9 +1,6 @@
-import { NormalizedSessionEvent, hashCanonicalContent } from "@tool-evolver/contracts";
-import { Queryable } from "../db/client.js";
-import {
-  IngestionReceipt,
-  IngestionReceiptRepository,
-} from "./receipt-repository.js";
+import { type NormalizedSessionEvent, hashCanonicalContent } from "@tool-evolver/contracts";
+import type { Queryable } from "../db/client.js";
+import type { IngestionReceipt, IngestionReceiptRepository } from "./receipt-repository.js";
 
 /**
  * Custom error thrown when a duplicate batch submission has conflicting/altered content (HTTP 409).

@@ -18,7 +18,8 @@ export class FakeClock {
   private readonly initialEpochMs: number;
 
   constructor(initialTime: number | string | Date = "2026-08-17T12:00:00.000Z") {
-    this.initialEpochMs = typeof initialTime === "number" ? initialTime : new Date(initialTime).getTime();
+    this.initialEpochMs =
+      typeof initialTime === "number" ? initialTime : new Date(initialTime).getTime();
     this.currentEpochMs = this.initialEpochMs;
   }
 
@@ -43,7 +44,8 @@ export class FakeClock {
 
   /** Set clock to a specific target time */
   set(targetTime: number | string | Date): number {
-    this.currentEpochMs = typeof targetTime === "number" ? targetTime : new Date(targetTime).getTime();
+    this.currentEpochMs =
+      typeof targetTime === "number" ? targetTime : new Date(targetTime).getTime();
     return this.currentEpochMs;
   }
 
@@ -51,7 +53,9 @@ export class FakeClock {
   advanceTo(targetTime: number | string | Date): number {
     const targetMs = typeof targetTime === "number" ? targetTime : new Date(targetTime).getTime();
     if (targetMs < this.currentEpochMs) {
-      throw new Error(`Target time ${new Date(targetMs).toISOString()} is behind current time ${this.iso()}`);
+      throw new Error(
+        `Target time ${new Date(targetMs).toISOString()} is behind current time ${this.iso()}`,
+      );
     }
     this.currentEpochMs = targetMs;
     return this.currentEpochMs;
@@ -59,7 +63,12 @@ export class FakeClock {
 
   /** Reset clock to initial time */
   reset(time?: number | string | Date): void {
-    this.currentEpochMs = time !== undefined ? (typeof time === "number" ? time : new Date(time).getTime()) : this.initialEpochMs;
+    this.currentEpochMs =
+      time !== undefined
+        ? typeof time === "number"
+          ? time
+          : new Date(time).getTime()
+        : this.initialEpochMs;
   }
 }
 
@@ -374,7 +383,9 @@ export class InMemoryArtifactStore {
     return actualDigest === digest;
   }
 
-  async list(): Promise<Array<{ digest: string; size: number; metadata?: Record<string, unknown>; createdAt: string }>> {
+  async list(): Promise<
+    Array<{ digest: string; size: number; metadata?: Record<string, unknown>; createdAt: string }>
+  > {
     return Object.values(this.artifacts).map((a) => ({
       digest: a.digest,
       size: a.size,
@@ -523,11 +534,13 @@ export interface DeterministicEnvironment {
   reset(): void;
 }
 
-export function createDeterministicEnvironment(options: {
-  initialTime?: string | number | Date;
-  seed?: number;
-  events?: NormalizedSessionEvent[];
-} = {}): DeterministicEnvironment {
+export function createDeterministicEnvironment(
+  options: {
+    initialTime?: string | number | Date;
+    seed?: number;
+    events?: NormalizedSessionEvent[];
+  } = {},
+): DeterministicEnvironment {
   const clock = new FakeClock(options.initialTime);
   const idGen = new DeterministicIdGenerator(options.seed);
   const fs = new InMemoryFileSystem();

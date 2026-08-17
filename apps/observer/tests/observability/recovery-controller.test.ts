@@ -86,17 +86,23 @@ describe("RecoveryController", () => {
 
       // 3 failures
       for (let i = 0; i < 3; i++) {
-        await expect(breaker.execute(async () => { throw new Error("err"); })).rejects.toThrow("err");
+        await expect(
+          breaker.execute(async () => {
+            throw new Error("err");
+          }),
+        ).rejects.toThrow("err");
       }
 
       expect(breaker.getState()).toBe("OPEN");
 
       // Immediate subsequent call fails fast without executing op
       let executed = false;
-      await expect(breaker.execute(async () => {
-        executed = true;
-        return "val";
-      })).rejects.toThrow(/Circuit breaker is OPEN/);
+      await expect(
+        breaker.execute(async () => {
+          executed = true;
+          return "val";
+        }),
+      ).rejects.toThrow(/Circuit breaker is OPEN/);
 
       expect(executed).toBe(false);
     });
@@ -110,7 +116,11 @@ describe("RecoveryController", () => {
 
       // Fail twice
       for (let i = 0; i < 2; i++) {
-        await expect(breaker.execute(async () => { throw new Error("err"); })).rejects.toThrow();
+        await expect(
+          breaker.execute(async () => {
+            throw new Error("err");
+          }),
+        ).rejects.toThrow();
       }
 
       expect(breaker.getState()).toBe("OPEN");
@@ -183,7 +193,11 @@ describe("RecoveryController", () => {
     it("automatically quarantines tool version after consecutive failures", async () => {
       const auditTrail = createAuditTrailManager();
       const killSwitches = createKillSwitchManager();
-      const controller = createRecoveryController({ quarantineThreshold: 3 }, auditTrail, killSwitches);
+      const controller = createRecoveryController(
+        { quarantineThreshold: 3 },
+        auditTrail,
+        killSwitches,
+      );
 
       const toolId = "custom_scout";
       const version = "1.2.0";
@@ -198,7 +212,11 @@ describe("RecoveryController", () => {
       expect(r2.quarantined).toBe(false);
 
       // 3rd consecutive failure -> should trigger quarantine
-      const r3 = await controller.recordToolFailure(toolId, version, new Error("Segfault in worker"));
+      const r3 = await controller.recordToolFailure(
+        toolId,
+        version,
+        new Error("Segfault in worker"),
+      );
       expect(r3.quarantined).toBe(true);
       expect(r3.reason).toContain("failed 3 consecutive times");
       expect(controller.isToolQuarantined(toolId, version)).toBe(true);

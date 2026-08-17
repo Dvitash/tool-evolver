@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { EvaluationCalibrator } from "../../src/analytics/calibration.js";
 import { RolloutWindowMaterializer } from "../../src/analytics/materializer.js";
 import { MetricsRepository } from "../../src/analytics/repositories/metrics-repository.js";
@@ -178,7 +178,7 @@ describe("EvaluationCalibrator: Predeployment Predictions vs Canary Outcomes", (
       version,
       candidateId,
       evaluationId,
-      predictedSuccessRate: 0.50, // Pessimistic prediction
+      predictedSuccessRate: 0.5, // Pessimistic prediction
       predictedP95LatencyMs: 150,
     });
 

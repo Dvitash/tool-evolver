@@ -1,6 +1,10 @@
 import type { CapabilityEnvelope, ToolManifest } from "@tool-evolver/contracts";
 import { describe, expect, it } from "vitest";
-import { formatMcpToolName, resolveNameCollision, sanitizeToolName } from "../../src/registry/naming.js";
+import {
+  formatMcpToolName,
+  resolveNameCollision,
+  sanitizeToolName,
+} from "../../src/registry/naming.js";
 import { computeManifestDigest, validateToolStaging } from "../../src/registry/validator.js";
 
 function makeManifest(overrides?: Partial<ToolManifest>): ToolManifest {
@@ -22,11 +26,43 @@ function makeManifest(overrides?: Partial<ToolManifest>): ToolManifest {
       maxOutputSizeBytes: 1048576,
     },
     capabilities: overrides?.capabilities ?? {
-      fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
-      net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https" as const], allowLocalhost: false, denyPrivateRanges: true },
-      command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-      secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-      limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+      fs: {
+        readPaths: [],
+        writePaths: [],
+        allowWorkspaceRoot: true,
+        allowTemp: true,
+        denyPaths: [],
+        maxFileSizeBytes: 10485760,
+      },
+      net: {
+        allowOutbound: false,
+        allowedDomains: [],
+        allowedHosts: [],
+        allowedPorts: [],
+        allowedProtocols: ["https" as const],
+        allowLocalhost: false,
+        denyPrivateRanges: true,
+      },
+      command: {
+        allowShellExecution: false,
+        allowedCommands: [],
+        allowedBinaries: [],
+        forbiddenPatterns: [],
+        allowEnvPassthrough: [],
+      },
+      secrets: {
+        allowedSecretNames: [],
+        allowedPrefixes: [],
+        denyDirectRead: true,
+        injectAsEnv: true,
+      },
+      limits: {
+        maxConcurrentExecutions: 4,
+        maxCpuUsagePercent: 100,
+        maxMemoryMb: 128,
+        maxExecutionTimeMs: 30000,
+        maxOutputSizeBytes: 1048576,
+      },
     },
     limits: overrides?.limits ?? {
       timeoutMs: 30000,
@@ -105,7 +141,9 @@ describe("ToolRegistry - Pre-Staging Validation & Capability Envelope Enforcemen
   });
 
   it("rejects manifest with digest mismatch", () => {
-    const manifest = makeManifest({ digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000" });
+    const manifest = makeManifest({
+      digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    });
     const result = validateToolStaging(manifest);
 
     expect(result.valid).toBe(false);
@@ -174,7 +212,9 @@ describe("ToolRegistry - Pre-Staging Validation & Capability Envelope Enforcemen
     const result = validateToolStaging(manifestWithUnauthorizedHost, undefined, envelope);
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.includes("Localhost access is disabled"))).toBe(true);
-    expect(result.errors.some((e) => e.includes("outside capability envelope allowedHosts"))).toBe(true);
+    expect(result.errors.some((e) => e.includes("outside capability envelope allowedHosts"))).toBe(
+      true,
+    );
   });
 
   it("rejects dangerous or forbidden commands", () => {
@@ -194,7 +234,9 @@ describe("ToolRegistry - Pre-Staging Validation & Capability Envelope Enforcemen
 
     const result = validateToolStaging(manifestWithDangerousCmd, undefined, envelope);
     expect(result.valid).toBe(false);
-    expect(result.errors.some((e) => e.includes("prohibited") || e.includes("forbiddenPattern"))).toBe(true);
+    expect(
+      result.errors.some((e) => e.includes("prohibited") || e.includes("forbiddenPattern")),
+    ).toBe(true);
   });
 
   it("rejects new capability requests when envelope is frozen", () => {

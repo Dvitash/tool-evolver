@@ -4,9 +4,9 @@ import type {
   NormalizedSessionEvent,
   ToolManifest,
 } from "@tool-evolver/contracts";
+import type { EvidenceSetEntity, ResolvedEvidenceSet } from "../../storage/models/evidence.js";
 import type { CandidateRevision } from "../generator/types.js";
 import type { Episode } from "../opportunity/types.js";
-import type { ResolvedEvidenceSet, EvidenceSetEntity } from "../../storage/models/evidence.js";
 import type { CandidateValidationTarget } from "../testing/types.js";
 
 /**

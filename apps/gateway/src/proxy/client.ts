@@ -11,12 +11,12 @@ import {
   type CatalogSnapshotRequest,
   type CatalogSnapshotResponse,
   CatalogSnapshotResponseSchema,
-  ProtocolError,
   type ProtocolClient,
+  ProtocolError,
   ValidationError,
 } from "@tool-evolver/protocol";
-import { CloudCircuitBreaker } from "./circuit-breaker.js";
 import { computeManifestDigest } from "../registry/validator.js";
+import { CloudCircuitBreaker } from "./circuit-breaker.js";
 
 export interface CloudCatalogClientOptions {
   workspaceId: string;
@@ -27,7 +27,10 @@ export interface CloudCatalogClientOptions {
   circuitBreaker?: CloudCircuitBreaker;
   defaultEnvelope?: CapabilityEnvelope;
   fetchFn?: typeof fetch;
-  snapshotFetcher?: (request: CatalogSnapshotRequest, signal?: AbortSignal) => Promise<CatalogSnapshotResponse>;
+  snapshotFetcher?: (
+    request: CatalogSnapshotRequest,
+    signal?: AbortSignal,
+  ) => Promise<CatalogSnapshotResponse>;
 }
 
 export class CloudCatalogClient {
@@ -39,7 +42,10 @@ export class CloudCatalogClient {
   private readonly circuitBreaker: CloudCircuitBreaker;
   private readonly defaultEnvelope?: CapabilityEnvelope;
   private readonly fetchFn: typeof fetch;
-  private readonly snapshotFetcher?: (request: CatalogSnapshotRequest, signal?: AbortSignal) => Promise<CatalogSnapshotResponse>;
+  private readonly snapshotFetcher?: (
+    request: CatalogSnapshotRequest,
+    signal?: AbortSignal,
+  ) => Promise<CatalogSnapshotResponse>;
 
   constructor(options: CloudCatalogClientOptions) {
     this.workspaceId = options.workspaceId;
@@ -60,18 +66,20 @@ export class CloudCatalogClient {
   /**
    * Fetches a scoped cloud catalog snapshot, validating schema, canonical checksum, and manifest digests.
    */
-  async fetchCatalogSnapshot(options: {
-    currentVersion?: string;
-    filterScopes?: string[];
-    signal?: AbortSignal;
-  } = {}): Promise<CatalogSnapshotResponse> {
+  async fetchCatalogSnapshot(
+    options: {
+      currentVersion?: string;
+      filterScopes?: string[];
+      signal?: AbortSignal;
+    } = {},
+  ): Promise<CatalogSnapshotResponse> {
     // 1. Check circuit breaker state
     if (!this.circuitBreaker.canExecute()) {
       const health = this.circuitBreaker.getHealth();
       throw new ProtocolError(
         "retryable",
         `Cloud catalog service is currently offline/unavailable (circuit state: ${health.circuitState}, status: ${health.status})`,
-        { status: 503, details: { health } }
+        { status: 503, details: { health } },
       );
     }
 
@@ -102,21 +110,27 @@ export class CloudCatalogClient {
       });
 
       if (normalizeSha256(computedChecksum) !== normalizeSha256(response.checksum)) {
-        throw new ValidationError("Catalog snapshot checksum mismatch: payload may be tampered or corrupted", {
-          details: {
-            expected: response.checksum,
-            computed: computedChecksum,
+        throw new ValidationError(
+          "Catalog snapshot checksum mismatch: payload may be tampered or corrupted",
+          {
+            details: {
+              expected: response.checksum,
+              computed: computedChecksum,
+            },
           },
-        });
+        );
       }
 
       // 5. Validate individual ToolManifests and digests
       for (const tool of response.tools) {
         const manifestResult = ToolManifestSchema.safeParse(tool);
         if (!manifestResult.success) {
-          throw new ValidationError(`Invalid tool manifest schema for tool '${tool.id || tool.name}'`, {
-            details: { issues: manifestResult.error.issues, toolId: tool.id },
-          });
+          throw new ValidationError(
+            `Invalid tool manifest schema for tool '${tool.id || tool.name}'`,
+            {
+              details: { issues: manifestResult.error.issues, toolId: tool.id },
+            },
+          );
         }
 
         // Verify manifest digest
@@ -124,9 +138,12 @@ export class CloudCatalogClient {
         if (manifest.digest) {
           const computedDigest = computeManifestDigest(manifest);
           if (normalizeSha256(manifest.digest) !== normalizeSha256(computedDigest)) {
-            throw new ValidationError(`Manifest digest verification failed for tool '${manifest.id}'`, {
-              details: { declaredDigest: manifest.digest, computedDigest },
-            });
+            throw new ValidationError(
+              `Manifest digest verification failed for tool '${manifest.id}'`,
+              {
+                details: { declaredDigest: manifest.digest, computedDigest },
+              },
+            );
           }
         }
       }
@@ -144,7 +161,7 @@ export class CloudCatalogClient {
 
   private async executeFetch(
     request: CatalogSnapshotRequest,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<unknown> {
     // Path 1: Custom snapshot fetcher
     if (this.snapshotFetcher) {
@@ -169,10 +186,10 @@ export class CloudCatalogClient {
       }
 
       const headers: Record<string, string> = {
-        "Accept": "application/json",
+        Accept: "application/json",
       };
       if (this.authToken) {
-        headers["Authorization"] = `Bearer ${this.authToken}`;
+        headers.Authorization = `Bearer ${this.authToken}`;
       }
 
       const response = await this.fetchFn(url.toString(), {
@@ -195,24 +212,41 @@ export class CloudCatalogClient {
           `HTTP error ${response.status}: ${response.statusText}`;
 
         if (response.status === 401 || response.status === 403) {
-          throw new ProtocolError("unauthorized", message, { status: response.status, details: parsedError ?? undefined });
+          throw new ProtocolError("unauthorized", message, {
+            status: response.status,
+            details: parsedError ?? undefined,
+          });
         }
         if (response.status === 426) {
-          throw new ProtocolError("upgrade_required", message, { status: 426, details: parsedError ?? undefined });
+          throw new ProtocolError("upgrade_required", message, {
+            status: 426,
+            details: parsedError ?? undefined,
+          });
         }
         if (response.status === 429) {
-          throw new ProtocolError("rate_limited", message, { status: 429, details: parsedError ?? undefined });
+          throw new ProtocolError("rate_limited", message, {
+            status: 429,
+            details: parsedError ?? undefined,
+          });
         }
         if (response.status >= 500) {
-          throw new ProtocolError("retryable", message, { status: response.status, details: parsedError ?? undefined });
+          throw new ProtocolError("retryable", message, {
+            status: response.status,
+            details: parsedError ?? undefined,
+          });
         }
 
-        throw new ProtocolError("terminal", message, { status: response.status, details: parsedError ?? undefined });
+        throw new ProtocolError("terminal", message, {
+          status: response.status,
+          details: parsedError ?? undefined,
+        });
       }
 
       return await response.json();
     }
 
-    throw new Error("No transport configured for CloudCatalogClient (provide baseUrl, protocolClient, or snapshotFetcher)");
+    throw new Error(
+      "No transport configured for CloudCatalogClient (provide baseUrl, protocolClient, or snapshotFetcher)",
+    );
   }
 }

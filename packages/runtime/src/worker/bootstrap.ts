@@ -15,7 +15,7 @@ export interface SchemaValidationResult {
 export function validateAgainstSchema(
   schema: unknown,
   value: unknown,
-  path = ""
+  path = "",
 ): SchemaValidationResult {
   if (!schema || typeof schema !== "object") {
     return { valid: true, errors: [] };
@@ -38,23 +38,31 @@ export function validateAgainstSchema(
       errors.push(`${path || "root"}: expected string, got ${typeof value}`);
     } else if (expectedType === "number" && typeof value !== "number") {
       errors.push(`${path || "root"}: expected number, got ${typeof value}`);
-    } else if (expectedType === "integer" && (!Number.isInteger(value) || typeof value !== "number")) {
+    } else if (
+      expectedType === "integer" &&
+      (!Number.isInteger(value) || typeof value !== "number")
+    ) {
       errors.push(`${path || "root"}: expected integer, got ${typeof value}`);
     } else if (expectedType === "boolean" && typeof value !== "boolean") {
       errors.push(`${path || "root"}: expected boolean, got ${typeof value}`);
     } else if (expectedType === "array" && !Array.isArray(value)) {
       errors.push(`${path || "root"}: expected array, got ${typeof value}`);
-    } else if (expectedType === "object" && (typeof value !== "object" || value === null || Array.isArray(value))) {
-      errors.push(`${path || "root"}: expected object, got ${Array.isArray(value) ? "array" : typeof value}`);
+    } else if (
+      expectedType === "object" &&
+      (typeof value !== "object" || value === null || Array.isArray(value))
+    ) {
+      errors.push(
+        `${path || "root"}: expected object, got ${Array.isArray(value) ? "array" : typeof value}`,
+      );
     }
   }
 
   // If value is an object, validate properties & required fields
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
     const obj = value as Record<string, unknown>;
-    const properties = (s.properties && typeof s.properties === "object"
-      ? s.properties
-      : {}) as Record<string, unknown>;
+    const properties = (
+      s.properties && typeof s.properties === "object" ? s.properties : {}
+    ) as Record<string, unknown>;
     const required = Array.isArray(s.required) ? (s.required as string[]) : [];
     const additionalProperties = s.additionalProperties !== false;
 

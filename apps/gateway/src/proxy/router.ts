@@ -3,7 +3,7 @@ import { JSON_RPC_ERROR_CODES, MCP_ERROR_CODES, McpProtocolError } from "../prot
 import type { CallToolResult } from "../protocol/types.js";
 import type { ToolCallOptions, ToolHandler } from "../router.js";
 import type { WorkspaceContext } from "../workspace-resolver.js";
-import { CloudCatalogCache } from "./cache.js";
+import type { CloudCatalogCache } from "./cache.js";
 import { CloudCircuitBreaker } from "./circuit-breaker.js";
 import type { CloudInvocationContext, MockCloudMcpService } from "./mock-service.js";
 
@@ -24,7 +24,7 @@ export interface CloudInvocationRouterOptions {
   invocationForwarder?: (
     toolId: string,
     params: Record<string, unknown>,
-    context: CloudInvocationContext
+    context: CloudInvocationContext,
   ) => Promise<CallToolResult>;
 }
 
@@ -39,7 +39,7 @@ export class CloudInvocationRouter {
   private readonly invocationForwarder?: (
     toolId: string,
     params: Record<string, unknown>,
-    context: CloudInvocationContext
+    context: CloudInvocationContext,
   ) => Promise<CallToolResult>;
 
   constructor(options: CloudInvocationRouterOptions = {}) {
@@ -65,7 +65,11 @@ export class CloudInvocationRouter {
    * Factory returning a ToolHandler bound to this cloud router.
    */
   createToolHandler(toolIdOrName: string): ToolHandler {
-    return async (context: WorkspaceContext, params: Record<string, unknown>, options?: ToolCallOptions) => {
+    return async (
+      context: WorkspaceContext,
+      params: Record<string, unknown>,
+      options?: ToolCallOptions,
+    ) => {
       return await this.forwardInvocation(toolIdOrName, params, context, options);
     };
   }
@@ -85,15 +89,19 @@ export class CloudInvocationRouter {
     toolIdOrName: string,
     params: Record<string, unknown>,
     workspaceContext: WorkspaceContext,
-    options: ToolCallOptions = {}
+    options: ToolCallOptions = {},
   ): Promise<CallToolResult> {
     // 1. Check Hard Expiry & Cache Availability
     if (this.catalogCache) {
-      const availabilityInfo = this.catalogCache.getToolAvailability(toolIdOrName, workspaceContext.workspaceId);
+      const availabilityInfo = this.catalogCache.getToolAvailability(
+        toolIdOrName,
+        workspaceContext.workspaceId,
+      );
       if (availabilityInfo.availability === "expired") {
         throw new McpProtocolError(
           MCP_ERROR_CODES.TOOL_NOT_FOUND,
-          availabilityInfo.reason || `Cloud tool '${toolIdOrName}' has expired past hard TTL and cannot be executed offline`
+          availabilityInfo.reason ||
+            `Cloud tool '${toolIdOrName}' has expired past hard TTL and cannot be executed offline`,
         );
       }
     }
@@ -103,7 +111,7 @@ export class CloudInvocationRouter {
       const health = this.circuitBreaker.getHealth();
       throw new McpProtocolError(
         MCP_ERROR_CODES.CONNECTION_CLOSED,
-        `Cloud service is currently offline/unavailable (circuit: ${health.circuitState}, status: ${health.status}). Invocation rejected (no silent queuing).`
+        `Cloud service is currently offline/unavailable (circuit: ${health.circuitState}, status: ${health.status}). Invocation rejected (no silent queuing).`,
       );
     }
 
@@ -123,7 +131,10 @@ export class CloudInvocationRouter {
 
     if (options.signal) {
       if (options.signal.aborted) {
-        throw new McpProtocolError(MCP_ERROR_CODES.CANCELLED, "Tool invocation was cancelled by caller");
+        throw new McpProtocolError(
+          MCP_ERROR_CODES.CANCELLED,
+          "Tool invocation was cancelled by caller",
+        );
       }
       options.signal.addEventListener("abort", () => {
         abortController.abort(new Error("Caller cancelled tool invocation"));
@@ -157,7 +168,7 @@ export class CloudInvocationRouter {
         this.circuitBreaker.recordFailure(error);
         throw new McpProtocolError(
           MCP_ERROR_CODES.REQUEST_TIMEOUT,
-          `Tool invocation for '${toolIdOrName}' timed out after ${timeoutMs}ms`
+          `Tool invocation for '${toolIdOrName}' timed out after ${timeoutMs}ms`,
         );
       }
 
@@ -177,7 +188,7 @@ export class CloudInvocationRouter {
   private async dispatch(
     toolIdOrName: string,
     params: Record<string, unknown>,
-    context: CloudInvocationContext
+    context: CloudInvocationContext,
   ): Promise<CallToolResult> {
     // Strategy 1: Custom forwarder function
     if (this.invocationForwarder) {
@@ -194,7 +205,7 @@ export class CloudInvocationRouter {
       const url = `${this.baseUrl}/v1/tools/${encodeURIComponent(toolIdOrName)}/invoke`;
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
-        "Accept": "application/json",
+        Accept: "application/json",
         "X-Idempotency-Key": context.idempotencyKey,
         "X-Workspace-Id": context.workspaceContext.workspaceId,
         "X-Session-Id": context.workspaceContext.sessionId || "",
@@ -203,7 +214,7 @@ export class CloudInvocationRouter {
       };
 
       if (this.authToken) {
-        headers["Authorization"] = `Bearer ${this.authToken}`;
+        headers.Authorization = `Bearer ${this.authToken}`;
       }
 
       const body = JSON.stringify({
@@ -262,7 +273,7 @@ export class CloudInvocationRouter {
 
     throw new McpProtocolError(
       JSON_RPC_ERROR_CODES.INTERNAL_ERROR,
-      `No cloud invocation transport configured for tool '${toolIdOrName}'`
+      `No cloud invocation transport configured for tool '${toolIdOrName}'`,
     );
   }
 
@@ -274,32 +285,66 @@ export class CloudInvocationRouter {
     const msg = error instanceof Error ? error.message : String(error ?? "Unknown error");
 
     if (msg.includes("not found") || msg.includes("404")) {
-      return new McpProtocolError(MCP_ERROR_CODES.TOOL_NOT_FOUND, `Cloud tool '${toolName}' not found: ${msg}`);
-    }
-
-    if (msg.includes("Unauthorized") || msg.includes("401") || msg.includes("unauthorized") || msg.includes("token expired")) {
-      return new McpProtocolError(MCP_ERROR_CODES.UNAUTHORIZED, `Unauthorized cloud tool invocation: ${msg}`);
-    }
-
-    if (msg.includes("Rate limit") || msg.includes("429") || msg.includes("rate_limited")) {
-      return new McpProtocolError(MCP_ERROR_CODES.RATE_LIMITED, `Cloud tool invocation rate limited: ${msg}`);
-    }
-
-    if (msg.includes("timed out") || msg.includes("Timeout") || msg.includes("504") || msg.includes("408")) {
-      return new McpProtocolError(MCP_ERROR_CODES.REQUEST_TIMEOUT, `Cloud tool invocation timed out: ${msg}`);
-    }
-
-    if (msg.includes("aborted") || msg.includes("cancelled") || msg.includes("Cancelled")) {
-      return new McpProtocolError(MCP_ERROR_CODES.CANCELLED, `Cloud tool invocation cancelled: ${msg}`);
-    }
-
-    if (msg.includes("ECONNREFUSED") || msg.includes("offline") || msg.includes("502") || msg.includes("503") || msg.includes("closed")) {
       return new McpProtocolError(
-        MCP_ERROR_CODES.CONNECTION_CLOSED,
-        `Cloud service unavailable for tool '${toolName}': ${msg} (no silent queuing)`
+        MCP_ERROR_CODES.TOOL_NOT_FOUND,
+        `Cloud tool '${toolName}' not found: ${msg}`,
       );
     }
 
-    return new McpProtocolError(JSON_RPC_ERROR_CODES.INTERNAL_ERROR, `Cloud tool '${toolName}' invocation error: ${msg}`);
+    if (
+      msg.includes("Unauthorized") ||
+      msg.includes("401") ||
+      msg.includes("unauthorized") ||
+      msg.includes("token expired")
+    ) {
+      return new McpProtocolError(
+        MCP_ERROR_CODES.UNAUTHORIZED,
+        `Unauthorized cloud tool invocation: ${msg}`,
+      );
+    }
+
+    if (msg.includes("Rate limit") || msg.includes("429") || msg.includes("rate_limited")) {
+      return new McpProtocolError(
+        MCP_ERROR_CODES.RATE_LIMITED,
+        `Cloud tool invocation rate limited: ${msg}`,
+      );
+    }
+
+    if (
+      msg.includes("timed out") ||
+      msg.includes("Timeout") ||
+      msg.includes("504") ||
+      msg.includes("408")
+    ) {
+      return new McpProtocolError(
+        MCP_ERROR_CODES.REQUEST_TIMEOUT,
+        `Cloud tool invocation timed out: ${msg}`,
+      );
+    }
+
+    if (msg.includes("aborted") || msg.includes("cancelled") || msg.includes("Cancelled")) {
+      return new McpProtocolError(
+        MCP_ERROR_CODES.CANCELLED,
+        `Cloud tool invocation cancelled: ${msg}`,
+      );
+    }
+
+    if (
+      msg.includes("ECONNREFUSED") ||
+      msg.includes("offline") ||
+      msg.includes("502") ||
+      msg.includes("503") ||
+      msg.includes("closed")
+    ) {
+      return new McpProtocolError(
+        MCP_ERROR_CODES.CONNECTION_CLOSED,
+        `Cloud service unavailable for tool '${toolName}': ${msg} (no silent queuing)`,
+      );
+    }
+
+    return new McpProtocolError(
+      JSON_RPC_ERROR_CODES.INTERNAL_ERROR,
+      `Cloud tool '${toolName}' invocation error: ${msg}`,
+    );
   }
 }

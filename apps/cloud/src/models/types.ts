@@ -46,7 +46,9 @@ export type ModelCapability = z.infer<typeof ModelCapabilitySchema>;
  */
 export const ModelPolicySchema = z.object({
   taskClass: ModelTaskClassSchema,
-  allowedPrivacyLevels: z.array(PrivacyLevelSchema).default(["cloud_sanitized", "cloud_private", "local", "airgapped"]),
+  allowedPrivacyLevels: z
+    .array(PrivacyLevelSchema)
+    .default(["cloud_sanitized", "cloud_private", "local", "airgapped"]),
   defaultTemperature: z.number().min(0).max(2).default(0.2),
   maxTemperature: z.number().min(0).max(2).default(1.0),
   maxTokens: z.number().int().positive().default(4096),

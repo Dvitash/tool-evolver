@@ -1,15 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type {
-  CapabilityManifest,
-  ToolManifest,
-} from "@tool-evolver/contracts";
-import type { ToolPlan } from "../generator/types.js";
+import type { CapabilityManifest, ToolManifest } from "@tool-evolver/contracts";
 import type { InferenceService } from "../../models/service.js";
-import type {
-  MockBrokerScenario,
-  SynthesizedTestCase,
-  SynthesizedTestSuite,
-} from "./types.js";
+import type { ToolPlan } from "../generator/types.js";
+import type { MockBrokerScenario, SynthesizedTestCase, SynthesizedTestSuite } from "./types.js";
 
 /**
  * Options for test synthesis.
@@ -38,7 +31,7 @@ export class TestSynthesizer {
     manifest: ToolManifest | Partial<ToolManifest>,
     sourceCode: string,
     plan?: ToolPlan,
-    options: TestSynthesisOptions = {}
+    options: TestSynthesisOptions = {},
   ): Promise<SynthesizedTestSuite> {
     const suiteId = `suite_${randomUUID()}`;
     const toolId = manifest.id ?? plan?.id ?? `tool_${randomUUID()}`;
@@ -61,7 +54,7 @@ export class TestSynthesizer {
           toolName,
           sourceCode,
           manifest,
-          options.tenantId
+          options.tenantId,
         );
         if (llmCases.length > 0) {
           cases.push(...llmCases);
@@ -90,12 +83,14 @@ export class TestSynthesizer {
   private generateBaselineCases(
     manifest: Partial<ToolManifest>,
     capabilities: Partial<CapabilityManifest>,
-    plan?: ToolPlan
+    plan?: ToolPlan,
   ): SynthesizedTestCase[] {
     const cases: SynthesizedTestCase[] = [];
     const params = manifest.parameters ?? { type: "object", properties: {}, required: [] };
-    const properties: Record<string, Record<string, unknown>> =
-      (params.properties as Record<string, Record<string, unknown>>) ?? {};
+    const properties: Record<string, Record<string, unknown>> = (params.properties as Record<
+      string,
+      Record<string, unknown>
+    >) ?? {};
     const required: string[] = (params.required as string[]) ?? [];
 
     const defaultValidInput = this.buildDefaultValidInput(properties, capabilities);
@@ -223,7 +218,8 @@ export class TestSynthesizer {
       cases.push({
         id: `tc_${randomUUID()}`,
         name: "Error Mode - Filesystem ENOENT",
-        description: "Simulates missing file in broker filesystem to verify clean error propagation.",
+        description:
+          "Simulates missing file in broker filesystem to verify clean error propagation.",
         testType: "error_mode",
         input: {
           ...defaultValidInput,
@@ -259,7 +255,8 @@ export class TestSynthesizer {
     const hasCmdCapability =
       !!capabilities.command &&
       (capabilities.command.allowShellExecution === true ||
-        (Array.isArray(capabilities.command.allowedCommands) && capabilities.command.allowedCommands.length > 0));
+        (Array.isArray(capabilities.command.allowedCommands) &&
+          capabilities.command.allowedCommands.length > 0));
     if (hasCmdCapability) {
       const errorScenario: MockBrokerScenario = {
         ...defaultScenario,
@@ -272,7 +269,8 @@ export class TestSynthesizer {
       cases.push({
         id: `tc_${randomUUID()}`,
         name: "Error Mode - Command Execution Failure",
-        description: "Simulates command failure with non-zero exit code to verify tool error handling.",
+        description:
+          "Simulates command failure with non-zero exit code to verify tool error handling.",
         testType: "error_mode",
         input: defaultValidInput,
         expectedOutcome: "execution_error",
@@ -284,7 +282,8 @@ export class TestSynthesizer {
     cases.push({
       id: `tc_${randomUUID()}`,
       name: "Idempotency - Sequential Repeated Invocations",
-      description: "Verifies that executing twice with identical input produces deterministic and repeatable results.",
+      description:
+        "Verifies that executing twice with identical input produces deterministic and repeatable results.",
       testType: "idempotency",
       input: defaultValidInput,
       expectedOutcome: "success",
@@ -299,7 +298,7 @@ export class TestSynthesizer {
    */
   private buildDefaultValidInput(
     properties: Record<string, Record<string, unknown>>,
-    capabilities: Partial<CapabilityManifest>
+    capabilities: Partial<CapabilityManifest>,
   ): Record<string, unknown> {
     const input: Record<string, unknown> = {};
 
@@ -341,7 +340,7 @@ export class TestSynthesizer {
    */
   private buildDefaultScenario(
     capabilities: Partial<CapabilityManifest>,
-    validInput: Record<string, unknown>
+    validInput: Record<string, unknown>,
   ): MockBrokerScenario {
     const scenario: MockBrokerScenario = {};
 
@@ -421,19 +420,22 @@ export class TestSynthesizer {
     toolName: string,
     sourceCode: string,
     manifest: Partial<ToolManifest>,
-    tenantId = "tenant-default"
+    tenantId = "tenant-default",
   ): Promise<SynthesizedTestCase[]> {
-    const response = await inferenceService.infer<{
-      toolName: string;
-      toolCode: string;
-      toolSchema: string;
-    }, {
-      suiteId: string;
-      targetTool: string;
-      unitTests: Array<{ name: string; description: string; code: string }>;
-      propertyTests: Array<{ name: string; property: string; code: string }>;
-      edgeCases: string[];
-    }>({
+    const response = await inferenceService.infer<
+      {
+        toolName: string;
+        toolCode: string;
+        toolSchema: string;
+      },
+      {
+        suiteId: string;
+        targetTool: string;
+        unitTests: Array<{ name: string; description: string; code: string }>;
+        propertyTests: Array<{ name: string; property: string; code: string }>;
+        edgeCases: string[];
+      }
+    >({
       tenantId,
       taskClass: "test_generation",
       promptTemplateId: "test_generation",
@@ -457,7 +459,7 @@ export class TestSynthesizer {
           testType: "unit",
           input: this.buildDefaultValidInput(
             (manifest.parameters?.properties as Record<string, Record<string, unknown>>) ?? {},
-            manifest.capabilities ?? {}
+            manifest.capabilities ?? {},
           ),
           expectedOutcome: "success",
         });
@@ -473,7 +475,7 @@ export class TestSynthesizer {
           testType: "property",
           input: this.buildDefaultValidInput(
             (manifest.parameters?.properties as Record<string, Record<string, unknown>>) ?? {},
-            manifest.capabilities ?? {}
+            manifest.capabilities ?? {},
           ),
           expectedOutcome: "success",
           isPropertyBased: true,

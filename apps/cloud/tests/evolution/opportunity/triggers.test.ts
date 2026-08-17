@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { EpisodeSegmenter } from "../../../src/evolution/opportunity/episode.js";
 import { StructuralClusterer } from "../../../src/evolution/opportunity/clustering.js";
+import { EpisodeSegmenter } from "../../../src/evolution/opportunity/episode.js";
 import { TriggerEvaluator } from "../../../src/evolution/opportunity/triggers.js";
 import {
   createCommandExecEvent,
@@ -16,8 +16,18 @@ describe("TriggerEvaluator", () => {
     const evaluator = new TriggerEvaluator({ minOccurrencesNormal: 3 });
 
     const createOccurrenceEvents = (sessionId: string, idPrefix: string) => [
-      createToolCallEvent({ eventId: `${idPrefix}_1`, sessionId, toolName: "read_file", parameters: { path: "src/main.ts" } }),
-      createToolResultEvent({ eventId: `${idPrefix}_2`, sessionId, toolCallId: `${idPrefix}_1`, result: "content" }),
+      createToolCallEvent({
+        eventId: `${idPrefix}_1`,
+        sessionId,
+        toolName: "read_file",
+        parameters: { path: "src/main.ts" },
+      }),
+      createToolResultEvent({
+        eventId: `${idPrefix}_2`,
+        sessionId,
+        toolCallId: `${idPrefix}_1`,
+        result: "content",
+      }),
       createFileEditEvent({ eventId: `${idPrefix}_3`, sessionId, filePath: "src/main.ts" }),
     ];
 
@@ -44,8 +54,19 @@ describe("TriggerEvaluator", () => {
     const evaluator = new TriggerEvaluator({ minOccurrencesNormal: 3 });
 
     const events = [
-      createToolCallEvent({ eventId: "e1", sessionId: "sess-1", toolName: "read_file", parameters: { path: "src/main.ts" } }),
-      createToolResultEvent({ eventId: "e2", sessionId: "sess-1", toolCallId: "e1", result: "content", durationMs: 100 }),
+      createToolCallEvent({
+        eventId: "e1",
+        sessionId: "sess-1",
+        toolName: "read_file",
+        parameters: { path: "src/main.ts" },
+      }),
+      createToolResultEvent({
+        eventId: "e2",
+        sessionId: "sess-1",
+        toolCallId: "e1",
+        result: "content",
+        durationMs: 100,
+      }),
       createFileEditEvent({ eventId: "e3", sessionId: "sess-1", filePath: "src/main.ts" }),
     ];
 
@@ -66,8 +87,19 @@ describe("TriggerEvaluator", () => {
     });
 
     const events = [
-      createToolCallEvent({ eventId: "e1", sessionId: "sess-1", toolName: "heavy_task", parameters: { target: "all" } }),
-      createToolResultEvent({ eventId: "e2", sessionId: "sess-1", toolCallId: "e1", result: "done", durationMs: 75_000 }), // 75s > 60s
+      createToolCallEvent({
+        eventId: "e1",
+        sessionId: "sess-1",
+        toolName: "heavy_task",
+        parameters: { target: "all" },
+      }),
+      createToolResultEvent({
+        eventId: "e2",
+        sessionId: "sess-1",
+        toolCallId: "e1",
+        result: "done",
+        durationMs: 75_000,
+      }), // 75s > 60s
     ];
 
     const episodes = segmenter.segmentEvents(events);
@@ -90,14 +122,57 @@ describe("TriggerEvaluator", () => {
 
     // 4 repeated failed attempts (3 retries)
     const events = [
-      createToolCallEvent({ eventId: "e1", sessionId: "sess-1", toolName: "bash", parameters: { command: "npm test" } }),
-      createToolResultEvent({ eventId: "e2", sessionId: "sess-1", toolCallId: "e1", result: "fail", isError: true }),
-      createToolCallEvent({ eventId: "e3", sessionId: "sess-1", toolName: "bash", parameters: { command: "npm test" } }),
-      createToolResultEvent({ eventId: "e4", sessionId: "sess-1", toolCallId: "e3", result: "fail", isError: true }),
-      createToolCallEvent({ eventId: "e5", sessionId: "sess-1", toolName: "bash", parameters: { command: "npm test" } }),
-      createToolResultEvent({ eventId: "e6", sessionId: "sess-1", toolCallId: "e5", result: "fail", isError: true }),
-      createToolCallEvent({ eventId: "e7", sessionId: "sess-1", toolName: "bash", parameters: { command: "npm test" } }),
-      createToolResultEvent({ eventId: "e8", sessionId: "sess-1", toolCallId: "e7", result: "success" }),
+      createToolCallEvent({
+        eventId: "e1",
+        sessionId: "sess-1",
+        toolName: "bash",
+        parameters: { command: "npm test" },
+      }),
+      createToolResultEvent({
+        eventId: "e2",
+        sessionId: "sess-1",
+        toolCallId: "e1",
+        result: "fail",
+        isError: true,
+      }),
+      createToolCallEvent({
+        eventId: "e3",
+        sessionId: "sess-1",
+        toolName: "bash",
+        parameters: { command: "npm test" },
+      }),
+      createToolResultEvent({
+        eventId: "e4",
+        sessionId: "sess-1",
+        toolCallId: "e3",
+        result: "fail",
+        isError: true,
+      }),
+      createToolCallEvent({
+        eventId: "e5",
+        sessionId: "sess-1",
+        toolName: "bash",
+        parameters: { command: "npm test" },
+      }),
+      createToolResultEvent({
+        eventId: "e6",
+        sessionId: "sess-1",
+        toolCallId: "e5",
+        result: "fail",
+        isError: true,
+      }),
+      createToolCallEvent({
+        eventId: "e7",
+        sessionId: "sess-1",
+        toolName: "bash",
+        parameters: { command: "npm test" },
+      }),
+      createToolResultEvent({
+        eventId: "e8",
+        sessionId: "sess-1",
+        toolCallId: "e7",
+        result: "success",
+      }),
     ];
 
     const episodes = segmenter.segmentEvents(events);

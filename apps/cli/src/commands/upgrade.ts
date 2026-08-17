@@ -5,10 +5,7 @@ import process from "node:process";
 import { type ConfigFsBridge, defaultFsBridge } from "@tool-evolver/harness-contracts";
 import { IpcClient, resolvePaths } from "@tool-evolver/observer";
 import { createUserServiceManager } from "../service/manager.js";
-import {
-  type VerificationReport,
-  runVerificationSuite,
-} from "../service/verification.js";
+import { type VerificationReport, runVerificationSuite } from "../service/verification.js";
 
 export const CURRENT_VERSION = "0.1.0";
 
@@ -88,15 +85,16 @@ export class UpgradeOrchestrator {
   private readonly fsBridge: ConfigFsBridge;
   private readonly customFetch?: typeof fetch;
 
-  constructor(options: {
-    homeDir?: string;
-    toolEvolverHome?: string;
-    fsBridge?: ConfigFsBridge;
-    customFetch?: typeof fetch;
-  } = {}) {
+  constructor(
+    options: {
+      homeDir?: string;
+      toolEvolverHome?: string;
+      fsBridge?: ConfigFsBridge;
+      customFetch?: typeof fetch;
+    } = {},
+  ) {
     this.homeDir = options.homeDir ?? os.homedir();
-    this.toolEvolverHome =
-      options.toolEvolverHome ?? path.join(this.homeDir, ".tool-evolver");
+    this.toolEvolverHome = options.toolEvolverHome ?? path.join(this.homeDir, ".tool-evolver");
     this.fsBridge = options.fsBridge ?? defaultFsBridge;
     this.customFetch = options.customFetch;
   }
@@ -147,7 +145,9 @@ export class UpgradeOrchestrator {
     await this.fsBridge.mkdirp(backupDir);
 
     const versionFilePath = path.join(this.toolEvolverHome, "version.json");
-    const oldVersionContent = (await this.fsBridge.readFile(versionFilePath)) ?? JSON.stringify({ version: currentVersion });
+    const oldVersionContent =
+      (await this.fsBridge.readFile(versionFilePath)) ??
+      JSON.stringify({ version: currentVersion });
     await this.fsBridge.writeFile(path.join(backupDir, "version.json"), oldVersionContent);
     stepsCompleted.push("backup_created");
 
@@ -308,9 +308,7 @@ export async function upgradeCommand(
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (flags.json) {
-      process.stdout.write(
-        `${JSON.stringify({ error: msg, success: false }, null, 2)}\n`,
-      );
+      process.stdout.write(`${JSON.stringify({ error: msg, success: false }, null, 2)}\n`);
     } else {
       process.stderr.write(`\nFatal error during upgrade: ${msg}\n`);
     }

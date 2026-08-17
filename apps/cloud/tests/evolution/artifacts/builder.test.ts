@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { parseTarArchive } from "@tool-evolver/runtime";
+import { describe, expect, it } from "vitest";
 import { ArtifactBuilder } from "../../../src/evolution/artifacts/builder.js";
 import { createMockEvolutionCandidate, createMockToolManifest } from "./helpers.js";
 

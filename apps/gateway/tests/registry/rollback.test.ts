@@ -22,11 +22,43 @@ function makeManifest(overrides?: Partial<ToolManifest>): ToolManifest {
       maxOutputSizeBytes: 1048576,
     },
     capabilities: overrides?.capabilities ?? {
-      fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
-      net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https" as const], allowLocalhost: false, denyPrivateRanges: true },
-      command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-      secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-      limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+      fs: {
+        readPaths: [],
+        writePaths: [],
+        allowWorkspaceRoot: true,
+        allowTemp: true,
+        denyPaths: [],
+        maxFileSizeBytes: 10485760,
+      },
+      net: {
+        allowOutbound: false,
+        allowedDomains: [],
+        allowedHosts: [],
+        allowedPorts: [],
+        allowedProtocols: ["https" as const],
+        allowLocalhost: false,
+        denyPrivateRanges: true,
+      },
+      command: {
+        allowShellExecution: false,
+        allowedCommands: [],
+        allowedBinaries: [],
+        forbiddenPatterns: [],
+        allowEnvPassthrough: [],
+      },
+      secrets: {
+        allowedSecretNames: [],
+        allowedPrefixes: [],
+        denyDirectRead: true,
+        injectAsEnv: true,
+      },
+      limits: {
+        maxConcurrentExecutions: 4,
+        maxCpuUsagePercent: 100,
+        maxMemoryMb: 128,
+        maxExecutionTimeMs: 30000,
+        maxOutputSizeBytes: 1048576,
+      },
     },
     limits: overrides?.limits ?? {
       timeoutMs: 30000,
@@ -58,25 +90,29 @@ describe("ToolRegistry - Manual Rollback & Historical Snapshot Restoration", () 
     await registry.stageToolVersion(manifestExtra);
 
     // Rev 1: compiler@1.0.0
-    const snapshotRev1 = await registry.activateToolVersion("tool_compiler", "1.0.0", "ws-rollback");
+    const snapshotRev1 = await registry.activateToolVersion(
+      "tool_compiler",
+      "1.0.0",
+      "ws-rollback",
+    );
     const rev1 = registry.getRevision("ws-rollback");
-    expect(snapshotRev1.tools["tool_compiler"].version).toBe("1.0.0");
-    expect(snapshotRev1.tools["tool_linter"]).toBeUndefined();
+    expect(snapshotRev1.tools.tool_compiler.version).toBe("1.0.0");
+    expect(snapshotRev1.tools.tool_linter).toBeUndefined();
 
     // Rev 2: compiler@2.0.0 and linter@1.0.0
     await registry.activateToolVersion("tool_compiler", "2.0.0", "ws-rollback");
     await registry.activateToolVersion("tool_linter", "1.0.0", "ws-rollback");
 
     const snapshotRev2 = await registry.resolveCatalog("ws-rollback");
-    expect(snapshotRev2.tools["tool_compiler"].version).toBe("2.0.0");
-    expect(snapshotRev2.tools["tool_linter"].version).toBe("1.0.0");
+    expect(snapshotRev2.tools.tool_compiler.version).toBe("2.0.0");
+    expect(snapshotRev2.tools.tool_linter.version).toBe("1.0.0");
 
     // Perform rollback to rev 1
     const rolledBackSnapshot = await registry.rollbackCatalog("ws-rollback", rev1);
 
-    expect(rolledBackSnapshot.tools["tool_compiler"]).toBeDefined();
-    expect(rolledBackSnapshot.tools["tool_compiler"].version).toBe("1.0.0");
-    expect(rolledBackSnapshot.tools["tool_linter"]).toBeUndefined();
+    expect(rolledBackSnapshot.tools.tool_compiler).toBeDefined();
+    expect(rolledBackSnapshot.tools.tool_compiler.version).toBe("1.0.0");
+    expect(rolledBackSnapshot.tools.tool_linter).toBeUndefined();
     expect(registry.getRevision("ws-rollback")).toBeGreaterThan(rev1);
   });
 
@@ -93,14 +129,14 @@ describe("ToolRegistry - Manual Rollback & Historical Snapshot Restoration", () 
 
     const afterRollback = await registry.rollbackCatalog("ws-snap-rb", initialSnapshot.snapshotId);
 
-    expect(afterRollback.tools["tool_a"]).toBeDefined();
-    expect(afterRollback.tools["tool_b"]).toBeUndefined();
+    expect(afterRollback.tools.tool_a).toBeDefined();
+    expect(afterRollback.tools.tool_b).toBeUndefined();
   });
 
   it("throws a descriptive error when target rollback revision does not exist", async () => {
     const registry = new ToolRegistry();
-    await expect(
-      registry.rollbackCatalog("ws-nonexistent", 999)
-    ).rejects.toThrow(/Rollback failed: target revision\/snapshot '999' not found/);
+    await expect(registry.rollbackCatalog("ws-nonexistent", 999)).rejects.toThrow(
+      /Rollback failed: target revision\/snapshot '999' not found/,
+    );
   });
 });

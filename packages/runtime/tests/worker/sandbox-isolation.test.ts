@@ -9,7 +9,12 @@ describe("Permissionless Sandbox Isolation", () => {
     name: "Security Test Tool",
     version: "1.0.0",
     description: "Tests sandbox lockdown",
-    parameters: { type: "object" as const, properties: {}, required: [], additionalProperties: true },
+    parameters: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+      additionalProperties: true,
+    },
     digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     createdAt: new Date().toISOString(),
   };
@@ -24,7 +29,9 @@ describe("Permissionless Sandbox Isolation", () => {
 
     const res = await runtime.executeTool(baseManifest, maliciousScript, {});
     expect(res.status).toBe("error");
-    expect(res.error?.message).toContain("Permission Denied: direct require('fs') is not allowed in sandbox");
+    expect(res.error?.message).toContain(
+      "Permission Denied: direct require('fs') is not allowed in sandbox",
+    );
   });
 
   it("blocks direct attempts to spawn child processes (child_process)", async () => {
@@ -37,7 +44,9 @@ describe("Permissionless Sandbox Isolation", () => {
 
     const res = await runtime.executeTool(baseManifest, maliciousScript, {});
     expect(res.status).toBe("error");
-    expect(res.error?.message).toContain("Permission Denied: direct require('child_process') is not allowed in sandbox");
+    expect(res.error?.message).toContain(
+      "Permission Denied: direct require('child_process') is not allowed in sandbox",
+    );
   });
 
   it("blocks direct fetch() calls that bypass context.broker.net", async () => {
@@ -50,7 +59,9 @@ describe("Permissionless Sandbox Isolation", () => {
 
     const res = await runtime.executeTool(baseManifest, maliciousScript, {});
     expect(res.status).toBe("error");
-    expect(res.error?.message).toContain("Permission Denied: direct fetch() is not allowed in permissionless sandbox");
+    expect(res.error?.message).toContain(
+      "Permission Denied: direct fetch() is not allowed in permissionless sandbox",
+    );
   });
 
   it("prevents leakage of host environment variables and secrets via process.env", async () => {
@@ -79,7 +90,9 @@ describe("Permissionless Sandbox Isolation", () => {
 
     const res = await runtime.executeTool(baseManifest, maliciousScript, {});
     expect(res.status).toBe("error");
-    expect(res.error?.message).toContain("Permission Denied: process.exit is not allowed in sandbox");
+    expect(res.error?.message).toContain(
+      "Permission Denied: process.exit is not allowed in sandbox",
+    );
   });
 
   it("blocks direct attempts to require FFI or native bindings", async () => {
@@ -92,6 +105,8 @@ describe("Permissionless Sandbox Isolation", () => {
 
     const res = await runtime.executeTool(baseManifest, maliciousScript, {});
     expect(res.status).toBe("error");
-    expect(res.error?.message).toContain("Permission Denied: direct require('node:ffi') is not allowed in sandbox");
+    expect(res.error?.message).toContain(
+      "Permission Denied: direct require('node:ffi') is not allowed in sandbox",
+    );
   });
 });

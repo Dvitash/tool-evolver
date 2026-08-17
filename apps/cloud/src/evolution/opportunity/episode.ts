@@ -1,5 +1,5 @@
-import { hashCanonicalContent, NormalizedSessionEvent } from "@tool-evolver/contracts";
-import { Episode, EpisodeMetrics, SegmenterOptions } from "./types.js";
+import { type NormalizedSessionEvent, hashCanonicalContent } from "@tool-evolver/contracts";
+import type { Episode, EpisodeMetrics, SegmenterOptions } from "./types.js";
 
 const DEFAULT_IDLE_GAP_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 const DEFAULT_MIN_EVENTS = 1;
@@ -18,7 +18,11 @@ function parseTimestampMs(ts: string | number | undefined): number {
 /**
  * Extracts token usage from an event if available in payload or metadata.
  */
-function extractEventTokens(event: NormalizedSessionEvent): { inputTokens: number; outputTokens: number; totalTokens: number } {
+function extractEventTokens(event: NormalizedSessionEvent): {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+} {
   let inputTokens = 0;
   let outputTokens = 0;
   let totalTokens = 0;
@@ -28,11 +32,23 @@ function extractEventTokens(event: NormalizedSessionEvent): { inputTokens: numbe
   const metadata = (anyEvt.metadata as Record<string, unknown>) ?? {};
 
   // Check model events or usage objects
-  const usage = (payload.usage as Record<string, unknown>) || (metadata.usage as Record<string, unknown>);
+  const usage =
+    (payload.usage as Record<string, unknown>) || (metadata.usage as Record<string, unknown>);
   if (usage && typeof usage === "object") {
-    inputTokens = typeof usage.inputTokens === "number" ? usage.inputTokens : (typeof usage.promptTokens === "number" ? usage.promptTokens : 0);
-    outputTokens = typeof usage.outputTokens === "number" ? usage.outputTokens : (typeof usage.completionTokens === "number" ? usage.completionTokens : 0);
-    totalTokens = typeof usage.totalTokens === "number" ? usage.totalTokens : inputTokens + outputTokens;
+    inputTokens =
+      typeof usage.inputTokens === "number"
+        ? usage.inputTokens
+        : typeof usage.promptTokens === "number"
+          ? usage.promptTokens
+          : 0;
+    outputTokens =
+      typeof usage.outputTokens === "number"
+        ? usage.outputTokens
+        : typeof usage.completionTokens === "number"
+          ? usage.completionTokens
+          : 0;
+    totalTokens =
+      typeof usage.totalTokens === "number" ? usage.totalTokens : inputTokens + outputTokens;
   } else {
     if (typeof payload.tokens === "number") totalTokens = payload.tokens;
     if (typeof metadata.tokens === "number") totalTokens = metadata.tokens;
@@ -114,7 +130,12 @@ export class EpisodeSegmenter {
 
     const flushBatch = () => {
       if (currentBatch.length >= this.minEventsPerEpisode) {
-        const episode = this.buildEpisode(currentBatch, currentSessionId, currentBranchId, turnIndex);
+        const episode = this.buildEpisode(
+          currentBatch,
+          currentSessionId,
+          currentBranchId,
+          turnIndex,
+        );
         episodes.push(episode);
         turnIndex++;
       }
@@ -139,7 +160,11 @@ export class EpisodeSegmenter {
         currentBranchId = evtBranchId;
       }
       // 3. User Turn Boundary (e.g. user_message or role="user")
-      else if (this.isUserTurnBoundary(evt) && currentBatch.length > 0 && this.hasActionableContent(currentBatch)) {
+      else if (
+        this.isUserTurnBoundary(evt) &&
+        currentBatch.length > 0 &&
+        this.hasActionableContent(currentBatch)
+      ) {
         flushBatch();
       }
       // 4. Idle Gap Boundary
@@ -157,7 +182,10 @@ export class EpisodeSegmenter {
       currentBatch.push(evt);
 
       // If event is a branch_fork or session completion, flush immediately after adding
-      if (evt.type === "branch_fork" || (evt.type === "session_lifecycle" && this.isTerminalLifecycle(evt))) {
+      if (
+        evt.type === "branch_fork" ||
+        (evt.type === "session_lifecycle" && this.isTerminalLifecycle(evt))
+      ) {
         flushBatch();
       }
     }
@@ -183,7 +211,12 @@ export class EpisodeSegmenter {
     const anyEvt = event as unknown as Record<string, unknown>;
     const payload = anyEvt.payload as Record<string, unknown> | undefined;
     const status = payload?.status ?? anyEvt.status;
-    return status === "completed" || status === "aborted" || status === "terminated" || status === "failed";
+    return (
+      status === "completed" ||
+      status === "aborted" ||
+      status === "terminated" ||
+      status === "failed"
+    );
   }
 
   /**
@@ -191,7 +224,10 @@ export class EpisodeSegmenter {
    */
   private hasActionableContent(batch: NormalizedSessionEvent[]): boolean {
     return batch.some(
-      (e) => isActionableStep(e) || (e.type === "message" && e.role === "assistant") || e.type === "tool_result",
+      (e) =>
+        isActionableStep(e) ||
+        (e.type === "message" && e.role === "assistant") ||
+        e.type === "tool_result",
     );
   }
   /**
@@ -269,9 +305,15 @@ export class EpisodeSegmenter {
     const isCompleted = !this.hasTerminalFatalError(events);
 
     // Extract tenant context from first event
-    const anyFirst = first as unknown as { accountId?: string; workspaceId?: string; metadata?: Record<string, unknown> };
-    const accountId = anyFirst.accountId || (anyFirst.metadata?.accountId as string) || "default-account";
-    const workspaceId = anyFirst.workspaceId || (anyFirst.metadata?.workspaceId as string) || "default-workspace";
+    const anyFirst = first as unknown as {
+      accountId?: string;
+      workspaceId?: string;
+      metadata?: Record<string, unknown>;
+    };
+    const accountId =
+      anyFirst.accountId || (anyFirst.metadata?.accountId as string) || "default-account";
+    const workspaceId =
+      anyFirst.workspaceId || (anyFirst.metadata?.workspaceId as string) || "default-workspace";
 
     // Generate deterministic episode ID
     const eventIdsDigest = hashCanonicalContent(events.map((e) => e.eventId)).slice(0, 12);
@@ -300,11 +342,13 @@ export class EpisodeSegmenter {
   private getActionKey(event: NormalizedSessionEvent): string {
     const anyEvt = event as unknown as Record<string, unknown>;
     if (event.type === "tool_call") {
-      const toolName = anyEvt.toolName || anyEvt.name || (anyEvt.payload as Record<string, unknown>)?.name;
+      const toolName =
+        anyEvt.toolName || anyEvt.name || (anyEvt.payload as Record<string, unknown>)?.name;
       return `tool:${toolName}`;
     }
     if (event.type === "command_exec") {
-      const cmd = (anyEvt.command as string) || (anyEvt.payload as Record<string, unknown>)?.command;
+      const cmd =
+        (anyEvt.command as string) || (anyEvt.payload as Record<string, unknown>)?.command;
       return `cmd:${cmd}`;
     }
     return event.type;
@@ -326,7 +370,10 @@ export class EpisodeSegmenter {
 /**
  * Convenience function to segment events.
  */
-export function segmentSessionEvents(events: NormalizedSessionEvent[], options?: SegmenterOptions): Episode[] {
+export function segmentSessionEvents(
+  events: NormalizedSessionEvent[],
+  options?: SegmenterOptions,
+): Episode[] {
   const segmenter = new EpisodeSegmenter(options);
   return segmenter.segmentEvents(events);
 }

@@ -2,13 +2,24 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { MemoryDatabasePool, runMigrations } from "../src/db/index.js";
 import { MemoryDurableQueue } from "../src/queue/index.js";
-import { CloudServer, createCloudServer } from "../src/server/index.js";
+import { type CloudServer, createCloudServer } from "../src/server/index.js";
 import { MemoryObjectStore } from "../src/storage/index.js";
 
 describe("Cloud API Server", () => {
-  async function setupTestServer(): Promise<{ server: CloudServer; baseUrl: string; stop: () => Promise<void> }> {
+  async function setupTestServer(): Promise<{
+    server: CloudServer;
+    baseUrl: string;
+    stop: () => Promise<void>;
+  }> {
     const config = loadConfig({
-      server: { port: 0, host: "127.0.0.1", logLevel: "info", bodyLimitBytes: 1048576, requestTimeoutMs: 5000, corsOrigins: ["*"] },
+      server: {
+        port: 0,
+        host: "127.0.0.1",
+        logLevel: "info",
+        bodyLimitBytes: 1048576,
+        requestTimeoutMs: 5000,
+        corsOrigins: ["*"],
+      },
     });
 
     const dbPool = new MemoryDatabasePool();
@@ -57,7 +68,10 @@ describe("Cloud API Server", () => {
       const res = await fetch(`${baseUrl}/health/ready`);
       expect(res.status).toBe(200);
 
-      const body = (await res.json()) as { status: string; checks: { database: boolean; storage: boolean; queue: boolean } };
+      const body = (await res.json()) as {
+        status: string;
+        checks: { database: boolean; storage: boolean; queue: boolean };
+      };
       expect(body.status).toBe("ok");
       expect(body.checks.database).toBe(true);
       expect(body.checks.storage).toBe(true);
@@ -145,7 +159,9 @@ describe("Cloud API Server", () => {
       // 4. List devices
       const listDevRes = await fetch(`${baseUrl}/v1/devices`, { headers });
       expect(listDevRes.status).toBe(200);
-      const listDevBody = (await listDevRes.json()) as { devices: Array<{ id: string; name: string }> };
+      const listDevBody = (await listDevRes.json()) as {
+        devices: Array<{ id: string; name: string }>;
+      };
       expect(listDevBody.devices.length).toBe(1);
       expect(listDevBody.devices[0].id).toBe("dev-mac");
     } finally {

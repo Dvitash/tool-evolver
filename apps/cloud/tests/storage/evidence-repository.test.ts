@@ -4,7 +4,7 @@ import { runMigrations } from "../../src/db/migrations.js";
 import { EvidenceRepository } from "../../src/storage/repositories/evidence-repository.js";
 import { ObservationRepository } from "../../src/storage/repositories/observation-repository.js";
 import { SessionRepository } from "../../src/storage/repositories/session-repository.js";
-import { TenantContext } from "../../src/tenant.js";
+import type { TenantContext } from "../../src/tenant.js";
 
 describe("EvidenceRepository", () => {
   const setup = async () => {
@@ -24,10 +24,12 @@ describe("EvidenceRepository", () => {
       workspaceId: "ws-ev-b",
     };
 
-    await pool.query(
-      `INSERT INTO accounts (id, name) VALUES ($1, $2), ($3, $4)`,
-      ["acc-ev-a", "Account A", "acc-ev-b", "Account B"],
-    );
+    await pool.query(`INSERT INTO accounts (id, name) VALUES ($1, $2), ($3, $4)`, [
+      "acc-ev-a",
+      "Account A",
+      "acc-ev-b",
+      "Account B",
+    ]);
     await pool.query(
       `INSERT INTO workspaces (id, account_id, name, slug) VALUES ($1, $2, $3, $4), ($5, $6, $7, $8)`,
       ["ws-ev-a", "acc-ev-a", "Workspace A", "wsa", "ws-ev-b", "acc-ev-b", "Workspace B", "wsb"],

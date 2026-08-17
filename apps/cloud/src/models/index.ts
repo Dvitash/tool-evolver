@@ -1,4 +1,4 @@
-import { InferenceService, InferenceServiceOptions } from "./service.js";
+import { InferenceService, type InferenceServiceOptions } from "./service.js";
 
 // Core Types & Schemas
 export * from "./types.js";

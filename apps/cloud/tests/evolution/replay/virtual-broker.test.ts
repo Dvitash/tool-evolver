@@ -47,7 +47,7 @@ describe("VirtualBroker Subsystem", () => {
             "workspace/sample.txt": "Hello Virtual World",
           },
         },
-        trace
+        trace,
       );
 
       const exists1 = await fs.exists("/workspace/sample.txt");
@@ -79,7 +79,7 @@ describe("VirtualBroker Subsystem", () => {
             "/workspace/secret.key": "EACCES",
           },
         },
-        trace
+        trace,
       );
 
       await expect(fs.readFile("/workspace/missing.txt")).rejects.toThrow("ENOENT");
@@ -127,7 +127,7 @@ describe("VirtualBroker Subsystem", () => {
             },
           },
         },
-        trace
+        trace,
       );
 
       const res = await net.fetch("https://api.example.com/data");
@@ -164,7 +164,7 @@ describe("VirtualBroker Subsystem", () => {
             },
           },
         },
-        trace
+        trace,
       );
 
       const res = await cmd.exec("npm", ["test"]);

@@ -6,7 +6,7 @@ import {
   ToolVersionNotFoundError,
   ToolVersionRevokedError,
 } from "../../../src/evolution/artifacts/service.js";
-import { runWithTenant, TenantAccessDeniedError } from "../../../src/tenant.js";
+import { TenantAccessDeniedError, runWithTenant } from "../../../src/tenant.js";
 import {
   createMockEvaluationResult,
   createMockEvolutionCandidate,
@@ -45,10 +45,17 @@ describe("ToolArtifactRegistryService - End-to-End Publication & Version Registr
     expect(outboxRes.rows.length).toBeGreaterThanOrEqual(1);
 
     // Verify tool metadata and aliases
-    const tool = await env.toolRegistryRepo.getTool({ workspaceId: candidate.workspaceId }, candidate.proposedTool.id);
+    const tool = await env.toolRegistryRepo.getTool(
+      { workspaceId: candidate.workspaceId },
+      candidate.proposedTool.id,
+    );
     expect(tool?.activeVersion).toBe("1.0.0");
 
-    const latestAlias = await env.toolRegistryRepo.getAlias({ workspaceId: candidate.workspaceId }, candidate.proposedTool.id, "latest");
+    const latestAlias = await env.toolRegistryRepo.getAlias(
+      { workspaceId: candidate.workspaceId },
+      candidate.proposedTool.id,
+      "latest",
+    );
     expect(latestAlias).toBe("1.0.0");
   });
 
@@ -208,22 +215,18 @@ describe("ToolArtifactRegistryService - End-to-End Publication & Version Registr
 
     // Cross-tenant context check
     await expect(
-      runWithTenant(
-        { accountId: "acc_tenant_beta", workspaceId: "ws_tenant_beta" },
-        async () => {
-          return env.service.downloadArtifact(
-            published.toolId,
-            "1.0.0",
-            "ws_tenant_alpha",
-            { accountId: "acc_tenant_alpha" },
-          );
-        },
-      ),
+      runWithTenant({ accountId: "acc_tenant_beta", workspaceId: "ws_tenant_beta" }, async () => {
+        return env.service.downloadArtifact(published.toolId, "1.0.0", "ws_tenant_alpha", {
+          accountId: "acc_tenant_alpha",
+        });
+      }),
     ).rejects.toThrow(TenantAccessDeniedError);
 
     // Non-existent version throws ToolVersionNotFoundError
     await expect(
-      env.service.downloadArtifact("tool_calc", "9.9.9", "ws_tenant_alpha", { accountId: "acc_tenant_alpha" }),
+      env.service.downloadArtifact("tool_calc", "9.9.9", "ws_tenant_alpha", {
+        accountId: "acc_tenant_alpha",
+      }),
     ).rejects.toThrow(ToolVersionNotFoundError);
   });
 

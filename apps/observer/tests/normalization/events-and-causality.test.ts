@@ -1,9 +1,6 @@
-import { describe, expect, it } from "vitest";
-import {
-  NormalizedSessionEventSchema,
-  type SessionEventType,
-} from "@tool-evolver/contracts";
+import { NormalizedSessionEventSchema, type SessionEventType } from "@tool-evolver/contracts";
 import type { RawHarnessRecord } from "@tool-evolver/harness-contracts";
+import { describe, expect, it } from "vitest";
 import {
   NormalizationPipeline,
   generateDeterministicEventId,
@@ -214,7 +211,10 @@ describe("Deterministic Normalized Event IDs & Causal Lineage", () => {
 
       const results = await pipeline.processRecord(rawRecord);
       expect(results.length).toBe(1);
-      expect(results[0].status, results[0].status === "dead_letter" ? `${v.type} failed: ${results[0].errorReason}` : "").toBe("success");
+      expect(
+        results[0].status,
+        results[0].status === "dead_letter" ? `${v.type} failed: ${results[0].errorReason}` : "",
+      ).toBe("success");
 
       if (results[0].status === "success") {
         const event = results[0].event;

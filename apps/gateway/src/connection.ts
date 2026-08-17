@@ -135,7 +135,7 @@ export class McpConnection {
     id: JsonRpcId,
     method: string,
     timeoutMs?: number,
-    onTimeout?: () => void
+    onTimeout?: () => void,
   ): AbortSignal {
     if (id === null) {
       return new AbortController().signal;

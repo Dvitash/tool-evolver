@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  ShadowCalibrationAggregator,
-  ShadowPolicyEvaluator,
-} from "../../../src/evolution/evaluation/shadow.js";
-import {
   PERMISSIVE_EVALUATION_POLICY_V1,
   SHADOW_CALIBRATION_POLICY_V1,
   STANDARD_EVALUATION_POLICY_V1,
   STRICT_EVALUATION_POLICY_V1,
 } from "../../../src/evolution/evaluation/policy.js";
+import {
+  ShadowCalibrationAggregator,
+  ShadowPolicyEvaluator,
+} from "../../../src/evolution/evaluation/shadow.js";
 import type { EvaluationDecisionRecord } from "../../../src/evolution/evaluation/types.js";
 import {
   createMockCandidateRevision,
@@ -71,8 +71,8 @@ describe("ShadowPolicyEvaluator & ShadowCalibrationAggregator", () => {
       decision: "eligible_for_artifact",
       verdict: "pass",
       compositeScore: 0.88,
-      confidenceScore: 0.80,
-      thresholdScore: 0.70,
+      confidenceScore: 0.8,
+      thresholdScore: 0.7,
       hardGateResult: {
         passed: true,
         failedGates: [],
@@ -93,13 +93,17 @@ describe("ShadowPolicyEvaluator & ShadowCalibrationAggregator", () => {
         policy: STANDARD_EVALUATION_POLICY_V1,
       },
       activeDecisionRecord,
-      [STRICT_EVALUATION_POLICY_V1, PERMISSIVE_EVALUATION_POLICY_V1]
+      [STRICT_EVALUATION_POLICY_V1, PERMISSIVE_EVALUATION_POLICY_V1],
     );
 
     expect(shadowResults.length).toBe(2);
 
-    const strictShadow = shadowResults.find((s) => s.shadowPolicyId === STRICT_EVALUATION_POLICY_V1.policyId);
-    const permissiveShadow = shadowResults.find((s) => s.shadowPolicyId === PERMISSIVE_EVALUATION_POLICY_V1.policyId);
+    const strictShadow = shadowResults.find(
+      (s) => s.shadowPolicyId === STRICT_EVALUATION_POLICY_V1.policyId,
+    );
+    const permissiveShadow = shadowResults.find(
+      (s) => s.shadowPolicyId === PERMISSIVE_EVALUATION_POLICY_V1.policyId,
+    );
 
     expect(strictShadow).toBeDefined();
     expect(permissiveShadow).toBeDefined();
@@ -122,8 +126,8 @@ describe("ShadowPolicyEvaluator & ShadowCalibrationAggregator", () => {
       decision: "eligible_for_artifact",
       verdict: "pass",
       compositeScore: 0.85,
-      confidenceScore: 0.80,
-      thresholdScore: 0.70,
+      confidenceScore: 0.8,
+      thresholdScore: 0.7,
       hardGateResult: { passed: true, failedGates: [], gateResults: [], canRepair: true },
       dimensionScores: [],
       digest: "d1",
@@ -159,7 +163,7 @@ describe("ShadowPolicyEvaluator & ShadowCalibrationAggregator", () => {
       decision: "repair_requested",
       verdict: "conditional",
       compositeScore: 0.71,
-      confidenceScore: 0.70,
+      confidenceScore: 0.7,
       hardGatePassed: true,
       agreementWithActive: false,
       scoreDeltaWithActive: -0.01,

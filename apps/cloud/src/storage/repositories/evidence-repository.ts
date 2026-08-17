@@ -1,17 +1,14 @@
 import { randomUUID } from "node:crypto";
-import {
-  canonicalJsonStringify,
-  hashCanonicalContent,
-} from "@tool-evolver/contracts";
-import { DatabasePool, Queryable } from "../../db/client.js";
-import { TenantContext } from "../../tenant.js";
-import {
+import { canonicalJsonStringify, hashCanonicalContent } from "@tool-evolver/contracts";
+import type { DatabasePool, Queryable } from "../../db/client.js";
+import type { TenantContext } from "../../tenant.js";
+import type { NormalizedEventEntity } from "../models/events.js";
+import type {
   CreateEvidenceSetInput,
   EvidenceMemberEntity,
   EvidenceSetEntity,
   ResolvedEvidenceSet,
 } from "../models/evidence.js";
-import { NormalizedEventEntity } from "../models/events.js";
 import { ObservationRepository } from "./observation-repository.js";
 
 export class EvidenceRepository {
@@ -44,7 +41,9 @@ export class EvidenceRepository {
       const eventId = input.eventIds[i];
       const event = await this.obsRepo.getEventById(tenant, eventId, client);
       if (!event) {
-        throw new Error(`Event with ID '${eventId}' not found for tenant '${tenant.accountId}:${tenant.workspaceId}'`);
+        throw new Error(
+          `Event with ID '${eventId}' not found for tenant '${tenant.accountId}:${tenant.workspaceId}'`,
+        );
       }
       membersData.push({
         eventId: event.id,
@@ -150,10 +149,7 @@ export class EvidenceRepository {
     db?: Queryable,
   ): Promise<EvidenceSetEntity[]> {
     const client = db ?? this.pool;
-    const conditions: string[] = [
-      "account_id = $1",
-      "workspace_id = $2",
-    ];
+    const conditions: string[] = ["account_id = $1", "workspace_id = $2"];
     const params: unknown[] = [tenant.accountId, tenant.workspaceId];
     let paramIdx = 3;
 
@@ -255,7 +251,7 @@ export class EvidenceRepository {
       memberCount: Number(row.member_count ?? 0),
       metadata: (typeof row.metadata === "string"
         ? JSON.parse(row.metadata)
-        : row.metadata ?? {}) as Record<string, unknown>,
+        : (row.metadata ?? {})) as Record<string, unknown>,
       createdAt: String(row.created_at),
     };
   }

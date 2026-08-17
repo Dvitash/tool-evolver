@@ -19,7 +19,7 @@ import {
   type PipelineProcessResult,
   generateDeterministicEventId,
 } from "./pipeline.js";
-import { RedactionEngine, type RedactionConfig } from "./redaction.js";
+import { type RedactionConfig, RedactionEngine } from "./redaction.js";
 
 /**
  * Metadata attached to an event when it has been re-normalized under a new revision.
@@ -93,12 +93,14 @@ export class ReNormalizer {
   private readonly sessionRepository?: SessionRepository;
   private readonly dbConnection?: LocalDatabaseConnection;
 
-  constructor(options: {
-    decoderRegistry?: DecoderRegistry;
-    redactionConfig?: RedactionConfig;
-    sessionRepository?: SessionRepository;
-    dbConnection?: LocalDatabaseConnection;
-  } = {}) {
+  constructor(
+    options: {
+      decoderRegistry?: DecoderRegistry;
+      redactionConfig?: RedactionConfig;
+      sessionRepository?: SessionRepository;
+      dbConnection?: LocalDatabaseConnection;
+    } = {},
+  ) {
     this.decoderRegistry = options.decoderRegistry ?? new DecoderRegistry();
     this.redactionConfig = options.redactionConfig;
     this.sessionRepository = options.sessionRepository;

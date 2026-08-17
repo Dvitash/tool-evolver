@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createInvocationGrant } from "../../src/policy/grant.js";
 import {
   BrokerSecurityError,
   CapabilityBrokerManager,
   FilesystemBroker,
 } from "../../src/brokers/index.js";
+import { createInvocationGrant } from "../../src/policy/grant.js";
 
 describe("Broker Grant Validation & Budget Enforcement", () => {
   const baseGrantParams = {
@@ -40,8 +40,8 @@ describe("Broker Grant Validation & Budget Enforcement", () => {
         {
           invocationId: "inv_12345",
           // grant omitted
-        }
-      )
+        },
+      ),
     ).rejects.toThrow(BrokerSecurityError);
 
     try {
@@ -65,8 +65,8 @@ describe("Broker Grant Validation & Budget Enforcement", () => {
         {
           invocationId: "inv_12345",
           grant: expiredGrant,
-        }
-      )
+        },
+      ),
     ).rejects.toThrow(BrokerSecurityError);
 
     try {
@@ -86,8 +86,8 @@ describe("Broker Grant Validation & Budget Enforcement", () => {
         {
           invocationId: "inv_DIFFERENT_999",
           grant: validGrant,
-        }
-      )
+        },
+      ),
     ).rejects.toThrow(BrokerSecurityError);
 
     try {
@@ -96,7 +96,7 @@ describe("Broker Grant Validation & Budget Enforcement", () => {
         {
           invocationId: "inv_DIFFERENT_999",
           grant: validGrant,
-        }
+        },
       );
     } catch (err) {
       expect((err as BrokerSecurityError).code).toBe("INVOCATION_MISMATCH");
@@ -117,8 +117,8 @@ describe("Broker Grant Validation & Budget Enforcement", () => {
         {
           invocationId: "inv_12345",
           grant: tamperedGrant,
-        }
-      )
+        },
+      ),
     ).rejects.toThrow(BrokerSecurityError);
 
     try {
@@ -127,7 +127,7 @@ describe("Broker Grant Validation & Budget Enforcement", () => {
         {
           invocationId: "inv_12345",
           grant: tamperedGrant,
-        }
+        },
       );
     } catch (err) {
       expect((err as BrokerSecurityError).code).toBe("GRANT_INVALID");
@@ -161,7 +161,7 @@ describe("Broker Grant Validation & Budget Enforcement", () => {
         path: "test_budget.tmp",
         content: "A".repeat(150),
       },
-      context
+      context,
     );
 
     // Read back 150 bytes (total cumulative output becomes 150 bytes tracked)
@@ -169,7 +169,7 @@ describe("Broker Grant Validation & Budget Enforcement", () => {
 
     // Second read would consume another 150 bytes (total 300 > 200 limit) -> rejected
     await expect(
-      manager.handleRequest("fs", "readFile", { path: "test_budget.tmp" }, context)
+      manager.handleRequest("fs", "readFile", { path: "test_budget.tmp" }, context),
     ).rejects.toThrow(BrokerSecurityError);
 
     try {

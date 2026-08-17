@@ -2,11 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { BrokerSecurityError, CommandBroker } from "../../src/brokers/index.js";
 import { createInvocationGrant } from "../../src/policy/grant.js";
-import {
-  BrokerSecurityError,
-  CommandBroker,
-} from "../../src/brokers/index.js";
 
 describe("Command Broker Security & Isolation", () => {
   let tempWorkspace: string;
@@ -27,7 +24,10 @@ describe("Command Broker Security & Isolation", () => {
     } catch {}
   });
 
-  const createGrant = (overrides: Record<string, unknown> = {}, limitOverrides: Record<string, unknown> = {}) => {
+  const createGrant = (
+    overrides: Record<string, unknown> = {},
+    limitOverrides: Record<string, unknown> = {},
+  ) => {
     return createInvocationGrant({
       grantId: "grant_cmd_test",
       invocationId: "inv_cmd_001",
@@ -66,7 +66,7 @@ describe("Command Broker Security & Isolation", () => {
         executable: "node",
         args: ["-e", "console.log('Command Broker Success')"],
       },
-      ctx
+      ctx,
     );
 
     expect(res.exitCode).toBe(0);
@@ -83,7 +83,7 @@ describe("Command Broker Security & Isolation", () => {
     };
 
     await expect(
-      broker.execute({ executable: "python3", args: ["-c", "print('evil')"] }, ctx)
+      broker.execute({ executable: "python3", args: ["-c", "print('evil')"] }, ctx),
     ).rejects.toThrow(BrokerSecurityError);
 
     try {
@@ -106,7 +106,7 @@ describe("Command Broker Security & Isolation", () => {
 
     for (const shellBin of ["sh", "bash", "zsh", "cmd.exe"]) {
       await expect(
-        broker.execute({ executable: shellBin, args: ["-c", "echo 1"] }, ctx)
+        broker.execute({ executable: shellBin, args: ["-c", "echo 1"] }, ctx),
       ).rejects.toThrow(BrokerSecurityError);
 
       try {
@@ -134,9 +134,9 @@ describe("Command Broker Security & Isolation", () => {
     ];
 
     for (const args of dangerousArgs) {
-      await expect(
-        broker.execute({ executable: "node", args }, ctx)
-      ).rejects.toThrow(BrokerSecurityError);
+      await expect(broker.execute({ executable: "node", args }, ctx)).rejects.toThrow(
+        BrokerSecurityError,
+      );
 
       try {
         await broker.execute({ executable: "node", args }, ctx);
@@ -155,7 +155,7 @@ describe("Command Broker Security & Isolation", () => {
     };
 
     await expect(
-      broker.execute({ executable: "./unauthorized_local_binary" }, ctx)
+      broker.execute({ executable: "./unauthorized_local_binary" }, ctx),
     ).rejects.toThrow(BrokerSecurityError);
 
     try {
@@ -177,7 +177,7 @@ describe("Command Broker Security & Isolation", () => {
     };
 
     await expect(
-      broker.execute({ executable: "node", args: ["--forbidden-flag"] }, ctx)
+      broker.execute({ executable: "node", args: ["--forbidden-flag"] }, ctx),
     ).rejects.toThrow(BrokerSecurityError);
 
     try {
@@ -202,8 +202,8 @@ describe("Command Broker Security & Isolation", () => {
           args: ["-e", "console.log('hi')"],
           cwd: "../../../",
         },
-        ctx
-      )
+        ctx,
+      ),
     ).rejects.toThrow(BrokerSecurityError);
 
     try {
@@ -213,7 +213,7 @@ describe("Command Broker Security & Isolation", () => {
           args: ["-e", "console.log('hi')"],
           cwd: "../../../",
         },
-        ctx
+        ctx,
       );
     } catch (err) {
       expect((err as BrokerSecurityError).code).toBe("WORKING_DIRECTORY_DENIED");
@@ -241,7 +241,7 @@ describe("Command Broker Security & Isolation", () => {
           "console.log(JSON.stringify({ secret: process.env.TEST_HOST_SECRET_TOKEN, allowed: process.env.TEST_ALLOWED_VAR }))",
         ],
       },
-      ctx
+      ctx,
     );
 
     const parsed = JSON.parse(res.stdout.trim());
@@ -254,7 +254,7 @@ describe("Command Broker Security & Isolation", () => {
   it("enforces output size limits and terminates subprocess if exceeded", async () => {
     const grant = createGrant(
       { allowedBinaries: ["node"] },
-      { maxOutputSizeBytes: 500 } // 500 bytes max
+      { maxOutputSizeBytes: 500 }, // 500 bytes max
     );
     const ctx = {
       invocationId: "inv_cmd_001",
@@ -269,8 +269,8 @@ describe("Command Broker Security & Isolation", () => {
           executable: "node",
           args: ["-e", "console.log('A'.repeat(10000))"],
         },
-        ctx
-      )
+        ctx,
+      ),
     ).rejects.toThrow(BrokerSecurityError);
 
     try {
@@ -279,7 +279,7 @@ describe("Command Broker Security & Isolation", () => {
           executable: "node",
           args: ["-e", "console.log('A'.repeat(10000))"],
         },
-        ctx
+        ctx,
       );
     } catch (err) {
       expect((err as BrokerSecurityError).code).toBe("MAX_OUTPUT_EXCEEDED");
@@ -289,7 +289,7 @@ describe("Command Broker Security & Isolation", () => {
   it("enforces command execution timeout and terminates process tree", async () => {
     const grant = createGrant(
       { allowedBinaries: ["node"] },
-      { maxExecutionTimeMs: 150 } // 150ms timeout
+      { maxExecutionTimeMs: 150 }, // 150ms timeout
     );
     const ctx = {
       invocationId: "inv_cmd_001",
@@ -305,8 +305,8 @@ describe("Command Broker Security & Isolation", () => {
           args: ["-e", "while(true){}"],
           timeoutMs: 100,
         },
-        ctx
-      )
+        ctx,
+      ),
     ).rejects.toThrow(BrokerSecurityError);
 
     try {
@@ -316,7 +316,7 @@ describe("Command Broker Security & Isolation", () => {
           args: ["-e", "while(true){}"],
           timeoutMs: 100,
         },
-        ctx
+        ctx,
       );
     } catch (err) {
       expect((err as BrokerSecurityError).code).toBe("COMMAND_TIMEOUT");

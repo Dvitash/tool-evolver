@@ -1,11 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import type {
-  KeychainOptions,
-  SecretMetadata,
-  SecretStore,
-  SetSecretOptions,
-} from "./types.js";
+import type { KeychainOptions, SecretMetadata, SecretStore, SetSecretOptions } from "./types.js";
 import { EncryptedVaultSecretStore } from "./vault.js";
 
 const DEFAULT_SERVICE_NAME = "tool-evolver";
@@ -49,14 +44,11 @@ export class MacKeychainSecretStore implements SecretStore {
 
     const account = this.buildAccountKey(nameOrAlias, workspaceId);
     try {
-      const res = spawnSync("/usr/bin/security", [
-        "find-generic-password",
-        "-s",
-        this.serviceName,
-        "-a",
-        account,
-        "-w",
-      ], { encoding: "utf-8", stdio: "pipe" });
+      const res = spawnSync(
+        "/usr/bin/security",
+        ["find-generic-password", "-s", this.serviceName, "-a", account, "-w"],
+        { encoding: "utf-8", stdio: "pipe" },
+      );
 
       if (res.status === 0 && res.stdout) {
         return res.stdout.trimEnd();
@@ -71,23 +63,27 @@ export class MacKeychainSecretStore implements SecretStore {
   async setSecret(
     name: string,
     value: string,
-    options: SetSecretOptions = {}
+    options: SetSecretOptions = {},
   ): Promise<SecretMetadata> {
     const fallbackMeta = await this.fallback.setSecret(name, value, options);
 
     if (this.isAvailable()) {
       const account = this.buildAccountKey(name, options.workspaceId);
       try {
-        spawnSync("/usr/bin/security", [
-          "add-generic-password",
-          "-s",
-          this.serviceName,
-          "-a",
-          account,
-          "-w",
-          value,
-          "-U", // Update if exists
-        ], { stdio: "pipe" });
+        spawnSync(
+          "/usr/bin/security",
+          [
+            "add-generic-password",
+            "-s",
+            this.serviceName,
+            "-a",
+            account,
+            "-w",
+            value,
+            "-U", // Update if exists
+          ],
+          { stdio: "pipe" },
+        );
       } catch {
         // Ignored, fallback succeeded
       }
@@ -103,13 +99,11 @@ export class MacKeychainSecretStore implements SecretStore {
     if (this.isAvailable()) {
       const account = this.buildAccountKey(name, workspaceId);
       try {
-        spawnSync("/usr/bin/security", [
-          "delete-generic-password",
-          "-s",
-          this.serviceName,
-          "-a",
-          account,
-        ], { stdio: "pipe" });
+        spawnSync(
+          "/usr/bin/security",
+          ["delete-generic-password", "-s", this.serviceName, "-a", account],
+          { stdio: "pipe" },
+        );
       } catch {
         // Ignored
       }
@@ -178,13 +172,11 @@ export class LinuxSecretServiceStore implements SecretStore {
 
     const account = this.buildAccountKey(nameOrAlias, workspaceId);
     try {
-      const res = spawnSync("secret-tool", [
-        "lookup",
-        "service",
-        this.serviceName,
-        "account",
-        account,
-      ], { encoding: "utf-8", stdio: "pipe" });
+      const res = spawnSync(
+        "secret-tool",
+        ["lookup", "service", this.serviceName, "account", account],
+        { encoding: "utf-8", stdio: "pipe" },
+      );
 
       if (res.status === 0 && res.stdout) {
         return res.stdout.trimEnd();
@@ -199,7 +191,7 @@ export class LinuxSecretServiceStore implements SecretStore {
   async setSecret(
     name: string,
     value: string,
-    options: SetSecretOptions = {}
+    options: SetSecretOptions = {},
   ): Promise<SecretMetadata> {
     const fallbackMeta = await this.fallback.setSecret(name, value, options);
 
@@ -216,7 +208,7 @@ export class LinuxSecretServiceStore implements SecretStore {
             "account",
             account,
           ],
-          { input: value, stdio: ["pipe", "pipe", "pipe"] }
+          { input: value, stdio: ["pipe", "pipe", "pipe"] },
         );
       } catch {
         // Ignored
@@ -232,13 +224,9 @@ export class LinuxSecretServiceStore implements SecretStore {
     if (this.isAvailable()) {
       const account = this.buildAccountKey(name, workspaceId);
       try {
-        spawnSync("secret-tool", [
-          "clear",
-          "service",
-          this.serviceName,
-          "account",
-          account,
-        ], { stdio: "pipe" });
+        spawnSync("secret-tool", ["clear", "service", this.serviceName, "account", account], {
+          stdio: "pipe",
+        });
       } catch {
         // Ignored
       }
@@ -297,7 +285,7 @@ export class SystemKeychainStore implements SecretStore {
   async setSecret(
     name: string,
     value: string,
-    options?: SetSecretOptions
+    options?: SetSecretOptions,
   ): Promise<SecretMetadata> {
     return this.store.setSecret(name, value, options);
   }

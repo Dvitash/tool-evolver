@@ -1,5 +1,5 @@
-import { ToolOutputSchema, ToolParameterSchema } from "@tool-evolver/contracts";
-import { VariableInputDefinition, WorkflowStep } from "./types.js";
+import type { ToolOutputSchema, ToolParameterSchema } from "@tool-evolver/contracts";
+import type { VariableInputDefinition, WorkflowStep } from "./types.js";
 
 /**
  * Derives Zod and JSON Schemas for inputs and outputs from observed variables and workflow steps.
@@ -51,10 +51,11 @@ export class SchemaGenerator {
   deriveOutputSchema(
     candidateOutputSchema?: Record<string, unknown>,
     steps?: WorkflowStep[],
-    targetType?: "single_tool" | "workflow"
+    targetType?: "single_tool" | "workflow",
   ): ToolOutputSchema {
     if (candidateOutputSchema && typeof candidateOutputSchema === "object") {
-      const schemaProps = (candidateOutputSchema.properties as Record<string, Record<string, unknown>>) ?? {};
+      const schemaProps =
+        (candidateOutputSchema.properties as Record<string, Record<string, unknown>>) ?? {};
       return {
         type: (candidateOutputSchema.type as string) ?? "object",
         properties: schemaProps,
@@ -125,7 +126,6 @@ export class SchemaGenerator {
         case "object":
           zodType = "z.record(z.unknown())";
           break;
-        case "string":
         default:
           zodType = "z.string()";
           break;

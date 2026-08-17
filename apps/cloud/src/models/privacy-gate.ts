@@ -1,4 +1,4 @@
-import { ModelPolicy } from "./types.js";
+import type { ModelPolicy } from "./types.js";
 
 /**
  * Error thrown when an outbound payload violates privacy policy.
@@ -20,7 +20,8 @@ const DEFAULT_SECRET_PATTERNS: Array<{ name: string; pattern: RegExp; replacemen
   // Private keys
   {
     name: "private_key",
-    pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |)PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH |)PRIVATE KEY-----/g,
+    pattern:
+      /-----BEGIN (?:RSA |EC |DSA |OPENSSH |)PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH |)PRIVATE KEY-----/g,
     replacement: "[REDACTED_PRIVATE_KEY]",
   },
   // Bearer tokens
@@ -56,13 +57,15 @@ const DEFAULT_SECRET_PATTERNS: Array<{ name: string; pattern: RegExp; replacemen
   // Quoted generic password/secret/api_key fields
   {
     name: "generic_secret_quoted",
-    pattern: /((?:api[_-]?key|password|passwd|secret|auth[_-]?token|private[_-]?key)\s*[:=]\s*["'])([^"'\n\r]+)(["'])/gi,
+    pattern:
+      /((?:api[_-]?key|password|passwd|secret|auth[_-]?token|private[_-]?key)\s*[:=]\s*["'])([^"'\n\r]+)(["'])/gi,
     replacement: "$1[REDACTED_SECRET]$3",
   },
   // Unquoted generic password/secret/api_key fields
   {
     name: "generic_secret_unquoted",
-    pattern: /((?:api[_-]?key|password|passwd|secret|auth[_-]?token|private[_-]?key)\s*[:=]\s*)([^\s"',;\n\r]+)/gi,
+    pattern:
+      /((?:api[_-]?key|password|passwd|secret|auth[_-]?token|private[_-]?key)\s*[:=]\s*)([^\s"',;\n\r]+)/gi,
     replacement: "$1[REDACTED_SECRET]",
   },
   // Absolute Unix/macOS user paths (/home/user/... or /Users/user/...)
@@ -74,7 +77,8 @@ const DEFAULT_SECRET_PATTERNS: Array<{ name: string; pattern: RegExp; replacemen
   // Absolute Windows user paths (C:\Users\user\...)
   {
     name: "windows_user_path",
-    pattern: /[a-zA-Z]:\\(?:Users|Documents and Settings)\\[a-zA-Z0-9_.\-]+(?:\\[a-zA-Z0-9_.@\-]+)+/g,
+    pattern:
+      /[a-zA-Z]:\\(?:Users|Documents and Settings)\\[a-zA-Z0-9_.\-]+(?:\\[a-zA-Z0-9_.@\-]+)+/g,
     replacement: "[REDACTED_PATH]",
   },
   // Email addresses (bounded by whitespace, quotes, angle brackets or line boundaries)
@@ -106,7 +110,10 @@ const PROMPT_INJECTION_DELIMITERS = [
   { pattern: /<<\/SYS>>/gi, replacement: "[SYS_STRIPPED]" },
   { pattern: /\[INST\]/gi, replacement: "[INST_STRIPPED]" },
   { pattern: /\[\/INST\]/gi, replacement: "[INST_STRIPPED]" },
-  { pattern: /---\s*BEGIN SYSTEM INSTRUCTIONS?\s*---/gi, replacement: "[INSTRUCTION_OVERRIDE_STRIPPED]" },
+  {
+    pattern: /---\s*BEGIN SYSTEM INSTRUCTIONS?\s*---/gi,
+    replacement: "[INSTRUCTION_OVERRIDE_STRIPPED]",
+  },
 ];
 
 /**
@@ -149,7 +156,10 @@ export class OutboundPrivacyGate {
       }
 
       if (violations.length > 0) {
-        throw new PrivacyViolationError("Outbound payload contains unauthorized raw transcript content", violations);
+        throw new PrivacyViolationError(
+          "Outbound payload contains unauthorized raw transcript content",
+          violations,
+        );
       }
     }
   }

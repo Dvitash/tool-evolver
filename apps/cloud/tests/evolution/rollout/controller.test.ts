@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
-  createMockRolloutParams,
-  createMockTelemetryBatch,
-  createTestRolloutEnvironment,
-  TEST_TENANT,
-  TEST_WORKSPACE_ID,
-} from "./helpers.js";
-import {
   RolloutCooldownActiveError,
   RolloutPinnedVersionConflictError,
   RolloutToolDisabledError,
 } from "../../../src/evolution/rollout/types.js";
+import {
+  TEST_TENANT,
+  TEST_WORKSPACE_ID,
+  createMockRolloutParams,
+  createMockTelemetryBatch,
+  createTestRolloutEnvironment,
+} from "./helpers.js";
 
 describe("RolloutController - Autonomous Canary, Promotion & Rollback Lifecycle", () => {
   it("should execute full canary -> observation -> promotion lifecycle on healthy metrics", async () => {
@@ -21,10 +21,7 @@ describe("RolloutController - Autonomous Canary, Promotion & Rollback Lifecycle"
     });
 
     // 1. Create rollout for eligible published version
-    const rollout = await env.controller.createRolloutForPublishedVersion(
-      TEST_TENANT,
-      params,
-    );
+    const rollout = await env.controller.createRolloutForPublishedVersion(TEST_TENANT, params);
 
     expect(rollout.state).toBe("canary");
     expect(rollout.targetVersion).toBe("2.0.0");
@@ -91,10 +88,7 @@ describe("RolloutController - Autonomous Canary, Promotion & Rollback Lifecycle"
     const env = await createTestRolloutEnvironment();
     const params = createMockRolloutParams("file_indexer", "1.5.0");
 
-    const rollout = await env.controller.createRolloutForPublishedVersion(
-      TEST_TENANT,
-      params,
-    );
+    const rollout = await env.controller.createRolloutForPublishedVersion(TEST_TENANT, params);
     expect(rollout.state).toBe("canary");
 
     // Ingest telemetry with security breach
@@ -134,10 +128,7 @@ describe("RolloutController - Autonomous Canary, Promotion & Rollback Lifecycle"
     const env = await createTestRolloutEnvironment();
     const params = createMockRolloutParams("crypto_tool", "2.1.0");
 
-    const rollout = await env.controller.createRolloutForPublishedVersion(
-      TEST_TENANT,
-      params,
-    );
+    const rollout = await env.controller.createRolloutForPublishedVersion(TEST_TENANT, params);
 
     // Ingest local quarantine signal
     const quarantineEvent = {
@@ -167,10 +158,7 @@ describe("RolloutController - Autonomous Canary, Promotion & Rollback Lifecycle"
     const env = await createTestRolloutEnvironment();
     const params = createMockRolloutParams("network_fetcher", "3.0.0");
 
-    const rollout = await env.controller.createRolloutForPublishedVersion(
-      TEST_TENANT,
-      params,
-    );
+    const rollout = await env.controller.createRolloutForPublishedVersion(TEST_TENANT, params);
 
     const capabilityEvent = {
       workspaceId: TEST_WORKSPACE_ID,
@@ -193,17 +181,10 @@ describe("RolloutController - Autonomous Canary, Promotion & Rollback Lifecycle"
       artifactDigest: "art_failed_digest_999",
     });
 
-    const rollout = await env.controller.createRolloutForPublishedVersion(
-      TEST_TENANT,
-      params,
-    );
+    const rollout = await env.controller.createRolloutForPublishedVersion(TEST_TENANT, params);
 
     // Trigger rollback
-    await env.controller.executeRollback(
-      rollout,
-      "Simulated deployment failure",
-      ["error_spike"],
-    );
+    await env.controller.executeRollback(rollout, "Simulated deployment failure", ["error_spike"]);
 
     const failedRollout = await env.controller.getRollout(rollout.id);
     expect(failedRollout?.state).toBe("rolled_back");
@@ -219,19 +200,12 @@ describe("RolloutController - Autonomous Canary, Promotion & Rollback Lifecycle"
     const env = await createTestRolloutEnvironment();
     const params = createMockRolloutParams("sensor_hub", "1.0.1");
 
-    const rollout = await env.controller.createRolloutForPublishedVersion(
-      TEST_TENANT,
-      params,
-    );
+    const rollout = await env.controller.createRolloutForPublishedVersion(TEST_TENANT, params);
 
     // Ingest some events
-    const events = createMockTelemetryBatch(
-      TEST_WORKSPACE_ID,
-      "sensor_hub",
-      "1.0.1",
-      5,
-      { failureCount: 0 },
-    );
+    const events = createMockTelemetryBatch(TEST_WORKSPACE_ID, "sensor_hub", "1.0.1", 5, {
+      failureCount: 0,
+    });
     for (const e of events) {
       await env.controller.recordTelemetry(e);
     }
@@ -281,10 +255,7 @@ describe("RolloutController - Autonomous Canary, Promotion & Rollback Lifecycle"
 
     const paramsDisabled = createMockRolloutParams("disabled_tool", "1.0.0");
     await expect(
-      env.controller.createRolloutForPublishedVersion(
-        TEST_TENANT,
-        paramsDisabled,
-      ),
+      env.controller.createRolloutForPublishedVersion(TEST_TENANT, paramsDisabled),
     ).rejects.toThrow(RolloutToolDisabledError);
   });
 
@@ -292,10 +263,7 @@ describe("RolloutController - Autonomous Canary, Promotion & Rollback Lifecycle"
     const env = await createTestRolloutEnvironment();
     const params = createMockRolloutParams("manual_ops_tool", "2.0.0");
 
-    const rollout = await env.controller.createRolloutForPublishedVersion(
-      TEST_TENANT,
-      params,
-    );
+    const rollout = await env.controller.createRolloutForPublishedVersion(TEST_TENANT, params);
     expect(rollout.state).toBe("canary");
 
     // Operator triggers manual promotion

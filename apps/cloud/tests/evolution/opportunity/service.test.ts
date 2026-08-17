@@ -1,8 +1,8 @@
-import { CapabilityEnvelope, ToolManifest } from "@tool-evolver/contracts";
+import type { CapabilityEnvelope, ToolManifest } from "@tool-evolver/contracts";
 import { describe, expect, it } from "vitest";
 import {
-  createOpportunityDetectionService,
   OpportunityDetectionService,
+  createOpportunityDetectionService,
 } from "../../../src/evolution/opportunity/index.js";
 import {
   createCommandExecEvent,
@@ -18,8 +18,18 @@ describe("OpportunityDetectionService (End-to-End)", () => {
     });
 
     const createOccurrence = (sessionId: string, prefix: string) => [
-      createToolCallEvent({ eventId: `${prefix}_1`, sessionId, toolName: "read_file", parameters: { path: `src/${prefix}.ts` } }),
-      createToolResultEvent({ eventId: `${prefix}_2`, sessionId, toolCallId: `${prefix}_1`, result: "content" }),
+      createToolCallEvent({
+        eventId: `${prefix}_1`,
+        sessionId,
+        toolName: "read_file",
+        parameters: { path: `src/${prefix}.ts` },
+      }),
+      createToolResultEvent({
+        eventId: `${prefix}_2`,
+        sessionId,
+        toolCallId: `${prefix}_1`,
+        result: "content",
+      }),
       createFileEditEvent({ eventId: `${prefix}_3`, sessionId, filePath: `src/${prefix}.ts` }),
     ];
 
@@ -59,8 +69,19 @@ describe("OpportunityDetectionService (End-to-End)", () => {
 
     // Case A: 1 normal occurrence -> 0 opportunities
     const normalEvents = [
-      createToolCallEvent({ eventId: "n1", sessionId: "sess-norm", toolName: "read_file", parameters: { path: "src/a.ts" } }),
-      createToolResultEvent({ eventId: "n2", sessionId: "sess-norm", toolCallId: "n1", result: "ok", durationMs: 200 }),
+      createToolCallEvent({
+        eventId: "n1",
+        sessionId: "sess-norm",
+        toolName: "read_file",
+        parameters: { path: "src/a.ts" },
+      }),
+      createToolResultEvent({
+        eventId: "n2",
+        sessionId: "sess-norm",
+        toolCallId: "n1",
+        result: "ok",
+        durationMs: 200,
+      }),
     ];
 
     const normalResult = await service.detectOpportunities({
@@ -73,7 +94,13 @@ describe("OpportunityDetectionService (End-to-End)", () => {
     // Case B: 1 exceptional waste occurrence -> 1 eligible opportunity
     const wasteEvents = [
       createToolCallEvent({ eventId: "w1", sessionId: "sess-waste", toolName: "heavy_build" }),
-      createToolResultEvent({ eventId: "w2", sessionId: "sess-waste", toolCallId: "w1", result: "ok", durationMs: 90_000 }), // 90s > 60s
+      createToolResultEvent({
+        eventId: "w2",
+        sessionId: "sess-waste",
+        toolCallId: "w1",
+        result: "ok",
+        durationMs: 90_000,
+      }), // 90s > 60s
     ];
 
     const wasteResult = await service.detectOpportunities({
@@ -100,11 +127,42 @@ describe("OpportunityDetectionService (End-to-End)", () => {
       parameters: { type: "object", properties: { path: { type: "string" } } },
       runtime: { language: "typescript", entrypoint: "dist/index.js", timeoutMs: 10000 },
       capabilities: {
-        fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: false, allowedHosts: [], denyHosts: [], allowLoopback: true, allowedPorts: [] },
-        command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-        secrets: { requiredKeys: [], optionalKeys: [], allowEnvSecrets: false, allowVaultSecrets: false, denySecrets: [] },
-        limits: { maxMemoryMb: 512, maxCpuPercent: 100, maxDurationMs: 60000, maxConcurrentInvocations: 1, maxLogSizeBytes: 1048576 },
+        fs: {
+          readPaths: [],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: true,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: false,
+          allowedHosts: [],
+          denyHosts: [],
+          allowLoopback: true,
+          allowedPorts: [],
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: [],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+        secrets: {
+          requiredKeys: [],
+          optionalKeys: [],
+          allowEnvSecrets: false,
+          allowVaultSecrets: false,
+          denySecrets: [],
+        },
+        limits: {
+          maxMemoryMb: 512,
+          maxCpuPercent: 100,
+          maxDurationMs: 60000,
+          maxConcurrentInvocations: 1,
+          maxLogSizeBytes: 1048576,
+        },
       },
       limits: {},
       scope: "workspace",
@@ -114,8 +172,18 @@ describe("OpportunityDetectionService (End-to-End)", () => {
     };
 
     const createOccurrence = (sessionId: string, prefix: string) => [
-      createToolCallEvent({ eventId: `${prefix}_1`, sessionId, toolName: "bulk_file_updater", parameters: { path: `src/${prefix}.ts` } }),
-      createToolResultEvent({ eventId: `${prefix}_2`, sessionId, toolCallId: `${prefix}_1`, result: "updated" }),
+      createToolCallEvent({
+        eventId: `${prefix}_1`,
+        sessionId,
+        toolName: "bulk_file_updater",
+        parameters: { path: `src/${prefix}.ts` },
+      }),
+      createToolResultEvent({
+        eventId: `${prefix}_2`,
+        sessionId,
+        toolCallId: `${prefix}_1`,
+        result: "updated",
+      }),
     ];
 
     const events = [
@@ -149,11 +217,42 @@ describe("OpportunityDetectionService (End-to-End)", () => {
       envelopeId: "env-1",
       workspaceId: "ws-1",
       version: "1.0.0",
-      fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
-      net: { allowOutbound: false, allowedHosts: [], denyHosts: [], allowLoopback: true, allowedPorts: [] },
-      command: { allowShellExecution: false, allowedCommands: ["pnpm"], allowedBinaries: ["node"], forbiddenPatterns: ["rm -rf"], allowEnvPassthrough: [] },
-      secrets: { requiredKeys: [], optionalKeys: [], allowEnvSecrets: false, allowVaultSecrets: false, denySecrets: [] },
-      limits: { maxMemoryMb: 512, maxCpuPercent: 100, maxDurationMs: 60000, maxConcurrentInvocations: 1, maxLogSizeBytes: 1048576 },
+      fs: {
+        readPaths: [],
+        writePaths: [],
+        allowWorkspaceRoot: true,
+        allowTemp: true,
+        denyPaths: [],
+        maxFileSizeBytes: 10485760,
+      },
+      net: {
+        allowOutbound: false,
+        allowedHosts: [],
+        denyHosts: [],
+        allowLoopback: true,
+        allowedPorts: [],
+      },
+      command: {
+        allowShellExecution: false,
+        allowedCommands: ["pnpm"],
+        allowedBinaries: ["node"],
+        forbiddenPatterns: ["rm -rf"],
+        allowEnvPassthrough: [],
+      },
+      secrets: {
+        requiredKeys: [],
+        optionalKeys: [],
+        allowEnvSecrets: false,
+        allowVaultSecrets: false,
+        denySecrets: [],
+      },
+      limits: {
+        maxMemoryMb: 512,
+        maxCpuPercent: 100,
+        maxDurationMs: 60000,
+        maxConcurrentInvocations: 1,
+        maxLogSizeBytes: 1048576,
+      },
       isFrozen: false,
       createdAt: new Date().toISOString(),
     };
@@ -192,8 +291,18 @@ describe("OpportunityDetectionService (End-to-End)", () => {
     });
 
     const createOccurrence = (sessionId: string, prefix: string) => [
-      createToolCallEvent({ eventId: `${prefix}_1`, sessionId, toolName: "read_file", parameters: { path: "src/a.ts" } }),
-      createToolResultEvent({ eventId: `${prefix}_2`, sessionId, toolCallId: `${prefix}_1`, result: "ok" }),
+      createToolCallEvent({
+        eventId: `${prefix}_1`,
+        sessionId,
+        toolName: "read_file",
+        parameters: { path: "src/a.ts" },
+      }),
+      createToolResultEvent({
+        eventId: `${prefix}_2`,
+        sessionId,
+        toolCallId: `${prefix}_1`,
+        result: "ok",
+      }),
       createFileEditEvent({ eventId: `${prefix}_3`, sessionId, filePath: "src/a.ts" }),
     ];
 

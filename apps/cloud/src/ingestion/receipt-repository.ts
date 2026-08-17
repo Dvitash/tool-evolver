@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { ObservationBatchResponse } from "@tool-evolver/protocol";
-import { DatabasePool, Queryable } from "../db/client.js";
+import type { ObservationBatchResponse } from "@tool-evolver/protocol";
+import type { DatabasePool, Queryable } from "../db/client.js";
 
 /**
  * Ingestion receipt record.
@@ -256,17 +256,20 @@ export class PostgresIngestionReceiptRepository implements IngestionReceiptRepos
       duplicateCount: Number(row.duplicate_count ?? 0),
       status: (row.status as "accepted" | "partial" | "rejected") ?? "accepted",
       responsePayload,
-      createdAt: row.created_at ? new Date(row.created_at as string).toISOString() : new Date().toISOString(),
-      updatedAt: row.updated_at ? new Date(row.updated_at as string).toISOString() : new Date().toISOString(),
+      createdAt: row.created_at
+        ? new Date(row.created_at as string).toISOString()
+        : new Date().toISOString(),
+      updatedAt: row.updated_at
+        ? new Date(row.updated_at as string).toISOString()
+        : new Date().toISOString(),
     };
   }
 
   async getReceipt(receiptId: string, executor?: Queryable): Promise<IngestionReceipt | null> {
     const client = executor ?? this.pool;
-    const res = await client.query(
-      `SELECT * FROM ingestion_receipts WHERE receipt_id = $1`,
-      [receiptId],
-    );
+    const res = await client.query(`SELECT * FROM ingestion_receipts WHERE receipt_id = $1`, [
+      receiptId,
+    ]);
     if (res.rows.length === 0) return null;
     return this.mapRow(res.rows[0]);
   }
@@ -301,13 +304,18 @@ export class PostgresIngestionReceiptRepository implements IngestionReceiptRepos
     return this.mapRow(res.rows[0]);
   }
 
-  async createReceipt(input: IngestionReceiptInput, executor?: Queryable): Promise<IngestionReceipt> {
+  async createReceipt(
+    input: IngestionReceiptInput,
+    executor?: Queryable,
+  ): Promise<IngestionReceipt> {
     const client = executor ?? this.pool;
     const receiptId = input.receiptId ?? `rcpt-${randomUUID().slice(0, 12)}`;
     const now = new Date().toISOString();
     const sourceCursors = input.sourceCursors ?? (input.sourceCursor ? [input.sourceCursor] : []);
     const sourceCursorsJson = JSON.stringify(sourceCursors);
-    const responsePayloadJson = input.responsePayload ? JSON.stringify(input.responsePayload) : "{}";
+    const responsePayloadJson = input.responsePayload
+      ? JSON.stringify(input.responsePayload)
+      : "{}";
 
     await client.query(
       `INSERT INTO ingestion_receipts (
@@ -353,7 +361,10 @@ export class PostgresIngestionReceiptRepository implements IngestionReceiptRepos
     };
   }
 
-  async incrementDuplicateCount(receiptId: string, executor?: Queryable): Promise<IngestionReceipt> {
+  async incrementDuplicateCount(
+    receiptId: string,
+    executor?: Queryable,
+  ): Promise<IngestionReceipt> {
     const client = executor ?? this.pool;
     const now = new Date().toISOString();
     await client.query(
@@ -405,5 +416,7 @@ export class PostgresIngestionReceiptRepository implements IngestionReceiptRepos
  * Factory function creating an IngestionReceiptRepository instance.
  */
 export function createIngestionReceiptRepository(pool?: DatabasePool): IngestionReceiptRepository {
-  return pool ? new PostgresIngestionReceiptRepository(pool) : new MemoryIngestionReceiptRepository();
+  return pool
+    ? new PostgresIngestionReceiptRepository(pool)
+    : new MemoryIngestionReceiptRepository();
 }

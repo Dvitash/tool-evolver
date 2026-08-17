@@ -1,11 +1,8 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { BrokerSecurityError, NetworkBroker } from "../../src/brokers/index.js";
 import { createInvocationGrant } from "../../src/policy/grant.js";
-import {
-  BrokerSecurityError,
-  NetworkBroker,
-} from "../../src/brokers/index.js";
 
 describe("Network Broker Security & Isolation", () => {
   let server: http.Server;
@@ -59,7 +56,10 @@ describe("Network Broker Security & Isolation", () => {
     });
   });
 
-  const createGrant = (overrides: Record<string, unknown> = {}, limitOverrides: Record<string, unknown> = {}) => {
+  const createGrant = (
+    overrides: Record<string, unknown> = {},
+    limitOverrides: Record<string, unknown> = {},
+  ) => {
     return createInvocationGrant({
       grantId: "grant_net_test",
       invocationId: "inv_net_001",
@@ -91,9 +91,9 @@ describe("Network Broker Security & Isolation", () => {
     const grant = createGrant({ allowOutbound: false });
     const ctx = { invocationId: "inv_net_001", grant };
 
-    await expect(
-      broker.request({ url: `${serverUrl}/hello` }, ctx)
-    ).rejects.toThrow(BrokerSecurityError);
+    await expect(broker.request({ url: `${serverUrl}/hello` }, ctx)).rejects.toThrow(
+      BrokerSecurityError,
+    );
 
     try {
       await broker.request({ url: `${serverUrl}/hello` }, ctx);
@@ -114,14 +114,14 @@ describe("Network Broker Security & Isolation", () => {
     ];
 
     for (const badUrl of invalidUrls) {
-      await expect(
-        broker.request({ url: badUrl }, ctx)
-      ).rejects.toThrow(BrokerSecurityError);
+      await expect(broker.request({ url: badUrl }, ctx)).rejects.toThrow(BrokerSecurityError);
 
       try {
         await broker.request({ url: badUrl }, ctx);
       } catch (err) {
-        expect(["DISALLOWED_PROTOCOL", "INVALID_PATH"]).toContain((err as BrokerSecurityError).code);
+        expect(["DISALLOWED_PROTOCOL", "INVALID_PATH"]).toContain(
+          (err as BrokerSecurityError).code,
+        );
       }
     }
   });
@@ -130,9 +130,9 @@ describe("Network Broker Security & Isolation", () => {
     const grant = createGrant({ allowedPorts: [443, 8443] }); // Port 80 / serverPort not allowed
     const ctx = { invocationId: "inv_net_001", grant };
 
-    await expect(
-      broker.request({ url: `${serverUrl}/hello` }, ctx)
-    ).rejects.toThrow(BrokerSecurityError);
+    await expect(broker.request({ url: `${serverUrl}/hello` }, ctx)).rejects.toThrow(
+      BrokerSecurityError,
+    );
 
     try {
       await broker.request({ url: `${serverUrl}/hello` }, ctx);
@@ -150,9 +150,9 @@ describe("Network Broker Security & Isolation", () => {
     const ctx = { invocationId: "inv_net_001", grant };
 
     // 1. Disallowed host
-    await expect(
-      broker.request({ url: "https://evil.com/data" }, ctx)
-    ).rejects.toThrow(BrokerSecurityError);
+    await expect(broker.request({ url: "https://evil.com/data" }, ctx)).rejects.toThrow(
+      BrokerSecurityError,
+    );
 
     try {
       await broker.request({ url: "https://evil.com/data" }, ctx);
@@ -183,9 +183,7 @@ describe("Network Broker Security & Isolation", () => {
     ];
 
     for (const target of privateTargets) {
-      await expect(
-        broker.request({ url: target }, ctx)
-      ).rejects.toThrow(BrokerSecurityError);
+      await expect(broker.request({ url: target }, ctx)).rejects.toThrow(BrokerSecurityError);
 
       try {
         await broker.request({ url: target }, ctx);
@@ -209,27 +207,27 @@ describe("Network Broker Security & Isolation", () => {
     expect(safeRes.redirected).toBe(true);
 
     // 2. Redirect to cloud metadata endpoint -> strictly blocked
-    await expect(
-      broker.request({ url: `${serverUrl}/redirect-escape` }, ctx)
-    ).rejects.toThrow(BrokerSecurityError);
+    await expect(broker.request({ url: `${serverUrl}/redirect-escape` }, ctx)).rejects.toThrow(
+      BrokerSecurityError,
+    );
 
     // 3. Redirect to disallowed host -> strictly blocked
     await expect(
-      broker.request({ url: `${serverUrl}/redirect-disallowed-host` }, ctx)
+      broker.request({ url: `${serverUrl}/redirect-disallowed-host` }, ctx),
     ).rejects.toThrow(BrokerSecurityError);
   });
 
   it("enforces response size limit and aborts oversized transfers", async () => {
     const grant = createGrant(
       { allowLocalhost: true, allowedHosts: ["127.0.0.1"] },
-      { maxOutputSizeBytes: 5000 } // 5KB max
+      { maxOutputSizeBytes: 5000 }, // 5KB max
     );
     const ctx = { invocationId: "inv_net_001", grant };
 
     // Server sends 100KB on /oversized
-    await expect(
-      broker.request({ url: `${serverUrl}/oversized` }, ctx)
-    ).rejects.toThrow(BrokerSecurityError);
+    await expect(broker.request({ url: `${serverUrl}/oversized` }, ctx)).rejects.toThrow(
+      BrokerSecurityError,
+    );
 
     try {
       await broker.request({ url: `${serverUrl}/oversized` }, ctx);
@@ -241,13 +239,13 @@ describe("Network Broker Security & Isolation", () => {
   it("enforces request timeout limits", async () => {
     const grant = createGrant(
       { allowLocalhost: true, allowedHosts: ["127.0.0.1"] },
-      { maxExecutionTimeMs: 100 } // 100ms timeout
+      { maxExecutionTimeMs: 100 }, // 100ms timeout
     );
     const ctx = { invocationId: "inv_net_001", grant };
 
-    await expect(
-      broker.request({ url: `${serverUrl}/slow`, timeoutMs: 50 }, ctx)
-    ).rejects.toThrow(BrokerSecurityError);
+    await expect(broker.request({ url: `${serverUrl}/slow`, timeoutMs: 50 }, ctx)).rejects.toThrow(
+      BrokerSecurityError,
+    );
 
     try {
       await broker.request({ url: `${serverUrl}/slow`, timeoutMs: 50 }, ctx);

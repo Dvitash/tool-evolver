@@ -94,7 +94,11 @@ const defaultAuthClaims = {
   deviceId: "dev_01JABCDEF",
   installationId: "inst_01JABCDEF",
   workspaceId: FIXTURE_WORKSPACE_ID,
-  scopes: ["device:connect", "observations:write", "catalog:read"] as ["device:connect", "observations:write", "catalog:read"],
+  scopes: ["device:connect", "observations:write", "catalog:read"] as [
+    "device:connect",
+    "observations:write",
+    "catalog:read",
+  ],
   rawUploadConsent: false,
   issuedAt: FIXTURE_TIMESTAMP,
   expiresAt: "2026-08-17T13:00:00.000Z",

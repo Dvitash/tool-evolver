@@ -2,21 +2,17 @@
  * @tool-evolver/cloud - Model-Backed Cloud Tool Handler Adapter
  */
 
-import { z } from "zod";
+import type { z } from "zod";
+import type { InferenceService } from "../models/service.js";
 import type {
   InferenceRequest,
   InferenceResponse,
   ModelTaskClass,
   PrivacyLevel,
 } from "../models/types.js";
-import type { InferenceService } from "../models/service.js";
-import type {
-  CallToolResult,
-  CloudMcpInvocationContext,
-  CloudMcpToolDefinition,
-} from "./types.js";
-import { MCP_ERROR_CODES } from "./types.js";
 import { McpInvocationError } from "./middleware.js";
+import type { CallToolResult, CloudMcpInvocationContext, CloudMcpToolDefinition } from "./types.js";
+import { MCP_ERROR_CODES } from "./types.js";
 
 /**
  * Known prompt injection and jailbreak patterns to defend against.
@@ -183,9 +179,10 @@ export function createInferenceModelTool<TOutput = unknown>(
       };
       // 4. Execute Model Inference
       try {
-        const response: InferenceResponse<TOutput> = await inferenceService.infer<Record<string, unknown>, TOutput>(
-          inferenceRequest,
-        );
+        const response: InferenceResponse<TOutput> = await inferenceService.infer<
+          Record<string, unknown>,
+          TOutput
+        >(inferenceRequest);
 
         const structuredOutput = response.output;
         const serializedText =

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { StorageConfig } from "../config.js";
+import type { StorageConfig } from "../config.js";
 
 /**
  * Retention markers for stored objects.
@@ -276,10 +276,7 @@ export class MemoryObjectStore implements ObjectStore {
     return part;
   }
 
-  async completeMultipartUpload(
-    uploadId: string,
-    parts: UploadedPart[],
-  ): Promise<ObjectMetadata> {
+  async completeMultipartUpload(uploadId: string, parts: UploadedPart[]): Promise<ObjectMetadata> {
     const sessionRecord = this.multipartSessions.get(uploadId);
     if (!sessionRecord) {
       throw new Error(`Multipart upload session '${uploadId}' not found`);
@@ -398,10 +395,7 @@ export class S3ObjectStore implements ObjectStore {
     return this.memoryFallback.uploadPart(uploadId, partNumber, data, sha256);
   }
 
-  async completeMultipartUpload(
-    uploadId: string,
-    parts: UploadedPart[],
-  ): Promise<ObjectMetadata> {
+  async completeMultipartUpload(uploadId: string, parts: UploadedPart[]): Promise<ObjectMetadata> {
     return this.memoryFallback.completeMultipartUpload(uploadId, parts);
   }
 
@@ -410,7 +404,9 @@ export class S3ObjectStore implements ObjectStore {
   }
 
   async createPresignedGetUrl(key: string, ttlSeconds = 3600): Promise<PresignedUrlResult> {
-    const endpoint = this.config.endpoint ?? `https://${this.config.bucket}.s3.${this.config.region}.amazonaws.com`;
+    const endpoint =
+      this.config.endpoint ??
+      `https://${this.config.bucket}.s3.${this.config.region}.amazonaws.com`;
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
     return {
       url: `${endpoint}/${encodeURIComponent(key)}?X-Amz-Expires=${ttlSeconds}&sig=s3-sig`,
@@ -424,7 +420,9 @@ export class S3ObjectStore implements ObjectStore {
     ttlSeconds = 3600,
     options: PutObjectOptions = {},
   ): Promise<PresignedUrlResult> {
-    const endpoint = this.config.endpoint ?? `https://${this.config.bucket}.s3.${this.config.region}.amazonaws.com`;
+    const endpoint =
+      this.config.endpoint ??
+      `https://${this.config.bucket}.s3.${this.config.region}.amazonaws.com`;
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
     const headers: Record<string, string> = {};
     if (options.contentType) {

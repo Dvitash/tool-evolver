@@ -1,15 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
-import {
-  type ToolManifest,
-  ToolManifestSchema,
-} from "@tool-evolver/contracts";
-import { computeSha256, type ExtractedTarEntry, parseTarArchive } from "../bundle/builder.js";
+import { type ToolManifest, ToolManifestSchema } from "@tool-evolver/contracts";
+import { type ExtractedTarEntry, computeSha256, parseTarArchive } from "../bundle/builder.js";
 import {
   type BundleSignatureData,
-  createDevelopmentKeyStore,
   type KeyStore,
   type SignatureVerificationResult,
+  createDevelopmentKeyStore,
   verifyBundleSignature,
 } from "../bundle/signature.js";
 import {
@@ -310,7 +307,11 @@ export class ToolBundleLoader {
           quarantineReason = "decompression_bomb";
         } else if (err.code === "SYMLINK_ESCAPE") {
           quarantineReason = "symlink_escape";
-        } else if (err.code === "FILE_COUNT_EXCEEDED" || err.code === "FILE_SIZE_EXCEEDED" || err.code === "DECOMPRESSED_SIZE_EXCEEDED") {
+        } else if (
+          err.code === "FILE_COUNT_EXCEEDED" ||
+          err.code === "FILE_SIZE_EXCEEDED" ||
+          err.code === "DECOMPRESSED_SIZE_EXCEEDED"
+        ) {
           quarantineReason = "resource_limit_exceeded";
         }
       } else if (err instanceof BundleValidationError) {

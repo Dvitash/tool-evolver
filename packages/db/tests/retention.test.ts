@@ -167,10 +167,11 @@ describe("Retention & Compaction Engine", () => {
     });
     await store.sync.markOutboxDelivered(oldOutboxId, "2026-06-01T00:00:00.000Z");
     // Force old created_at timestamp
-    store.getConnection().run(
-      "UPDATE local_outbox SET created_at = '2026-06-01T00:00:00.000Z' WHERE outbox_id = ?;",
-      [oldOutboxId],
-    );
+    store
+      .getConnection()
+      .run("UPDATE local_outbox SET created_at = '2026-06-01T00:00:00.000Z' WHERE outbox_id = ?;", [
+        oldOutboxId,
+      ]);
 
     const oldInboxId = await store.sync.enqueueInbox({
       inboxId: "in_old_01",
@@ -179,10 +180,11 @@ describe("Retention & Compaction Engine", () => {
       payload: { data: 2 },
     });
     await store.sync.markInboxProcessed(oldInboxId, "2026-06-01T00:00:00.000Z");
-    store.getConnection().run(
-      "UPDATE local_inbox SET received_at = '2026-06-01T00:00:00.000Z' WHERE inbox_id = ?;",
-      [oldInboxId],
-    );
+    store
+      .getConnection()
+      .run("UPDATE local_inbox SET received_at = '2026-06-01T00:00:00.000Z' WHERE inbox_id = ?;", [
+        oldInboxId,
+      ]);
 
     // 6. Run compaction with 30-day retention and keepCount: 2
     const summary = await store.compact({

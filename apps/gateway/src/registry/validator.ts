@@ -23,12 +23,12 @@ const VALID_RUNTIMES: Record<string, true> = {
 };
 const DANGEROUS_COMMANDS: Record<string, true> = {
   "rm -rf /": true,
-  "sudo": true,
-  "su": true,
-  "mkfs": true,
-  "dd": true,
-  "shutdown": true,
-  "reboot": true,
+  sudo: true,
+  su: true,
+  mkfs: true,
+  dd: true,
+  shutdown: true,
+  reboot: true,
   ":(){ :|:& };:": true,
 };
 
@@ -58,7 +58,7 @@ export function validateToolStaging(
   rawEnvelope?: CapabilityEnvelope,
   options?: {
     existingVersions?: ToolVersion[];
-  }
+  },
 ): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -80,7 +80,7 @@ export function validateToolStaging(
   calculatedManifestDigest = computeManifestDigest(manifest);
   if (manifest.digest && manifest.digest !== calculatedManifestDigest) {
     errors.push(
-      `Manifest digest mismatch: declared '${manifest.digest}' but computed '${calculatedManifestDigest}'`
+      `Manifest digest mismatch: declared '${manifest.digest}' but computed '${calculatedManifestDigest}'`,
     );
   }
 
@@ -98,7 +98,7 @@ export function validateToolStaging(
         const codeHash = computeSha256(artifact.sourceCode);
         if (artifact.bundleReference.hash !== codeHash) {
           errors.push(
-            `Artifact hash mismatch: declared '${artifact.bundleReference.hash}' but computed '${codeHash}'`
+            `Artifact hash mismatch: declared '${artifact.bundleReference.hash}' but computed '${codeHash}'`,
           );
         }
       }
@@ -109,14 +109,20 @@ export function validateToolStaging(
   if (manifest.runtime) {
     const runtime = manifest.runtime.runtime?.toLowerCase();
     if (!runtime || !VALID_RUNTIMES[runtime]) {
-      errors.push(`Unsupported runtime engine '${manifest.runtime.runtime}'. Supported: node, deno, quickjs, docker, wasm, browser, python, shell, builtin`);
+      errors.push(
+        `Unsupported runtime engine '${manifest.runtime.runtime}'. Supported: node, deno, quickjs, docker, wasm, browser, python, shell, builtin`,
+      );
     }
 
     if (manifest.runtime.timeoutMs !== undefined && manifest.runtime.timeoutMs <= 0) {
-      errors.push(`Tool execution timeoutMs must be positive, received: ${manifest.runtime.timeoutMs}`);
+      errors.push(
+        `Tool execution timeoutMs must be positive, received: ${manifest.runtime.timeoutMs}`,
+      );
     }
     if (manifest.runtime.timeoutMs !== undefined && manifest.runtime.timeoutMs > 300_000) {
-      errors.push(`Tool execution timeoutMs exceeds maximum allowable 300,000ms: ${manifest.runtime.timeoutMs}`);
+      errors.push(
+        `Tool execution timeoutMs exceeds maximum allowable 300,000ms: ${manifest.runtime.timeoutMs}`,
+      );
     }
   }
   // 5. Capability Envelope Validation
@@ -128,15 +134,20 @@ export function validateToolStaging(
       const envelope = envelopeParse.data;
 
       if (envelope.isFrozen) {
-        const hasFs = manifest.capabilities?.fs && (
-          (manifest.capabilities.fs.readPaths?.length ?? 0) > 0 ||
-          (manifest.capabilities.fs.writePaths?.length ?? 0) > 0
-        );
-        const hasNet = manifest.capabilities?.net && (manifest.capabilities.net.allowedHosts?.length ?? 0) > 0;
-        const hasCmd = manifest.capabilities?.command && (manifest.capabilities.command.allowedCommands?.length ?? 0) > 0;
+        const hasFs =
+          manifest.capabilities?.fs &&
+          ((manifest.capabilities.fs.readPaths?.length ?? 0) > 0 ||
+            (manifest.capabilities.fs.writePaths?.length ?? 0) > 0);
+        const hasNet =
+          manifest.capabilities?.net && (manifest.capabilities.net.allowedHosts?.length ?? 0) > 0;
+        const hasCmd =
+          manifest.capabilities?.command &&
+          (manifest.capabilities.command.allowedCommands?.length ?? 0) > 0;
 
         if (hasFs || hasNet || hasCmd) {
-          errors.push("Workspace capability envelope is frozen; cannot stage tool requesting new capabilities");
+          errors.push(
+            "Workspace capability envelope is frozen; cannot stage tool requesting new capabilities",
+          );
         }
       }
 
@@ -148,7 +159,12 @@ export function validateToolStaging(
         // Path traversal checks
         const checkTraversal = (paths: string[], label: string) => {
           for (const p of paths) {
-            if (p.includes("..") || p.startsWith("/etc") || p.startsWith("/root") || p.startsWith("/var/run")) {
+            if (
+              p.includes("..") ||
+              p.startsWith("/etc") ||
+              p.startsWith("/root") ||
+              p.startsWith("/var/run")
+            ) {
               errors.push(`Disallowed filesystem traversal or sensitive path in ${label}: '${p}'`);
             }
             if (envFs.denyPaths?.some((denied) => p === denied || p.startsWith(`${denied}/`))) {
@@ -161,9 +177,13 @@ export function validateToolStaging(
           checkTraversal(manifestFs.writePaths, "writePaths");
           if (envFs.writePaths && envFs.writePaths.length > 0) {
             for (const wp of manifestFs.writePaths) {
-              const allowed = envFs.writePaths.some((allowedPrefix) => wp === allowedPrefix || wp.startsWith(`${allowedPrefix}/`));
+              const allowed = envFs.writePaths.some(
+                (allowedPrefix) => wp === allowedPrefix || wp.startsWith(`${allowedPrefix}/`),
+              );
               if (!allowed) {
-                errors.push(`Write path '${wp}' is outside envelope allowed writePaths: [${envFs.writePaths.join(", ")}]`);
+                errors.push(
+                  `Write path '${wp}' is outside envelope allowed writePaths: [${envFs.writePaths.join(", ")}]`,
+                );
               }
             }
           }
@@ -173,9 +193,13 @@ export function validateToolStaging(
           checkTraversal(manifestFs.readPaths, "readPaths");
         }
 
-        if (manifestFs.maxFileSizeBytes && envFs.maxFileSizeBytes && manifestFs.maxFileSizeBytes > envFs.maxFileSizeBytes) {
+        if (
+          manifestFs.maxFileSizeBytes &&
+          envFs.maxFileSizeBytes &&
+          manifestFs.maxFileSizeBytes > envFs.maxFileSizeBytes
+        ) {
           errors.push(
-            `Tool maxFileSizeBytes (${manifestFs.maxFileSizeBytes}) exceeds capability envelope limit (${envFs.maxFileSizeBytes})`
+            `Tool maxFileSizeBytes (${manifestFs.maxFileSizeBytes}) exceeds capability envelope limit (${envFs.maxFileSizeBytes})`,
           );
         }
       }
@@ -187,14 +211,22 @@ export function validateToolStaging(
 
         if (manifestNet.allowedHosts) {
           for (const host of manifestNet.allowedHosts) {
-            if (!envNet.allowLocalhost && (host === "localhost" || host === "127.0.0.1" || host === "::1")) {
+            if (
+              !envNet.allowLocalhost &&
+              (host === "localhost" || host === "127.0.0.1" || host === "::1")
+            ) {
               errors.push(`Localhost access is disabled by capability envelope: '${host}'`);
             }
-            if (envNet.denyPrivateRanges && (host.startsWith("10.") || host.startsWith("192.168.") || host.startsWith("172.16."))) {
+            if (
+              envNet.denyPrivateRanges &&
+              (host.startsWith("10.") || host.startsWith("192.168.") || host.startsWith("172.16."))
+            ) {
               errors.push(`Private network access is disabled by capability envelope: '${host}'`);
             }
             if (envNet.allowedHosts && envNet.allowedHosts.length > 0) {
-              const allowed = envNet.allowedHosts.some((allowedHost) => host === allowedHost || host.endsWith(`.${allowedHost}`));
+              const allowed = envNet.allowedHosts.some(
+                (allowedHost) => host === allowedHost || host.endsWith(`.${allowedHost}`),
+              );
               if (!allowed) {
                 errors.push(`Network host '${host}' is outside capability envelope allowedHosts`);
               }
@@ -216,11 +248,17 @@ export function validateToolStaging(
             if (envCmd.forbiddenPatterns && envCmd.forbiddenPatterns.length > 0) {
               for (const pattern of envCmd.forbiddenPatterns) {
                 if (cmd.includes(pattern)) {
-                  errors.push(`Command '${cmd}' matches forbiddenPattern '${pattern}' in capability envelope`);
+                  errors.push(
+                    `Command '${cmd}' matches forbiddenPattern '${pattern}' in capability envelope`,
+                  );
                 }
               }
             }
-            if (envCmd.allowedCommands && envCmd.allowedCommands.length > 0 && !envCmd.allowedCommands.includes(cmd)) {
+            if (
+              envCmd.allowedCommands &&
+              envCmd.allowedCommands.length > 0 &&
+              !envCmd.allowedCommands.includes(cmd)
+            ) {
               errors.push(`Command '${cmd}' is not in capability envelope allowedCommands`);
             }
           }
@@ -231,7 +269,7 @@ export function validateToolStaging(
       if (manifest.limits?.timeoutMs && envelope.limits?.maxExecutionTimeMs) {
         if (manifest.limits.timeoutMs > envelope.limits.maxExecutionTimeMs) {
           errors.push(
-            `Tool timeout (${manifest.limits.timeoutMs}ms) exceeds envelope maxExecutionTimeMs (${envelope.limits.maxExecutionTimeMs}ms)`
+            `Tool timeout (${manifest.limits.timeoutMs}ms) exceeds envelope maxExecutionTimeMs (${envelope.limits.maxExecutionTimeMs}ms)`,
           );
         }
       }
@@ -239,14 +277,14 @@ export function validateToolStaging(
         const envelopeMaxBytes = envelope.limits.maxMemoryMb * 1024 * 1024;
         if (manifest.limits.maxMemoryBytes > envelopeMaxBytes) {
           errors.push(
-            `Tool memory limit (${manifest.limits.maxMemoryBytes}B) exceeds envelope maxMemoryMb (${envelope.limits.maxMemoryMb}MB)`
+            `Tool memory limit (${manifest.limits.maxMemoryBytes}B) exceeds envelope maxMemoryMb (${envelope.limits.maxMemoryMb}MB)`,
           );
         }
       }
       if (manifest.limits?.maxOutputBytes && envelope.limits?.maxOutputSizeBytes) {
         if (manifest.limits.maxOutputBytes > envelope.limits.maxOutputSizeBytes) {
           errors.push(
-            `Tool maxOutputBytes (${manifest.limits.maxOutputBytes}B) exceeds envelope maxOutputSizeBytes (${envelope.limits.maxOutputSizeBytes}B)`
+            `Tool maxOutputBytes (${manifest.limits.maxOutputBytes}B) exceeds envelope maxOutputSizeBytes (${envelope.limits.maxOutputSizeBytes}B)`,
           );
         }
       }
@@ -257,12 +295,12 @@ export function validateToolStaging(
   if (options?.existingVersions) {
     const toolId = manifest.id;
     const existing = options.existingVersions.find(
-      (v) => v.toolId === toolId && v.version === manifest.version
+      (v) => v.toolId === toolId && v.version === manifest.version,
     );
     if (existing) {
       if (existing.manifestDigest !== calculatedManifestDigest) {
         errors.push(
-          `Version '${manifest.version}' for tool '${toolId}' is already registered with a different digest (immutability violation)`
+          `Version '${manifest.version}' for tool '${toolId}' is already registered with a different digest (immutability violation)`,
         );
       }
     }

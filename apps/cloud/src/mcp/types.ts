@@ -56,11 +56,7 @@ export interface CallToolResult {
  * MCP Protocol Version.
  */
 export const MCP_PROTOCOL_VERSION = "2024-11-05";
-export const SUPPORTED_MCP_VERSIONS = [
-  "2024-11-05",
-  "2024-10-07",
-  "latest",
-] as const;
+export const SUPPORTED_MCP_VERSIONS = ["2024-11-05", "2024-10-07", "latest"] as const;
 
 /**
  * Invocation context passed to tool handlers and middleware.
@@ -200,8 +196,7 @@ export const MCP_ERROR_CODES = {
   RATE_LIMITED: -32029,
 } as const;
 
-export type McpErrorCode =
-  (typeof MCP_ERROR_CODES)[keyof typeof MCP_ERROR_CODES];
+export type McpErrorCode = (typeof MCP_ERROR_CODES)[keyof typeof MCP_ERROR_CODES];
 
 /**
  * JSON-RPC 2.0 Request and Response Interfaces.

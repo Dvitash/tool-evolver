@@ -106,7 +106,11 @@ export class RedactionEngine {
   private readonly config: RedactionConfig;
   private readonly scanner: ContentScanner;
   private readonly pathReplacements: Array<{ pattern: string; replacement: string }>;
-  private readonly envSecretReplacements: Array<{ secret: string; placeholder: string; name: string }>;
+  private readonly envSecretReplacements: Array<{
+    secret: string;
+    placeholder: string;
+    name: string;
+  }>;
   private readonly customSecretReplacements: Array<{ secret: string; fingerprint: string }>;
   private readonly localOnlyFieldsSet: Set<string>;
 
@@ -249,7 +253,11 @@ export class RedactionEngine {
     }
 
     // 5. Content Truncation (if enabled)
-    if (this.config.maxStringLength && this.config.maxStringLength > 0 && current.length > this.config.maxStringLength) {
+    if (
+      this.config.maxStringLength &&
+      this.config.maxStringLength > 0 &&
+      current.length > this.config.maxStringLength
+    ) {
       const originalLen = current.length;
       current = `${current.slice(0, this.config.maxStringLength)}... [TRUNCATED ${originalLen - this.config.maxStringLength} chars]`;
       changed = true;

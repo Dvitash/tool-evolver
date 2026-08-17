@@ -73,7 +73,7 @@ export class SecretBroker extends BaseCapabilityBroker {
   async authorizeSecretAccess(
     secretNameOrAlias: string,
     context: BrokerContext,
-    mode: MediationMode
+    mode: MediationMode,
   ): Promise<string> {
     const startTime = Date.now();
     const grant = this.validateGrant(context);
@@ -95,11 +95,11 @@ export class SecretBroker extends BaseCapabilityBroker {
             code: "OPERATION_NOT_PERMITTED",
             message: `Secret '${secretNameOrAlias}' is not authorized by capability grant`,
           },
-        }
+        },
       );
       throw new BrokerSecurityError(
         "OPERATION_NOT_PERMITTED",
-        `Secret '${secretNameOrAlias}' is not authorized by capability grant`
+        `Secret '${secretNameOrAlias}' is not authorized by capability grant`,
       );
     }
 
@@ -109,7 +109,7 @@ export class SecretBroker extends BaseCapabilityBroker {
       const secretValue = await this.manager.getSecretForMediation(
         secretNameOrAlias,
         mode,
-        workspaceId
+        workspaceId,
       );
 
       this.recordAudit(
@@ -120,7 +120,7 @@ export class SecretBroker extends BaseCapabilityBroker {
           secretName: secretNameOrAlias,
           mode,
         },
-        { durationMs: Date.now() - startTime }
+        { durationMs: Date.now() - startTime },
       );
 
       return secretValue;
@@ -137,7 +137,7 @@ export class SecretBroker extends BaseCapabilityBroker {
         {
           durationMs: Date.now() - startTime,
           error: { code: "OPERATION_NOT_PERMITTED", message: (err as Error).message },
-        }
+        },
       );
       throw new BrokerSecurityError("OPERATION_NOT_PERMITTED", (err as Error).message);
     }
@@ -148,7 +148,7 @@ export class SecretBroker extends BaseCapabilityBroker {
    */
   async mediateHeaders(
     headers: Record<string, string>,
-    context: BrokerContext
+    context: BrokerContext,
   ): Promise<Record<string, string>> {
     if (!headers || typeof headers !== "object") {
       return headers;
@@ -171,9 +171,10 @@ export class SecretBroker extends BaseCapabilityBroker {
         const secretAlias = match[1];
 
         // Authorize and retrieve secret
-        const mode: MediationMode = key.toLowerCase() === "authorization" && rawValue.startsWith("Bearer ")
-          ? "bearer_token"
-          : "header_template";
+        const mode: MediationMode =
+          key.toLowerCase() === "authorization" && rawValue.startsWith("Bearer ")
+            ? "bearer_token"
+            : "header_template";
 
         const secretValue = await this.authorizeSecretAccess(secretAlias, context, mode);
         mediatedValue = mediatedValue.replaceAll(fullPlaceholder, secretValue);
@@ -190,7 +191,7 @@ export class SecretBroker extends BaseCapabilityBroker {
    */
   async mediateBearerToken(
     secretAlias: string,
-    context: BrokerContext
+    context: BrokerContext,
   ): Promise<{ headerName: "Authorization"; headerValue: string }> {
     const secretValue = await this.authorizeSecretAccess(secretAlias, context, "bearer_token");
     return {
@@ -227,7 +228,7 @@ export class SecretBroker extends BaseCapabilityBroker {
    */
   async mediateCommandStdin(
     secretAliasOrTemplate: string,
-    context: BrokerContext
+    context: BrokerContext,
   ): Promise<string> {
     if (!secretAliasOrTemplate || typeof secretAliasOrTemplate !== "string") {
       return secretAliasOrTemplate;
@@ -258,7 +259,7 @@ export class SecretBroker extends BaseCapabilityBroker {
    */
   async mediateCommandEnv(
     envTemplate: Record<string, string>,
-    context: BrokerContext
+    context: BrokerContext,
   ): Promise<Record<string, string>> {
     const grant = this.validateGrant(context);
     const secretCap: SecretCapability = grant.capabilities.secrets ?? {};
@@ -295,7 +296,7 @@ export class SecretBroker extends BaseCapabilityBroker {
             const secretValue = await this.manager.getSecretForMediation(
               name,
               "command_env",
-              workspaceId
+              workspaceId,
             );
             mediatedEnv[name] = secretValue;
           } catch {
@@ -336,11 +337,11 @@ export class SecretBroker extends BaseCapabilityBroker {
             code: "OPERATION_NOT_PERMITTED",
             message: `Direct read of secret '${secretName}' is denied by policy`,
           },
-        }
+        },
       );
       throw new BrokerSecurityError(
         "OPERATION_NOT_PERMITTED",
-        `Direct read of secret '${secretName}' is denied by policy`
+        `Direct read of secret '${secretName}' is denied by policy`,
       );
     }
 
@@ -360,11 +361,11 @@ export class SecretBroker extends BaseCapabilityBroker {
             code: "OPERATION_NOT_PERMITTED",
             message: `Secret '${secretName}' is not authorized by capability grant`,
           },
-        }
+        },
       );
       throw new BrokerSecurityError(
         "OPERATION_NOT_PERMITTED",
-        `Secret '${secretName}' is not authorized by capability grant`
+        `Secret '${secretName}' is not authorized by capability grant`,
       );
     }
 
@@ -379,7 +380,7 @@ export class SecretBroker extends BaseCapabilityBroker {
         secretName,
         found: value !== null,
       },
-      { durationMs: Date.now() - startTime }
+      { durationMs: Date.now() - startTime },
     );
 
     return { secret: value };
@@ -397,9 +398,10 @@ export class SecretBroker extends BaseCapabilityBroker {
     const allMetadata = await this.manager.listMetadata(workspaceId);
 
     // Filter to only authorized secrets if allowlists are configured
-    const filtered = allMetadata.filter((meta) =>
-      this.isSecretAuthorized(meta.name, secretCap) ||
-      (meta.alias && this.isSecretAuthorized(meta.alias, secretCap))
+    const filtered = allMetadata.filter(
+      (meta) =>
+        this.isSecretAuthorized(meta.name, secretCap) ||
+        (meta.alias && this.isSecretAuthorized(meta.alias, secretCap)),
     );
 
     this.recordAudit(
@@ -407,7 +409,7 @@ export class SecretBroker extends BaseCapabilityBroker {
       context,
       "allowed",
       { count: filtered.length },
-      { durationMs: Date.now() - startTime }
+      { durationMs: Date.now() - startTime },
     );
 
     return filtered;
@@ -419,7 +421,7 @@ export class SecretBroker extends BaseCapabilityBroker {
   async addSecret(
     name: string,
     value: string,
-    options?: SetSecretOptions
+    options?: SetSecretOptions,
   ): Promise<SecretMetadata> {
     return this.manager.addSecret(name, value, options);
   }
@@ -430,7 +432,7 @@ export class SecretBroker extends BaseCapabilityBroker {
   async rotateSecret(
     name: string,
     newValue: string,
-    workspaceId?: string
+    workspaceId?: string,
   ): Promise<SecretMetadata> {
     return this.manager.rotateSecret(name, newValue, workspaceId);
   }
@@ -462,7 +464,7 @@ export class SecretBroker extends BaseCapabilityBroker {
   async handleRequest(
     action: string,
     payload: Record<string, unknown>,
-    context: BrokerContext
+    context: BrokerContext,
   ): Promise<unknown> {
     switch (action) {
       case "getSecret":
@@ -471,10 +473,7 @@ export class SecretBroker extends BaseCapabilityBroker {
         return this.getSecret(String(payload.name ?? ""), context);
 
       case "mediateHeaders":
-        return this.mediateHeaders(
-          (payload.headers as Record<string, string>) ?? {},
-          context
-        );
+        return this.mediateHeaders((payload.headers as Record<string, string>) ?? {}, context);
 
       case "mediateBearerToken":
         return this.mediateBearerToken(String(payload.alias ?? payload.name ?? ""), context);
@@ -485,14 +484,11 @@ export class SecretBroker extends BaseCapabilityBroker {
       case "mediateCommandStdin":
         return this.mediateCommandStdin(
           String(payload.template ?? payload.alias ?? payload.name ?? ""),
-          context
+          context,
         );
 
       case "mediateCommandEnv":
-        return this.mediateCommandEnv(
-          (payload.env as Record<string, string>) ?? {},
-          context
-        );
+        return this.mediateCommandEnv((payload.env as Record<string, string>) ?? {}, context);
 
       case "listMetadata":
       case "list":
@@ -502,26 +498,26 @@ export class SecretBroker extends BaseCapabilityBroker {
         return this.addSecret(
           String(payload.name ?? ""),
           String(payload.value ?? ""),
-          payload.options as SetSecretOptions | undefined
+          payload.options as SetSecretOptions | undefined,
         );
 
       case "rotateSecret":
         return this.rotateSecret(
           String(payload.name ?? ""),
           String(payload.value ?? ""),
-          payload.workspaceId as string | undefined
+          payload.workspaceId as string | undefined,
         );
 
       case "deleteSecret":
         return this.deleteSecret(
           String(payload.name ?? ""),
-          payload.workspaceId as string | undefined
+          payload.workspaceId as string | undefined,
         );
 
       default:
         throw new BrokerSecurityError(
           "OPERATION_NOT_PERMITTED",
-          `Unsupported secret broker action: '${action}'`
+          `Unsupported secret broker action: '${action}'`,
         );
     }
   }

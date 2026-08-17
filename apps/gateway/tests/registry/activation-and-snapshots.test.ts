@@ -22,11 +22,43 @@ function makeManifest(overrides?: Partial<ToolManifest>): ToolManifest {
       maxOutputSizeBytes: 1048576,
     },
     capabilities: overrides?.capabilities ?? {
-      fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
-      net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https" as const], allowLocalhost: false, denyPrivateRanges: true },
-      command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-      secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-      limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+      fs: {
+        readPaths: [],
+        writePaths: [],
+        allowWorkspaceRoot: true,
+        allowTemp: true,
+        denyPaths: [],
+        maxFileSizeBytes: 10485760,
+      },
+      net: {
+        allowOutbound: false,
+        allowedDomains: [],
+        allowedHosts: [],
+        allowedPorts: [],
+        allowedProtocols: ["https" as const],
+        allowLocalhost: false,
+        denyPrivateRanges: true,
+      },
+      command: {
+        allowShellExecution: false,
+        allowedCommands: [],
+        allowedBinaries: [],
+        forbiddenPatterns: [],
+        allowEnvPassthrough: [],
+      },
+      secrets: {
+        allowedSecretNames: [],
+        allowedPrefixes: [],
+        denyDirectRead: true,
+        injectAsEnv: true,
+      },
+      limits: {
+        maxConcurrentExecutions: 4,
+        maxCpuUsagePercent: 100,
+        maxMemoryMb: 128,
+        maxExecutionTimeMs: 30000,
+        maxOutputSizeBytes: 1048576,
+      },
     },
     limits: overrides?.limits ?? {
       timeoutMs: 30000,
@@ -56,13 +88,13 @@ describe("ToolRegistry - Atomic Activation & Snapshots", () => {
     await registry.stageToolVersion(manifestB);
 
     const snapshot1 = await registry.activateToolVersion("tool_a", "1.0.0", "ws-snapshot");
-    expect(snapshot1.tools["tool_a"]).toBeDefined();
-    expect(snapshot1.tools["tool_b"]).toBeUndefined();
+    expect(snapshot1.tools.tool_a).toBeDefined();
+    expect(snapshot1.tools.tool_b).toBeUndefined();
     expect(Object.isFrozen(snapshot1.tools)).toBe(true);
 
     const snapshot2 = await registry.activateToolVersion("tool_b", "1.0.0", "ws-snapshot");
-    expect(snapshot2.tools["tool_a"]).toBeDefined();
-    expect(snapshot2.tools["tool_b"]).toBeDefined();
+    expect(snapshot2.tools.tool_a).toBeDefined();
+    expect(snapshot2.tools.tool_b).toBeDefined();
     expect(registry.getRevision("ws-snapshot")).toBeGreaterThan(1);
     expect(snapshot2.digest).toBeTruthy();
     expect(snapshot2.digest).not.toEqual(snapshot1.digest);
@@ -74,10 +106,10 @@ describe("ToolRegistry - Atomic Activation & Snapshots", () => {
 
     await registry.stageToolVersion(manifest);
     const snapActive = await registry.activateToolVersion("tool_c", "1.0.0", "ws-deact");
-    expect(snapActive.tools["tool_c"]).toBeDefined();
+    expect(snapActive.tools.tool_c).toBeDefined();
 
     const snapDeact = await registry.deactivateTool("tool_c", "ws-deact");
-    expect(snapDeact.tools["tool_c"]).toBeUndefined();
+    expect(snapDeact.tools.tool_c).toBeUndefined();
     expect(registry.getRevision("ws-deact")).toBeGreaterThan(1);
   });
 
@@ -92,14 +124,14 @@ describe("ToolRegistry - Atomic Activation & Snapshots", () => {
     await registry.activateToolVersion("tool_cache", "1.0.0", "ws-cache");
 
     const resolved1 = await registry.resolveCatalog("ws-cache");
-    expect(resolved1.tools["tool_cache"].version).toBe("1.0.0");
+    expect(resolved1.tools.tool_cache.version).toBe("1.0.0");
     expect(registry.cache.has("ws-cache")).toBe(true);
 
     // Activating v2 invalidates cache and builds new snapshot
     await registry.activateToolVersion("tool_cache", "2.0.0", "ws-cache");
     const resolved2 = await registry.resolveCatalog("ws-cache");
 
-    expect(resolved2.tools["tool_cache"].version).toBe("2.0.0");
+    expect(resolved2.tools.tool_cache.version).toBe("2.0.0");
     expect(resolved2.digest).not.toEqual(resolved1.digest);
   });
 });

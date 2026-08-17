@@ -1,9 +1,6 @@
-import {
-  CapabilityManifest,
-  ToolManifest,
-} from "@tool-evolver/contracts";
+import type { CapabilityManifest, ToolManifest } from "@tool-evolver/contracts";
 import ts from "typescript";
-import { StaticAnalysisFinding, StaticFindingCategory } from "./types.js";
+import { type StaticAnalysisFinding, StaticFindingCategory } from "./types.js";
 
 const ALLOWED_IMPORT_SPECIFIERS: Record<string, true> = {
   "@tool-evolver/runtime": true,
@@ -66,7 +63,7 @@ export class StaticAnalyzer {
   analyze(
     sourceCode: string,
     manifest?: Partial<ToolManifest>,
-    capabilities?: Partial<CapabilityManifest>
+    capabilities?: Partial<CapabilityManifest>,
   ): StaticAnalysisFinding[] {
     const findings: StaticAnalysisFinding[] = [];
     const sourceFile = ts.createSourceFile(
@@ -74,11 +71,12 @@ export class StaticAnalyzer {
       sourceCode,
       ts.ScriptTarget.ES2022,
       true,
-      ts.ScriptKind.TS
+      ts.ScriptKind.TS,
     );
 
     // Check syntactic parser errors
-    const parseDiagnostics = (sourceFile as unknown as { parseDiagnostics?: ts.Diagnostic[] }).parseDiagnostics;
+    const parseDiagnostics = (sourceFile as unknown as { parseDiagnostics?: ts.Diagnostic[] })
+      .parseDiagnostics;
     if (parseDiagnostics && parseDiagnostics.length > 0) {
       for (const diag of parseDiagnostics) {
         const { line, character } = sourceFile.getLineAndCharacterOfPosition(diag.start ?? 0);
@@ -115,10 +113,7 @@ export class StaticAnalyzer {
       const pos = { line: line + 1, column: character + 1 };
 
       // Top-level mutable collections
-      if (
-        node.parent === sourceFile &&
-        ts.isVariableStatement(node)
-      ) {
+      if (node.parent === sourceFile && ts.isVariableStatement(node)) {
         for (const decl of node.declarationList.declarations) {
           if (decl.initializer) {
             const initText = decl.initializer.getText(sourceFile);
@@ -185,10 +180,7 @@ export class StaticAnalyzer {
       }
 
       // Check dynamic imports: import(...)
-      if (
-        ts.isCallExpression(node) &&
-        node.expression.kind === ts.SyntaxKind.ImportKeyword
-      ) {
+      if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
         findings.push({
           severity: "error",
           category: "forbidden_import",
@@ -287,7 +279,8 @@ export class StaticAnalyzer {
         severity: "error",
         category: "syntax_error",
         message: "Tool implementation must contain a default export wrapped with 'defineTool'.",
-        fixHint: "Add 'export default defineTool<ToolInput, ToolOutput>(async (context) => { ... });'",
+        fixHint:
+          "Add 'export default defineTool<ToolInput, ToolOutput>(async (context) => { ... });'",
       });
     } else if (!hasDefineTool) {
       findings.push({
@@ -302,7 +295,8 @@ export class StaticAnalyzer {
       findings.push({
         severity: "warning",
         category: "schema_mismatch",
-        message: "Tool code does not export 'InputSchema'. Defining and exporting InputSchema is recommended.",
+        message:
+          "Tool code does not export 'InputSchema'. Defining and exporting InputSchema is recommended.",
         fixHint: "Export const InputSchema = z.object({ ... });",
       });
     }
@@ -311,7 +305,8 @@ export class StaticAnalyzer {
       findings.push({
         severity: "warning",
         category: "schema_mismatch",
-        message: "Tool code does not export 'OutputSchema'. Defining and exporting OutputSchema is recommended.",
+        message:
+          "Tool code does not export 'OutputSchema'. Defining and exporting OutputSchema is recommended.",
         fixHint: "Export const OutputSchema = z.object({ ... });",
       });
     }
@@ -349,7 +344,13 @@ export class StaticAnalyzer {
   private inspectPotentialBrokerCall(
     node: ts.CallExpression,
     sourceFile: ts.SourceFile,
-    brokerCalls: Array<{ service: string; method: string; line: number; column: number; args: string[] }>
+    brokerCalls: Array<{
+      service: string;
+      method: string;
+      line: number;
+      column: number;
+      args: string[];
+    }>,
   ): void {
     const exprText = node.expression.getText(sourceFile);
     const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
@@ -389,9 +390,15 @@ export class StaticAnalyzer {
    * Validates that all detected broker calls have corresponding capability grants in manifest.
    */
   private validateBrokerManifestParity(
-    brokerCalls: Array<{ service: string; method: string; line: number; column: number; args: string[] }>,
+    brokerCalls: Array<{
+      service: string;
+      method: string;
+      line: number;
+      column: number;
+      args: string[];
+    }>,
     capabilities: Partial<CapabilityManifest> | undefined,
-    findings: StaticAnalysisFinding[]
+    findings: StaticAnalysisFinding[],
   ): void {
     const caps = capabilities ?? {};
 
@@ -425,7 +432,8 @@ export class StaticAnalyzer {
               category: "undeclared_capability",
               message: `Tool invokes filesystem write method 'broker.fs.${call.method}' but manifest does not grant write permissions.`,
               location: pos,
-              fixHint: "Enable 'fs.allowWorkspaceRoot: true', 'fs.allowTemp: true', or add paths to 'fs.writePaths'.",
+              fixHint:
+                "Enable 'fs.allowWorkspaceRoot: true', 'fs.allowTemp: true', or add paths to 'fs.writePaths'.",
             });
           }
         } else {
@@ -441,7 +449,8 @@ export class StaticAnalyzer {
               category: "undeclared_capability",
               message: `Tool invokes filesystem read method 'broker.fs.${call.method}' but manifest does not grant read permissions.`,
               location: pos,
-              fixHint: "Enable 'fs.allowWorkspaceRoot: true', 'fs.allowTemp: true', or add paths to 'fs.readPaths'.",
+              fixHint:
+                "Enable 'fs.allowWorkspaceRoot: true', 'fs.allowTemp: true', or add paths to 'fs.readPaths'.",
             });
           }
         }
@@ -469,7 +478,8 @@ export class StaticAnalyzer {
             category: "undeclared_capability",
             message: `Tool invokes command broker method 'broker.cmd.${call.method}' but command execution capability is not granted in manifest.`,
             location: pos,
-            fixHint: "Set 'command.allowShellExecution: true' or configure 'allowedCommands' in requiredCapabilities.",
+            fixHint:
+              "Set 'command.allowShellExecution: true' or configure 'allowedCommands' in requiredCapabilities.",
           });
         }
       } else if (call.service === "secret") {
@@ -498,7 +508,7 @@ export class StaticAnalyzer {
     node: ts.WhileStatement | ts.ForStatement | ts.DoStatement,
     sourceFile: ts.SourceFile,
     pos: { line: number; column: number },
-    findings: StaticAnalysisFinding[]
+    findings: StaticAnalysisFinding[],
   ): void {
     let isInfiniteCondition = false;
 
@@ -542,9 +552,11 @@ export class StaticAnalyzer {
         findings.push({
           severity: "error",
           category: "static_flaw",
-          message: "Potential infinite loop detected: loop has constant true condition without break, return, throw, or cancellation check.",
+          message:
+            "Potential infinite loop detected: loop has constant true condition without break, return, throw, or cancellation check.",
           location: pos,
-          fixHint: "Add termination condition, break statement, or check 'context.signal?.aborted'.",
+          fixHint:
+            "Add termination condition, break statement, or check 'context.signal?.aborted'.",
         });
       }
     }
@@ -557,14 +569,15 @@ export class StaticAnalyzer {
     node: ts.CatchClause,
     sourceFile: ts.SourceFile,
     pos: { line: number; column: number },
-    findings: StaticAnalysisFinding[]
+    findings: StaticAnalysisFinding[],
   ): void {
     const block = node.block;
     if (block.statements.length === 0) {
       findings.push({
         severity: "warning",
         category: "static_flaw",
-        message: "Swallowed error detected: empty catch block without logging or error propagation.",
+        message:
+          "Swallowed error detected: empty catch block without logging or error propagation.",
         location: pos,
         fixHint: "Log error with 'await logger.error(...)' or rethrow/handle gracefully.",
       });
@@ -593,7 +606,7 @@ export class StaticAnalyzer {
   private inspectRegexForFlaws(
     regexPattern: string,
     pos: { line: number; column: number },
-    findings: StaticAnalysisFinding[]
+    findings: StaticAnalysisFinding[],
   ): void {
     for (const pattern of CATASTROPHIC_REGEX_PATTERNS) {
       if (pattern.test(regexPattern)) {
@@ -602,7 +615,8 @@ export class StaticAnalyzer {
           category: "static_flaw",
           message: `Potentially catastrophic backtracking regex detected: '${regexPattern}'. Risk of ReDoS.`,
           location: pos,
-          fixHint: "Rewrite regular expression with atomic grouping or non-overlapping repeated tokens.",
+          fixHint:
+            "Rewrite regular expression with atomic grouping or non-overlapping repeated tokens.",
         });
         break;
       }

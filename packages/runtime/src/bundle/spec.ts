@@ -72,10 +72,22 @@ export type BundleSignatureData = z.infer<typeof BundleSignatureDataSchema>;
  * Bundle limits and guardrails for decompression and extraction safety.
  */
 export const BundleLimitsSchema = z.object({
-  maxBundleSizeBytes: z.number().int().positive().default(50 * 1024 * 1024), // 50MB
-  maxFileSizeBytes: z.number().int().positive().default(10 * 1024 * 1024), // 10MB
+  maxBundleSizeBytes: z
+    .number()
+    .int()
+    .positive()
+    .default(50 * 1024 * 1024), // 50MB
+  maxFileSizeBytes: z
+    .number()
+    .int()
+    .positive()
+    .default(10 * 1024 * 1024), // 10MB
   maxFileCount: z.number().int().positive().default(1000),
-  maxDecompressedSizeBytes: z.number().int().positive().default(100 * 1024 * 1024), // 100MB
+  maxDecompressedSizeBytes: z
+    .number()
+    .int()
+    .positive()
+    .default(100 * 1024 * 1024), // 100MB
   maxDecompressionRatio: z.number().int().positive().default(10),
 });
 export type BundleLimits = z.infer<typeof BundleLimitsSchema>;

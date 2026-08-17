@@ -1,4 +1,8 @@
-import { FakeSessionEventSource, type HarnessSession, type RawHarnessRecord } from "@tool-evolver/harness-contracts";
+import {
+  FakeSessionEventSource,
+  type HarnessSession,
+  type RawHarnessRecord,
+} from "@tool-evolver/harness-contracts";
 import { describe, expect, it } from "vitest";
 import { BoundedRecordQueue, TranscriptTailer } from "../../src/tailing/index.js";
 
@@ -54,7 +58,11 @@ describe("Independent Per-Source Backpressure and Queue Isolation", () => {
       }
     });
 
-    await tailer.attachSession(sessionA, sourceA, { queueCapacity: 10, highWatermarkRatio: 0.5, lowWatermarkRatio: 0.2 });
+    await tailer.attachSession(sessionA, sourceA, {
+      queueCapacity: 10,
+      highWatermarkRatio: 0.5,
+      lowWatermarkRatio: 0.2,
+    });
     await tailer.attachSession(sessionB, sourceB, { queueCapacity: 10 });
 
     // Emit 10 records for session A
@@ -71,7 +79,16 @@ describe("Independent Per-Source Backpressure and Queue Isolation", () => {
     await fastDonePromise;
     expect(receivedB).toHaveLength(10);
     expect(receivedB.map((r) => (r.rawPayload as { item: string }).item)).toEqual([
-      "B-1", "B-2", "B-3", "B-4", "B-5", "B-6", "B-7", "B-8", "B-9", "B-10",
+      "B-1",
+      "B-2",
+      "B-3",
+      "B-4",
+      "B-5",
+      "B-6",
+      "B-7",
+      "B-8",
+      "B-9",
+      "B-10",
     ]);
 
     // Session A should have paused / hit backpressure

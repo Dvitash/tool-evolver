@@ -82,7 +82,9 @@ export function assessRiskLevel(
   }
 
   if ((sec.allowedSecretNames ?? []).length > 0) {
-    warnings.push(`Access requested for named secrets: ${(sec.allowedSecretNames ?? []).join(", ")}`);
+    warnings.push(
+      `Access requested for named secrets: ${(sec.allowedSecretNames ?? []).join(", ")}`,
+    );
   }
 
   // Compute Risk Level
@@ -91,7 +93,9 @@ export function assessRiskLevel(
     cmd.allowShellExecution ||
     sec.denyDirectRead === false ||
     net.denyPrivateRanges === false ||
-    violations.some((v) => v.code === "NET_PRIVATE_IP_BLOCKED" || v.code === "FS_TRAVERSAL_DETECTED")
+    violations.some(
+      (v) => v.code === "NET_PRIVATE_IP_BLOCKED" || v.code === "FS_TRAVERSAL_DETECTED",
+    )
   ) {
     riskLevel = "CRITICAL";
   } else if (
@@ -125,7 +129,10 @@ export function generateRemediationCommands(violations: PolicyViolation[]): stri
         break;
       case "NET_DOMAIN_EXPANSION":
       case "NET_HOST_EXPANSION":
-        if (typeof violation.requestedValue === "string" && !addedDomains.has(violation.requestedValue)) {
+        if (
+          typeof violation.requestedValue === "string" &&
+          !addedDomains.has(violation.requestedValue)
+        ) {
           addedDomains.add(violation.requestedValue);
           commands.push(`tool-evolver envelope expand --add-domain ${violation.requestedValue}`);
         }
@@ -134,15 +141,25 @@ export function generateRemediationCommands(violations: PolicyViolation[]): stri
         commands.push("tool-evolver envelope expand --allow-localhost");
         break;
       case "FS_PATH_EXPANSION":
-        if (typeof violation.requestedValue === "string" && !addedReadPaths.has(violation.requestedValue)) {
+        if (
+          typeof violation.requestedValue === "string" &&
+          !addedReadPaths.has(violation.requestedValue)
+        ) {
           addedReadPaths.add(violation.requestedValue);
-          commands.push(`tool-evolver envelope expand --add-read-path "${violation.requestedValue}"`);
+          commands.push(
+            `tool-evolver envelope expand --add-read-path "${violation.requestedValue}"`,
+          );
         }
         break;
       case "FS_WRITE_PATH_EXPANSION":
-        if (typeof violation.requestedValue === "string" && !addedWritePaths.has(violation.requestedValue)) {
+        if (
+          typeof violation.requestedValue === "string" &&
+          !addedWritePaths.has(violation.requestedValue)
+        ) {
           addedWritePaths.add(violation.requestedValue);
-          commands.push(`tool-evolver envelope expand --add-write-path "${violation.requestedValue}"`);
+          commands.push(
+            `tool-evolver envelope expand --add-write-path "${violation.requestedValue}"`,
+          );
         }
         break;
       case "CMD_SHELL_FORBIDDEN":
@@ -150,20 +167,28 @@ export function generateRemediationCommands(violations: PolicyViolation[]): stri
         break;
       case "CMD_COMMAND_EXPANSION":
       case "CMD_BINARY_EXPANSION":
-        if (typeof violation.requestedValue === "string" && !addedCommands.has(violation.requestedValue)) {
+        if (
+          typeof violation.requestedValue === "string" &&
+          !addedCommands.has(violation.requestedValue)
+        ) {
           addedCommands.add(violation.requestedValue);
           commands.push(`tool-evolver envelope expand --add-command ${violation.requestedValue}`);
         }
         break;
       case "SECRET_NAME_EXPANSION":
-        if (typeof violation.requestedValue === "string" && !addedSecrets.has(violation.requestedValue)) {
+        if (
+          typeof violation.requestedValue === "string" &&
+          !addedSecrets.has(violation.requestedValue)
+        ) {
           addedSecrets.add(violation.requestedValue);
           commands.push(`tool-evolver envelope expand --add-secret ${violation.requestedValue}`);
         }
         break;
       case "SECRET_PREFIX_EXPANSION":
         if (typeof violation.requestedValue === "string") {
-          commands.push(`tool-evolver envelope expand --add-secret-prefix ${violation.requestedValue}`);
+          commands.push(
+            `tool-evolver envelope expand --add-secret-prefix ${violation.requestedValue}`,
+          );
         }
         break;
       default:
@@ -242,7 +267,12 @@ export function diffCapabilities(
   const modified: Record<string, { before: unknown; after: unknown }> = {};
   let isBroadening = false;
 
-  const compareArrays = (key: string, arr1: unknown[] = [], arr2: unknown[] = [], broadeningWhenAdded = true) => {
+  const compareArrays = (
+    key: string,
+    arr1: unknown[] = [],
+    arr2: unknown[] = [],
+    broadeningWhenAdded = true,
+  ) => {
     const s1 = new Set(arr1.map((x) => JSON.stringify(x)));
     const s2 = new Set(arr2.map((x) => JSON.stringify(x)));
 
@@ -259,7 +289,12 @@ export function diffCapabilities(
     }
   };
 
-  const compareBooleans = (key: string, b1: boolean | undefined, b2: boolean | undefined, broadeningWhenTrue = true) => {
+  const compareBooleans = (
+    key: string,
+    b1: boolean | undefined,
+    b2: boolean | undefined,
+    broadeningWhenTrue = true,
+  ) => {
     const val1 = Boolean(b1);
     const val2 = Boolean(b2);
     if (val1 !== val2) {
@@ -280,36 +315,109 @@ export function diffCapabilities(
   compareArrays("fs.readPaths", source.fs?.readPaths, target.fs?.readPaths, true);
   compareArrays("fs.writePaths", source.fs?.writePaths, target.fs?.writePaths, true);
   compareArrays("fs.denyPaths", source.fs?.denyPaths, target.fs?.denyPaths, false);
-  compareBooleans("fs.allowWorkspaceRoot", source.fs?.allowWorkspaceRoot, target.fs?.allowWorkspaceRoot, true);
+  compareBooleans(
+    "fs.allowWorkspaceRoot",
+    source.fs?.allowWorkspaceRoot,
+    target.fs?.allowWorkspaceRoot,
+    true,
+  );
   compareBooleans("fs.allowTemp", source.fs?.allowTemp, target.fs?.allowTemp, true);
   compareNumbers("fs.maxFileSizeBytes", source.fs?.maxFileSizeBytes, target.fs?.maxFileSizeBytes);
 
   // Network
   compareBooleans("net.allowOutbound", source.net?.allowOutbound, target.net?.allowOutbound, true);
-  compareBooleans("net.allowLocalhost", source.net?.allowLocalhost, target.net?.allowLocalhost, true);
-  compareBooleans("net.denyPrivateRanges", source.net?.denyPrivateRanges, target.net?.denyPrivateRanges, false);
+  compareBooleans(
+    "net.allowLocalhost",
+    source.net?.allowLocalhost,
+    target.net?.allowLocalhost,
+    true,
+  );
+  compareBooleans(
+    "net.denyPrivateRanges",
+    source.net?.denyPrivateRanges,
+    target.net?.denyPrivateRanges,
+    false,
+  );
   compareArrays("net.allowedDomains", source.net?.allowedDomains, target.net?.allowedDomains, true);
   compareArrays("net.allowedHosts", source.net?.allowedHosts, target.net?.allowedHosts, true);
   compareArrays("net.allowedPorts", source.net?.allowedPorts, target.net?.allowedPorts, true);
-  compareArrays("net.allowedProtocols", source.net?.allowedProtocols, target.net?.allowedProtocols, true);
+  compareArrays(
+    "net.allowedProtocols",
+    source.net?.allowedProtocols,
+    target.net?.allowedProtocols,
+    true,
+  );
 
   // Command
-  compareBooleans("command.allowShellExecution", source.command?.allowShellExecution, target.command?.allowShellExecution, true);
-  compareArrays("command.allowedCommands", source.command?.allowedCommands, target.command?.allowedCommands, true);
-  compareArrays("command.allowedBinaries", source.command?.allowedBinaries, target.command?.allowedBinaries, true);
-  compareArrays("command.forbiddenPatterns", source.command?.forbiddenPatterns, target.command?.forbiddenPatterns, false);
-  compareArrays("command.allowEnvPassthrough", source.command?.allowEnvPassthrough, target.command?.allowEnvPassthrough, true);
+  compareBooleans(
+    "command.allowShellExecution",
+    source.command?.allowShellExecution,
+    target.command?.allowShellExecution,
+    true,
+  );
+  compareArrays(
+    "command.allowedCommands",
+    source.command?.allowedCommands,
+    target.command?.allowedCommands,
+    true,
+  );
+  compareArrays(
+    "command.allowedBinaries",
+    source.command?.allowedBinaries,
+    target.command?.allowedBinaries,
+    true,
+  );
+  compareArrays(
+    "command.forbiddenPatterns",
+    source.command?.forbiddenPatterns,
+    target.command?.forbiddenPatterns,
+    false,
+  );
+  compareArrays(
+    "command.allowEnvPassthrough",
+    source.command?.allowEnvPassthrough,
+    target.command?.allowEnvPassthrough,
+    true,
+  );
 
   // Secrets
-  compareArrays("secrets.allowedSecretNames", source.secrets?.allowedSecretNames, target.secrets?.allowedSecretNames, true);
-  compareArrays("secrets.allowedPrefixes", source.secrets?.allowedPrefixes, target.secrets?.allowedPrefixes, true);
-  compareBooleans("secrets.denyDirectRead", source.secrets?.denyDirectRead, target.secrets?.denyDirectRead, false);
-  compareBooleans("secrets.injectAsEnv", source.secrets?.injectAsEnv, target.secrets?.injectAsEnv, true);
+  compareArrays(
+    "secrets.allowedSecretNames",
+    source.secrets?.allowedSecretNames,
+    target.secrets?.allowedSecretNames,
+    true,
+  );
+  compareArrays(
+    "secrets.allowedPrefixes",
+    source.secrets?.allowedPrefixes,
+    target.secrets?.allowedPrefixes,
+    true,
+  );
+  compareBooleans(
+    "secrets.denyDirectRead",
+    source.secrets?.denyDirectRead,
+    target.secrets?.denyDirectRead,
+    false,
+  );
+  compareBooleans(
+    "secrets.injectAsEnv",
+    source.secrets?.injectAsEnv,
+    target.secrets?.injectAsEnv,
+    true,
+  );
 
   // Limits
   compareNumbers("limits.maxMemoryMb", source.limits?.maxMemoryMb, target.limits?.maxMemoryMb);
-  compareNumbers("limits.maxExecutionTimeMs", source.limits?.maxExecutionTimeMs, target.limits?.maxExecutionTimeMs);
-  compareNumbers("limits.maxOutputSizeBytes", source.limits?.maxOutputSizeBytes, target.limits?.maxOutputSizeBytes);
+  compareNumbers(
+    "limits.maxExecutionTimeMs",
+    source.limits?.maxExecutionTimeMs,
+    target.limits?.maxExecutionTimeMs,
+  );
+  compareNumbers(
+    "limits.maxOutputSizeBytes",
+    source.limits?.maxOutputSizeBytes,
+    target.limits?.maxOutputSizeBytes,
+  );
 
   const hasChanges =
     Object.keys(added).length > 0 ||

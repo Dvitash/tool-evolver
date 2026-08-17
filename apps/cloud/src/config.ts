@@ -174,7 +174,9 @@ export function loadConfig(overrides?: Partial<RawCloudConfig>): CloudConfig {
       ssl: env.DB_SSL === "true" || env.DB_SSL === "1",
       maxConnections: env.DB_MAX_CONNECTIONS ? Number(env.DB_MAX_CONNECTIONS) : 20,
       idleTimeoutMs: env.DB_IDLE_TIMEOUT_MS ? Number(env.DB_IDLE_TIMEOUT_MS) : 30000,
-      connectionTimeoutMs: env.DB_CONNECTION_TIMEOUT_MS ? Number(env.DB_CONNECTION_TIMEOUT_MS) : 5000,
+      connectionTimeoutMs: env.DB_CONNECTION_TIMEOUT_MS
+        ? Number(env.DB_CONNECTION_TIMEOUT_MS)
+        : 5000,
     },
     storage: {
       provider: (env.STORAGE_PROVIDER as "s3" | "minio" | "memory") ?? "memory",
@@ -183,16 +185,21 @@ export function loadConfig(overrides?: Partial<RawCloudConfig>): CloudConfig {
       region: env.STORAGE_REGION ?? "us-east-1",
       accessKeyId: env.STORAGE_ACCESS_KEY_ID ?? "minioadmin",
       secretAccessKey: env.STORAGE_SECRET_ACCESS_KEY ?? "minioadmin",
-      forcePathStyle: env.STORAGE_FORCE_PATH_STYLE !== "false" && env.STORAGE_FORCE_PATH_STYLE !== "0",
+      forcePathStyle:
+        env.STORAGE_FORCE_PATH_STYLE !== "false" && env.STORAGE_FORCE_PATH_STYLE !== "0",
       publicUrl: env.STORAGE_PUBLIC_URL,
     },
     queue: {
       provider: (env.QUEUE_PROVIDER as "postgres" | "redis" | "memory") ?? "memory",
       concurrency: env.QUEUE_CONCURRENCY ? Number(env.QUEUE_CONCURRENCY) : 10,
       pollIntervalMs: env.QUEUE_POLL_INTERVAL_MS ? Number(env.QUEUE_POLL_INTERVAL_MS) : 1000,
-      visibilityTimeoutMs: env.QUEUE_VISIBILITY_TIMEOUT_MS ? Number(env.QUEUE_VISIBILITY_TIMEOUT_MS) : 30000,
+      visibilityTimeoutMs: env.QUEUE_VISIBILITY_TIMEOUT_MS
+        ? Number(env.QUEUE_VISIBILITY_TIMEOUT_MS)
+        : 30000,
       maxAttempts: env.QUEUE_MAX_ATTEMPTS ? Number(env.QUEUE_MAX_ATTEMPTS) : 3,
-      deadLetterThreshold: env.QUEUE_DEAD_LETTER_THRESHOLD ? Number(env.QUEUE_DEAD_LETTER_THRESHOLD) : 3,
+      deadLetterThreshold: env.QUEUE_DEAD_LETTER_THRESHOLD
+        ? Number(env.QUEUE_DEAD_LETTER_THRESHOLD)
+        : 3,
       backoffBaseMs: env.QUEUE_BACKOFF_BASE_MS ? Number(env.QUEUE_BACKOFF_BASE_MS) : 1000,
     },
     auth: {

@@ -18,7 +18,11 @@ import {
   createTenantAuthMiddleware,
   createTimeoutMiddleware,
 } from "../../src/mcp/index.js";
-import type { CloudMcpInvocationContext, CloudMcpToolDefinition, InvocationAuditRecord } from "../../src/mcp/types.js";
+import type {
+  CloudMcpInvocationContext,
+  CloudMcpToolDefinition,
+  InvocationAuditRecord,
+} from "../../src/mcp/types.js";
 
 describe("Cloud MCP - Middleware & Degradation Resilience", () => {
   const context: CloudMcpInvocationContext = {
@@ -139,9 +143,9 @@ describe("Cloud MCP - Middleware & Degradation Resilience", () => {
       ).resolves.toBeDefined();
 
       // 2. Missing required field
-      await expect(
-        validator(context, tool, { count: 10 }, next),
-      ).rejects.toThrow(/Missing required parameter: 'name'/);
+      await expect(validator(context, tool, { count: 10 }, next)).rejects.toThrow(
+        /Missing required parameter: 'name'/,
+      );
 
       // 3. Type mismatch
       await expect(

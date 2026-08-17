@@ -1,20 +1,12 @@
-import { NormalizedSessionEvent } from "@tool-evolver/contracts";
-import { ObservationBatchRequest } from "@tool-evolver/protocol";
+import type { NormalizedSessionEvent } from "@tool-evolver/contracts";
+import type { ObservationBatchRequest } from "@tool-evolver/protocol";
 import { describe, expect, it } from "vitest";
 import { ConsentManager } from "../../src/auth/consent.js";
+import { MemoryDatabasePool, OutboxRepository, runMigrations } from "../../src/db/index.js";
+import { RawConsentRequiredError } from "../../src/ingestion/consent-guard.js";
+import { BatchConflictError } from "../../src/ingestion/deduplicator.js";
 import {
-  MemoryDatabasePool,
-  OutboxRepository,
-  runMigrations,
-} from "../../src/db/index.js";
-import {
-  RawConsentRequiredError,
-} from "../../src/ingestion/consent-guard.js";
-import {
-  BatchConflictError,
-} from "../../src/ingestion/deduplicator.js";
-import {
-  IngestionContext,
+  type IngestionContext,
   ObservationIngestionService,
   TenantMismatchError,
 } from "../../src/ingestion/service.js";
@@ -165,7 +157,9 @@ describe("ObservationIngestionService", () => {
       observations: [sampleObs1, alteredObs],
     };
 
-    await expect(service.ingestBatch(context, conflictingBatch)).rejects.toThrow(BatchConflictError);
+    await expect(service.ingestBatch(context, conflictingBatch)).rejects.toThrow(
+      BatchConflictError,
+    );
   });
 
   it("should reject cross-tenant and cross-workspace spoofing attempts with TenantMismatchError", async () => {
@@ -185,7 +179,9 @@ describe("ObservationIngestionService", () => {
       installationId: "inst-spoofed",
     };
 
-    await expect(service.ingestBatch(context, mismatchedInstallation)).rejects.toThrow(TenantMismatchError);
+    await expect(service.ingestBatch(context, mismatchedInstallation)).rejects.toThrow(
+      TenantMismatchError,
+    );
   });
 
   it("should reject raw-bearing payload without explicit raw consent", async () => {

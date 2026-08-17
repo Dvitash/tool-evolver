@@ -72,9 +72,7 @@ describe("Bounded Output Validation & Self-Repair", () => {
         if (executionCount === 2) {
           // Invalid schema: opportunities exists but elements missing confidenceScore and priority
           return {
-            opportunities: [
-              { id: "opp_half", title: "Missing fields" },
-            ],
+            opportunities: [{ id: "opp_half", title: "Missing fields" }],
           };
         }
         // Attempt 3 (2nd repair): valid schema

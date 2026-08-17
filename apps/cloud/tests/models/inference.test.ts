@@ -53,7 +53,9 @@ describe("Structured Inference Service & Provenance", () => {
     expect(prov.usage.totalTokens).toBeGreaterThan(0);
     expect(prov.latencyMs).toBeGreaterThanOrEqual(0);
     expect(new Date(prov.createdAt).getTime()).toBeGreaterThan(0);
-    expect(new Date(prov.finishedAt).getTime()).toBeGreaterThanOrEqual(new Date(prov.createdAt).getTime());
+    expect(new Date(prov.finishedAt).getTime()).toBeGreaterThanOrEqual(
+      new Date(prov.createdAt).getTime(),
+    );
   });
 
   it("should support all 5 core task classes with default templates", async () => {
@@ -121,10 +123,10 @@ describe("Structured Inference Service & Provenance", () => {
     });
 
     const fakeProvider = new FakeModelProvider({ id: "mock-custom" });
-    fakeProvider.setMockResponse(
-      (req) => req.userMessage.includes("Analyze metric"),
-      { transformedMetric: "normalized_cpu", score: 98.6 },
-    );
+    fakeProvider.setMockResponse((req) => req.userMessage.includes("Analyze metric"), {
+      transformedMetric: "normalized_cpu",
+      score: 98.6,
+    });
 
     const service = createInferenceService({ promptRegistry: registry });
     service.router.registerProvider(fakeProvider);

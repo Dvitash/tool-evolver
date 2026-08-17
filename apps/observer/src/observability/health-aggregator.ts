@@ -50,18 +50,28 @@ export interface HealthCheckRegistration {
 }
 
 export const KNOWN_REMEDIATION_HINTS: Record<string, string> = {
-  DB_BUSY_TIMEOUT: "SQLite busy timeout exceeded. Check for concurrent writers or long-running transactions.",
+  DB_BUSY_TIMEOUT:
+    "SQLite busy timeout exceeded. Check for concurrent writers or long-running transactions.",
   DB_INTEGRITY_FAIL: "Database integrity check failed. Run repair or restore state from backup.",
-  DB_MIGRATION_PENDING: "Unapplied database migrations found. Run migration runner before starting daemon.",
+  DB_MIGRATION_PENDING:
+    "Unapplied database migrations found. Run migration runner before starting daemon.",
   DB_DISCONNECTED: "Database connection is not established or lost.",
-  CLOUD_UPGRADE_REQUIRED: "Cloud protocol version deprecated. Upgrade tool-evolver daemon to latest release.",
-  CLOUD_AUTH_EXPIRED: "Cloud API key is missing or invalid. Re-authenticate via `tool-evolver auth login`.",
-  CLOUD_DISCONNECTED: "Emergency cloud disconnect active or network unreachable. Verify network connectivity.",
-  RUNTIME_WORKER_CRASHED: "Runtime worker crashed or is unresponsive. Check worker logs and restart.",
-  RUNTIME_QUARANTINE_ACTIVE: "One or more tools quarantined due to repeated failures or security policy violations.",
-  EVOLUTION_PAUSED: "Evolution paused by operator kill switch. Resume with `tool-evolver kill-switch resume evolution`.",
-  TOOLS_DISABLED: "Tool execution disabled globally or by workspace kill switch. Re-enable via kill-switch controls.",
-  OBSERVER_MEMORY_PRESSURE: "Observer heap memory usage exceeded threshold. Inspect active tailers or restart daemon.",
+  CLOUD_UPGRADE_REQUIRED:
+    "Cloud protocol version deprecated. Upgrade tool-evolver daemon to latest release.",
+  CLOUD_AUTH_EXPIRED:
+    "Cloud API key is missing or invalid. Re-authenticate via `tool-evolver auth login`.",
+  CLOUD_DISCONNECTED:
+    "Emergency cloud disconnect active or network unreachable. Verify network connectivity.",
+  RUNTIME_WORKER_CRASHED:
+    "Runtime worker crashed or is unresponsive. Check worker logs and restart.",
+  RUNTIME_QUARANTINE_ACTIVE:
+    "One or more tools quarantined due to repeated failures or security policy violations.",
+  EVOLUTION_PAUSED:
+    "Evolution paused by operator kill switch. Resume with `tool-evolver kill-switch resume evolution`.",
+  TOOLS_DISABLED:
+    "Tool execution disabled globally or by workspace kill switch. Re-enable via kill-switch controls.",
+  OBSERVER_MEMORY_PRESSURE:
+    "Observer heap memory usage exceeded threshold. Inspect active tailers or restart daemon.",
   GATEWAY_UNREACHABLE: "Gateway IPC socket or HTTP port is unreachable.",
 };
 
@@ -78,62 +88,72 @@ export class HealthAggregator {
 
   private registerDefaultChecks(): void {
     // 1. Observer process memory & uptime
-    this.registerComponent("observer", () => {
-      const memory = process.memoryUsage();
-      const heapUsedMb = Math.round(memory.heapUsed / (1024 * 1024));
-      const heapTotalMb = Math.round(memory.heapTotal / (1024 * 1024));
-      const isMemoryHigh = heapUsedMb > 512;
+    this.registerComponent(
+      "observer",
+      () => {
+        const memory = process.memoryUsage();
+        const heapUsedMb = Math.round(memory.heapUsed / (1024 * 1024));
+        const heapTotalMb = Math.round(memory.heapTotal / (1024 * 1024));
+        const isMemoryHigh = heapUsedMb > 512;
 
-      return {
-        status: isMemoryHigh ? "degraded" : "ready",
-        reasonCode: isMemoryHigh ? "OBSERVER_MEMORY_PRESSURE" : undefined,
-        remediationHint: isMemoryHigh ? KNOWN_REMEDIATION_HINTS.OBSERVER_MEMORY_PRESSURE : undefined,
-        details: {
-          uptimeSeconds: Math.round(process.uptime()),
-          pid: process.pid,
-          heapUsedMb,
-          heapTotalMb,
-          rssMb: Math.round(memory.rss / (1024 * 1024)),
-        },
-      };
-    }, { critical: true });
+        return {
+          status: isMemoryHigh ? "degraded" : "ready",
+          reasonCode: isMemoryHigh ? "OBSERVER_MEMORY_PRESSURE" : undefined,
+          remediationHint: isMemoryHigh
+            ? KNOWN_REMEDIATION_HINTS.OBSERVER_MEMORY_PRESSURE
+            : undefined,
+          details: {
+            uptimeSeconds: Math.round(process.uptime()),
+            pid: process.pid,
+            heapUsedMb,
+            heapTotalMb,
+            rssMb: Math.round(memory.rss / (1024 * 1024)),
+          },
+        };
+      },
+      { critical: true },
+    );
 
     // 2. DB health check if connection provided
     if (this.conn) {
-      this.registerComponent("db", () => {
-        if (!this.conn!.isOpen()) {
-          return {
-            status: "offline",
-            reasonCode: "DB_DISCONNECTED",
-            remediationHint: KNOWN_REMEDIATION_HINTS.DB_DISCONNECTED,
-          };
-        }
-
-        try {
-          const row = this.conn!.get<{ integrity_check: string }>("PRAGMA integrity_check(1)");
-          const ok = row?.integrity_check === "ok";
-          if (!ok) {
+      this.registerComponent(
+        "db",
+        () => {
+          if (!this.conn!.isOpen()) {
             return {
-              status: "degraded",
-              reasonCode: "DB_INTEGRITY_FAIL",
-              remediationHint: KNOWN_REMEDIATION_HINTS.DB_INTEGRITY_FAIL,
-              details: { integrity: row?.integrity_check },
+              status: "offline",
+              reasonCode: "DB_DISCONNECTED",
+              remediationHint: KNOWN_REMEDIATION_HINTS.DB_DISCONNECTED,
             };
           }
 
-          return {
-            status: "ready",
-            details: { integrity: "ok" },
-          };
-        } catch (err) {
-          return {
-            status: "degraded",
-            reasonCode: "DB_BUSY_TIMEOUT",
-            remediationHint: KNOWN_REMEDIATION_HINTS.DB_BUSY_TIMEOUT,
-            details: { error: String(err) },
-          };
-        }
-      }, { critical: true });
+          try {
+            const row = this.conn!.get<{ integrity_check: string }>("PRAGMA integrity_check(1)");
+            const ok = row?.integrity_check === "ok";
+            if (!ok) {
+              return {
+                status: "degraded",
+                reasonCode: "DB_INTEGRITY_FAIL",
+                remediationHint: KNOWN_REMEDIATION_HINTS.DB_INTEGRITY_FAIL,
+                details: { integrity: row?.integrity_check },
+              };
+            }
+
+            return {
+              status: "ready",
+              details: { integrity: "ok" },
+            };
+          } catch (err) {
+            return {
+              status: "degraded",
+              reasonCode: "DB_BUSY_TIMEOUT",
+              remediationHint: KNOWN_REMEDIATION_HINTS.DB_BUSY_TIMEOUT,
+              details: { error: String(err) },
+            };
+          }
+        },
+        { critical: true },
+      );
     }
   }
 
@@ -192,7 +212,11 @@ export class HealthAggregator {
           critical: partialResult.critical ?? reg.critical,
           message: partialResult.message,
           reasonCode: partialResult.reasonCode,
-          remediationHint: partialResult.remediationHint ?? (partialResult.reasonCode ? KNOWN_REMEDIATION_HINTS[partialResult.reasonCode] : undefined),
+          remediationHint:
+            partialResult.remediationHint ??
+            (partialResult.reasonCode
+              ? KNOWN_REMEDIATION_HINTS[partialResult.reasonCode]
+              : undefined),
           details: partialResult.details,
           checkedAt,
           latencyMs,

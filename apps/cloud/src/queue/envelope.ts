@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { TenantContext } from "../tenant.js";
+import type { TenantContext } from "../tenant.js";
 
 /**
  * Tenant context schema for job envelopes.
@@ -20,7 +20,10 @@ export const TenantContextSchema = z.object({
  * Schema for versioned internal job envelopes.
  */
 export const JobEnvelopeSchema = z.object({
-  jobId: z.string().uuid().default(() => randomUUID()),
+  jobId: z
+    .string()
+    .uuid()
+    .default(() => randomUUID()),
   jobType: z.string().min(1),
   version: z.string().default("1.0.0"),
   tenantContext: TenantContextSchema,
@@ -28,7 +31,11 @@ export const JobEnvelopeSchema = z.object({
   correlationId: z.string().optional(),
   attempt: z.number().int().positive().default(1),
   maxAttempts: z.number().int().positive().default(3),
-  availableAt: z.number().int().nonnegative().default(() => Date.now()),
+  availableAt: z
+    .number()
+    .int()
+    .nonnegative()
+    .default(() => Date.now()),
   expiresAt: z.number().int().nonnegative().optional(),
   idempotencyKey: z.string().optional(),
   payload: z.unknown(),

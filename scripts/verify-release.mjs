@@ -22,6 +22,7 @@ import {
   WORKSPACE_PACKAGES,
   canonicalJson,
   fileSha256,
+  packageRelease,
 } from "./package-release.mjs";
 
 export const REQUIRED_USER_DOCS = [
@@ -121,7 +122,12 @@ export function verifyManifestSignatures(manifest) {
   /** @type {Array<{ rule: string, message: string }>} */
   const violations = [];
 
-  if (!manifest || !manifest.signatures || !Array.isArray(manifest.signatures) || manifest.signatures.length === 0) {
+  if (
+    !manifest ||
+    !manifest.signatures ||
+    !Array.isArray(manifest.signatures) ||
+    manifest.signatures.length === 0
+  ) {
     violations.push({
       rule: "MISSING_SIGNATURE",
       message: "Release manifest lacks signatures array or signature entry.",
@@ -545,7 +551,8 @@ export function verifyDocumentation(rootDir = process.cwd()) {
  */
 export function verifyRelease(options = {}) {
   const rootDir = options.rootDir || process.cwd();
-  const releaseDir = options.releaseDir || path.resolve(rootDir, `dist/release/v${RELEASE_VERSION}`);
+  const releaseDir =
+    options.releaseDir || path.resolve(rootDir, `dist/release/v${RELEASE_VERSION}`);
 
   console.log(`🔍 Verifying Tool Evolver V${RELEASE_VERSION} Release Artifacts & Documentation...`);
   console.log(`📂 Release Directory: ${releaseDir}`);
@@ -609,7 +616,9 @@ export function verifyRelease(options = {}) {
   };
 
   if (valid) {
-    console.log(`\n✅ Release verification PASSED! All ${PLATFORMS.length} platform tarballs, signed manifest, SBOM, channel metadata, and ${allDocs.length} documentation files verified.`);
+    console.log(
+      `\n✅ Release verification PASSED! All ${PLATFORMS.length} platform tarballs, signed manifest, SBOM, channel metadata, and ${allDocs.length} documentation files verified.`,
+    );
   } else {
     console.error(`\n❌ Release verification FAILED with ${violations.length} violation(s):`);
     for (const v of violations) {
@@ -625,6 +634,11 @@ if (
   process.argv[1] &&
   path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)
 ) {
+  const rootDir = process.cwd();
+  const defaultReleaseDir = path.resolve(rootDir, `dist/release/v${RELEASE_VERSION}`);
+  if (!fs.existsSync(path.join(defaultReleaseDir, "manifest.json"))) {
+    packageRelease({ rootDir, outputDir: defaultReleaseDir });
+  }
   const result = verifyRelease();
   if (!result.valid) {
     process.exit(1);

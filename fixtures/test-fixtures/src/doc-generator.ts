@@ -1,4 +1,3 @@
-import { z } from "zod";
 import {
   CandidateStateSchema,
   CandidateTriggerReasonSchema,
@@ -26,6 +25,7 @@ import {
   ProtocolMessageEnvelopeSchema,
   StreamMessageSchema,
 } from "@tool-evolver/protocol";
+import type { z } from "zod";
 import { type SchemaDescriptor, extractSchemaDescriptor } from "./schema-diff.js";
 
 /**
@@ -151,9 +151,6 @@ export function generateJsonSchema(
         json.type = "object";
         json.additionalProperties = true;
         break;
-
-      case "any":
-      case "unknown":
       default:
         break;
     }
@@ -200,10 +197,18 @@ export function generateSchemaExample(
 
     switch (d.type) {
       case "string": {
-        if (d.pattern?.includes("^[0-9a-f]{64}$") || lowerField.includes("digest") || lowerField.includes("hash")) {
+        if (
+          d.pattern?.includes("^[0-9a-f]{64}$") ||
+          lowerField.includes("digest") ||
+          lowerField.includes("hash")
+        ) {
           return "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
         }
-        if (lowerField.includes("timestamp") || lowerField.includes("at") || lowerField.includes("date")) {
+        if (
+          lowerField.includes("timestamp") ||
+          lowerField.includes("at") ||
+          lowerField.includes("date")
+        ) {
           return "2026-08-17T12:00:00.000Z";
         }
         if (lowerField.includes("version") || lowerField.includes("semver")) {
@@ -257,9 +262,6 @@ export function generateSchemaExample(
 
       case "record":
         return { key: "value" };
-
-      case "any":
-      case "unknown":
       default:
         return "sample_data";
     }

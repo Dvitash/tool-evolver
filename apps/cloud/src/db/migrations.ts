@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { DatabasePool, Queryable } from "./client.js";
+import type { DatabasePool, Queryable } from "./client.js";
 
 /**
  * Migration advisory lock ID (hash of "tool_evolver_schema_migrations").
@@ -87,7 +87,9 @@ export const initialSchemaMigration: Migration = {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_devices_tenant ON devices(account_id, workspace_id);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_devices_tenant ON devices(account_id, workspace_id);`,
+    );
 
     // 4. Installations
     await db.query(`
@@ -104,7 +106,9 @@ export const initialSchemaMigration: Migration = {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_installations_tenant ON installations(account_id, workspace_id);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_installations_tenant ON installations(account_id, workspace_id);`,
+    );
 
     // 5. Outbox
     await db.query(`
@@ -125,7 +129,9 @@ export const initialSchemaMigration: Migration = {
       );
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox(status, created_at);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_outbox_tenant ON outbox(account_id, workspace_id);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_outbox_tenant ON outbox(account_id, workspace_id);`,
+    );
 
     // 6. Jobs Queue
     await db.query(`
@@ -172,7 +178,9 @@ export const initialSchemaMigration: Migration = {
         requeued_at TIMESTAMPTZ
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_dlq_tenant ON dead_letter_queue(account_id, workspace_id);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_dlq_tenant ON dead_letter_queue(account_id, workspace_id);`,
+    );
 
     // 8. Object Metadata
     await db.query(`
@@ -191,7 +199,9 @@ export const initialSchemaMigration: Migration = {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_object_metadata_sha256 ON object_metadata(sha256);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_object_metadata_sha256 ON object_metadata(sha256);`,
+    );
 
     // 9. Ingestion Receipts
     await db.query(`
@@ -213,9 +223,15 @@ export const initialSchemaMigration: Migration = {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_ingestion_receipts_batch ON ingestion_receipts(installation_id, workspace_id, batch_id);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_ingestion_receipts_cursor ON ingestion_receipts(installation_id, workspace_id, source_cursor);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_ingestion_receipts_hash ON ingestion_receipts(content_hash);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_ingestion_receipts_batch ON ingestion_receipts(installation_id, workspace_id, batch_id);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_ingestion_receipts_cursor ON ingestion_receipts(installation_id, workspace_id, source_cursor);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_ingestion_receipts_hash ON ingestion_receipts(content_hash);`,
+    );
   },
   down: async (db: Queryable) => {
     await db.query(`DROP TABLE IF EXISTS ingestion_receipts;`);
@@ -257,9 +273,15 @@ export const observationsAndEvidenceMigration: Migration = {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_sessions_tenant ON sessions(account_id, workspace_id);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(account_id, workspace_id, started_at);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(account_id, workspace_id, status);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_sessions_tenant ON sessions(account_id, workspace_id);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(account_id, workspace_id, started_at);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(account_id, workspace_id, status);`,
+    );
 
     // 2. Session Branches
     await db.query(`
@@ -278,8 +300,12 @@ export const observationsAndEvidenceMigration: Migration = {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_session_branches_session ON session_branches(session_id);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_session_branches_tenant ON session_branches(account_id, workspace_id);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_session_branches_session ON session_branches(session_id);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_session_branches_tenant ON session_branches(account_id, workspace_id);`,
+    );
 
     // 3. Normalized Events
     await db.query(`
@@ -305,12 +331,24 @@ export const observationsAndEvidenceMigration: Migration = {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_normalized_events_tenant_session ON normalized_events(account_id, workspace_id, session_id);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_normalized_events_sequence ON normalized_events(session_id, causal_sequence);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_normalized_events_timestamp ON normalized_events(account_id, workspace_id, timestamp);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_normalized_events_type ON normalized_events(account_id, workspace_id, event_type);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_normalized_events_parent ON normalized_events(session_id, parent_id);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_normalized_events_hash ON normalized_events(content_hash);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_normalized_events_tenant_session ON normalized_events(account_id, workspace_id, session_id);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_normalized_events_sequence ON normalized_events(session_id, causal_sequence);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_normalized_events_timestamp ON normalized_events(account_id, workspace_id, timestamp);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_normalized_events_type ON normalized_events(account_id, workspace_id, event_type);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_normalized_events_parent ON normalized_events(session_id, parent_id);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_normalized_events_hash ON normalized_events(content_hash);`,
+    );
 
     // 4. Evidence Sets
     await db.query(`
@@ -328,9 +366,15 @@ export const observationsAndEvidenceMigration: Migration = {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_evidence_sets_tenant ON evidence_sets(account_id, workspace_id);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_evidence_sets_session ON evidence_sets(session_id);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_evidence_sets_digest ON evidence_sets(root_digest);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_evidence_sets_tenant ON evidence_sets(account_id, workspace_id);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_evidence_sets_session ON evidence_sets(session_id);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_evidence_sets_digest ON evidence_sets(root_digest);`,
+    );
 
     // 5. Evidence Members
     await db.query(`
@@ -345,9 +389,15 @@ export const observationsAndEvidenceMigration: Migration = {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_evidence_members_set ON evidence_members(evidence_set_id, sequence_index);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_evidence_members_event ON evidence_members(event_id);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_evidence_members_tenant ON evidence_members(account_id, workspace_id);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_evidence_members_set ON evidence_members(evidence_set_id, sequence_index);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_evidence_members_event ON evidence_members(event_id);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_evidence_members_tenant ON evidence_members(account_id, workspace_id);`,
+    );
 
     // 6. Retention Holds
     await db.query(`
@@ -365,8 +415,12 @@ export const observationsAndEvidenceMigration: Migration = {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_retention_holds_target ON retention_holds(account_id, workspace_id, target_type, target_id);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_retention_holds_expires ON retention_holds(expires_at);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_retention_holds_target ON retention_holds(account_id, workspace_id, target_type, target_id);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_retention_holds_expires ON retention_holds(expires_at);`,
+    );
 
     // 7. Export Jobs
     await db.query(`
@@ -387,7 +441,9 @@ export const observationsAndEvidenceMigration: Migration = {
         completed_at TIMESTAMPTZ
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_export_jobs_tenant ON export_jobs(account_id, workspace_id, status);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_export_jobs_tenant ON export_jobs(account_id, workspace_id, status);`,
+    );
 
     // 8. Deletion Jobs
     await db.query(`
@@ -406,7 +462,9 @@ export const observationsAndEvidenceMigration: Migration = {
         completed_at TIMESTAMPTZ
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_deletion_jobs_tenant ON deletion_jobs(account_id, workspace_id, status);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_deletion_jobs_tenant ON deletion_jobs(account_id, workspace_id, status);`,
+    );
   },
   down: async (db: Queryable) => {
     await db.query(`DROP TABLE IF EXISTS deletion_jobs;`);
@@ -442,7 +500,9 @@ export const toolRegistryAndArtifactsMigration: Migration = {
         PRIMARY KEY (workspace_id, id)
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_tools_tenant ON tools(account_id, workspace_id);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_tools_tenant ON tools(account_id, workspace_id);`,
+    );
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS tool_versions (
@@ -464,10 +524,18 @@ export const toolRegistryAndArtifactsMigration: Migration = {
         UNIQUE (workspace_id, tool_id, version)
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_tool_versions_tenant ON tool_versions(account_id, workspace_id, tool_id);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_tool_versions_artifact_digest ON tool_versions(artifact_digest);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_tool_versions_manifest_digest ON tool_versions(manifest_digest);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_tool_versions_status ON tool_versions(workspace_id, tool_id, status);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_tool_versions_tenant ON tool_versions(account_id, workspace_id, tool_id);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_tool_versions_artifact_digest ON tool_versions(artifact_digest);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_tool_versions_manifest_digest ON tool_versions(manifest_digest);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_tool_versions_status ON tool_versions(workspace_id, tool_id, status);`,
+    );
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS tool_publication_records (
@@ -492,8 +560,12 @@ export const toolRegistryAndArtifactsMigration: Migration = {
         published_at TIMESTAMPTZ
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_tool_publication_records_tenant ON tool_publication_records(account_id, workspace_id, tool_id);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_tool_publication_records_state ON tool_publication_records(state);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_tool_publication_records_tenant ON tool_publication_records(account_id, workspace_id, tool_id);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_tool_publication_records_state ON tool_publication_records(state);`,
+    );
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS tool_version_aliases (
@@ -508,7 +580,9 @@ export const toolRegistryAndArtifactsMigration: Migration = {
         UNIQUE (workspace_id, tool_id, alias)
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_tool_version_aliases_lookup ON tool_version_aliases(workspace_id, tool_id, alias);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_tool_version_aliases_lookup ON tool_version_aliases(workspace_id, tool_id, alias);`,
+    );
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS signing_keys (
@@ -524,7 +598,9 @@ export const toolRegistryAndArtifactsMigration: Migration = {
         rotated_at TIMESTAMPTZ
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_signing_keys_status ON signing_keys(status, algorithm);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_signing_keys_status ON signing_keys(status, algorithm);`,
+    );
   },
   down: async (db: Queryable) => {
     await db.query(`DROP TABLE IF EXISTS signing_keys;`);
@@ -576,8 +652,12 @@ export const rolloutAndCanaryMigration: Migration = {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_rollouts_workspace_tool ON rollouts(workspace_id, tool_id, state);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_rollouts_digest ON rollouts(workspace_id, artifact_digest);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_rollouts_workspace_tool ON rollouts(workspace_id, tool_id, state);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_rollouts_digest ON rollouts(workspace_id, artifact_digest);`,
+    );
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS rollout_decisions (
@@ -597,7 +677,9 @@ export const rolloutAndCanaryMigration: Migration = {
         evaluated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_rollout_decisions_rollout ON rollout_decisions(rollout_id, evaluated_at);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_rollout_decisions_rollout ON rollout_decisions(rollout_id, evaluated_at);`,
+    );
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS rollout_session_assignments (
@@ -615,7 +697,9 @@ export const rolloutAndCanaryMigration: Migration = {
         UNIQUE (workspace_id, session_id, tool_id)
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_session_assignments_tool ON rollout_session_assignments(workspace_id, tool_id);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_session_assignments_tool ON rollout_session_assignments(workspace_id, tool_id);`,
+    );
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS rollout_incidents (
@@ -632,8 +716,12 @@ export const rolloutAndCanaryMigration: Migration = {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_rollout_incidents_rollout ON rollout_incidents(rollout_id);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_rollout_incidents_tool ON rollout_incidents(workspace_id, tool_id);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_rollout_incidents_rollout ON rollout_incidents(rollout_id);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_rollout_incidents_tool ON rollout_incidents(workspace_id, tool_id);`,
+    );
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS rollout_overrides (
@@ -672,7 +760,9 @@ export const rolloutAndCanaryMigration: Migration = {
         timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_telemetry_events ON rollout_telemetry_events(workspace_id, tool_id, version, timestamp);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_telemetry_events ON rollout_telemetry_events(workspace_id, tool_id, version, timestamp);`,
+    );
   },
   down: async (db: Queryable) => {
     await db.query(`DROP TABLE IF EXISTS rollout_telemetry_events;`);
@@ -706,8 +796,12 @@ export const analyticsAndMetricsMigration: Migration = {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_telemetry_receipts_workspace_batch ON telemetry_receipts(workspace_id, batch_id);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_telemetry_receipts_tenant ON telemetry_receipts(account_id, workspace_id);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_telemetry_receipts_workspace_batch ON telemetry_receipts(workspace_id, batch_id);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_telemetry_receipts_tenant ON telemetry_receipts(account_id, workspace_id);`,
+    );
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS telemetry_buckets (
@@ -735,8 +829,12 @@ export const analyticsAndMetricsMigration: Migration = {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_telemetry_buckets_query ON telemetry_buckets(workspace_id, tool_id, version, metric_name, window_start);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_telemetry_buckets_tenant ON telemetry_buckets(account_id, workspace_id);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_telemetry_buckets_query ON telemetry_buckets(workspace_id, tool_id, version, metric_name, window_start);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_telemetry_buckets_tenant ON telemetry_buckets(account_id, workspace_id);`,
+    );
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS rollout_metric_windows (
@@ -773,8 +871,12 @@ export const analyticsAndMetricsMigration: Migration = {
         materialized_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_rollout_metric_windows_query ON rollout_metric_windows(workspace_id, tool_id, version, window_start);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_rollout_metric_windows_tenant ON rollout_metric_windows(account_id, workspace_id);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_rollout_metric_windows_query ON rollout_metric_windows(workspace_id, tool_id, version, window_start);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_rollout_metric_windows_tenant ON rollout_metric_windows(account_id, workspace_id);`,
+    );
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS efficiency_metrics (
@@ -793,8 +895,12 @@ export const analyticsAndMetricsMigration: Migration = {
         calculated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_efficiency_metrics_query ON efficiency_metrics(workspace_id, tool_id, version, calculated_at);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_efficiency_metrics_tenant ON efficiency_metrics(account_id, workspace_id);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_efficiency_metrics_query ON efficiency_metrics(workspace_id, tool_id, version, calculated_at);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_efficiency_metrics_tenant ON efficiency_metrics(account_id, workspace_id);`,
+    );
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS evaluation_calibrations (
@@ -817,8 +923,12 @@ export const analyticsAndMetricsMigration: Migration = {
         calibrated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_eval_calibrations_query ON evaluation_calibrations(workspace_id, tool_id, version, calibrated_at);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_eval_calibrations_tenant ON evaluation_calibrations(account_id, workspace_id);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_eval_calibrations_query ON evaluation_calibrations(workspace_id, tool_id, version, calibrated_at);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_eval_calibrations_tenant ON evaluation_calibrations(account_id, workspace_id);`,
+    );
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS anomaly_alerts (
@@ -836,8 +946,12 @@ export const analyticsAndMetricsMigration: Migration = {
         resolved_at TIMESTAMPTZ
       );
     `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_query ON anomaly_alerts(workspace_id, tool_id, version, detected_at);`);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_tenant ON anomaly_alerts(account_id, workspace_id);`);
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_query ON anomaly_alerts(workspace_id, tool_id, version, detected_at);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_tenant ON anomaly_alerts(account_id, workspace_id);`,
+    );
   },
   down: async (db: Queryable) => {
     await db.query(`DROP TABLE IF EXISTS anomaly_alerts;`);
@@ -878,13 +992,17 @@ export async function runMigrations(
   pool: DatabasePool,
   options: { targetVersion?: number; migrations?: Migration[] } = {},
 ): Promise<MigrationResult> {
-  const migrations = (options.migrations ?? DEFAULT_MIGRATIONS).slice().sort((a, b) => a.version - b.version);
+  const migrations = (options.migrations ?? DEFAULT_MIGRATIONS)
+    .slice()
+    .sort((a, b) => a.version - b.version);
   const targetVersion = options.targetVersion ?? Number.MAX_SAFE_INTEGER;
 
   // Acquire advisory lock
   const locked = await pool.acquireAdvisoryLock(MIGRATION_ADVISORY_LOCK_ID);
   if (!locked) {
-    throw new Error(`Failed to acquire migration advisory lock (${MIGRATION_ADVISORY_LOCK_ID}). Another migration is in progress.`);
+    throw new Error(
+      `Failed to acquire migration advisory lock (${MIGRATION_ADVISORY_LOCK_ID}). Another migration is in progress.`,
+    );
   }
 
   try {
@@ -905,7 +1023,9 @@ export async function runMigrations(
       // Run migration inside transaction
       await pool.transaction(async (tx) => {
         await migration.up(tx);
-        const checksum = migration.checksum ?? createHash("sha256").update(`${migration.version}_${migration.name}`).digest("hex");
+        const checksum =
+          migration.checksum ??
+          createHash("sha256").update(`${migration.version}_${migration.name}`).digest("hex");
         await tx.query(
           `INSERT INTO _migrations (version, name, applied_at, checksum) VALUES ($1, $2, $3, $4)`,
           [migration.version, migration.name, new Date().toISOString(), checksum],
@@ -936,12 +1056,16 @@ export async function rollbackMigration(
   pool: DatabasePool,
   options: { targetVersion?: number; migrations?: Migration[] } = {},
 ): Promise<MigrationResult> {
-  const migrations = (options.migrations ?? DEFAULT_MIGRATIONS).slice().sort((a, b) => b.version - a.version);
+  const migrations = (options.migrations ?? DEFAULT_MIGRATIONS)
+    .slice()
+    .sort((a, b) => b.version - a.version);
   const targetVersion = options.targetVersion ?? 0;
 
   const locked = await pool.acquireAdvisoryLock(MIGRATION_ADVISORY_LOCK_ID);
   if (!locked) {
-    throw new Error(`Failed to acquire migration advisory lock (${MIGRATION_ADVISORY_LOCK_ID}). Another migration is in progress.`);
+    throw new Error(
+      `Failed to acquire migration advisory lock (${MIGRATION_ADVISORY_LOCK_ID}). Another migration is in progress.`,
+    );
   }
 
   try {
@@ -957,7 +1081,9 @@ export async function rollbackMigration(
       if (migration.version <= targetVersion) break;
       if (!appliedVersions.has(migration.version)) continue;
       if (!migration.down) {
-        throw new Error(`Migration ${migration.version} (${migration.name}) has no down() rollback method`);
+        throw new Error(
+          `Migration ${migration.version} (${migration.name}) has no down() rollback method`,
+        );
       }
 
       await pool.transaction(async (tx) => {
@@ -991,9 +1117,12 @@ export async function getMigrationStatus(
   migrations: Migration[] = DEFAULT_MIGRATIONS,
 ): Promise<MigrationStatus[]> {
   await ensureMigrationsTable(pool);
-  const appliedResult = await pool.query<{ version: number; name: string; applied_at: string; checksum: string }>(
-    `SELECT version, name, applied_at, checksum FROM _migrations ORDER BY version ASC`,
-  );
+  const appliedResult = await pool.query<{
+    version: number;
+    name: string;
+    applied_at: string;
+    checksum: string;
+  }>(`SELECT version, name, applied_at, checksum FROM _migrations ORDER BY version ASC`);
 
   const appliedMap = new Map<number, { appliedAt: string; checksum: string }>();
   for (const row of appliedResult.rows) {

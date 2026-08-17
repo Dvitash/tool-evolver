@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  CloudConfigSchema,
-  loadConfig,
-  redactConfig,
-  redactDatabaseUrl,
-} from "../src/config.js";
+import { CloudConfigSchema, loadConfig, redactConfig, redactDatabaseUrl } from "../src/config.js";
 
 describe("Cloud Configuration", () => {
   it("should load default configuration when no overrides are provided", () => {

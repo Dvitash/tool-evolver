@@ -43,11 +43,7 @@ export class CatalogCache {
   /**
    * Caches a snapshot as the latest for the workspace and session, and under its revision.
    */
-  set(
-    workspaceId: string,
-    sessionId: string | undefined,
-    snapshot: CatalogSnapshotRecord
-  ): void {
+  set(workspaceId: string, sessionId: string | undefined, snapshot: CatalogSnapshotRecord): void {
     const latestKey = this.makeKey(workspaceId, sessionId);
     const revisionKey = this.makeKey(workspaceId, sessionId, snapshot.revision);
 
@@ -66,7 +62,7 @@ export class CatalogCache {
   getByRevision(
     workspaceId: string,
     revision: number,
-    sessionId?: string
+    sessionId?: string,
   ): CatalogSnapshotRecord | undefined {
     const key = this.makeKey(workspaceId, sessionId, revision);
     const item = this.cache.get(key);

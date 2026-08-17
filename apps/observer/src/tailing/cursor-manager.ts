@@ -67,7 +67,11 @@ export class SourceCursorManager {
   /**
    * Parses and validates a stored JSON syncToken into a SourceCursor.
    */
-  private parseSyncToken(syncToken: string, fallbackTimestamp?: string, fallbackSeq?: number): SourceCursor | null {
+  private parseSyncToken(
+    syncToken: string,
+    fallbackTimestamp?: string,
+    fallbackSeq?: number,
+  ): SourceCursor | null {
     try {
       const parsed = JSON.parse(syncToken) as Record<string, unknown>;
       return SourceCursorSchema.parse({

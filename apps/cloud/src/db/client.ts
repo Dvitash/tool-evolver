@@ -1,4 +1,4 @@
-import { DatabaseConfig } from "../config.js";
+import type { DatabaseConfig } from "../config.js";
 
 /**
  * Result of a database query execution.
@@ -74,7 +74,8 @@ export class MemoryDatabasePool implements DatabasePool {
 
   async connect(): Promise<DatabaseConnection> {
     return {
-      query: <T = Record<string, unknown>>(text: string, params?: unknown[]) => this.query<T>(text, params),
+      query: <T = Record<string, unknown>>(text: string, params?: unknown[]) =>
+        this.query<T>(text, params),
       release: async () => {},
     };
   }
@@ -129,20 +130,25 @@ export class MemoryDatabasePool implements DatabasePool {
     });
   }
 
-  async query<T = Record<string, unknown>>(text: string, params: unknown[] = []): Promise<QueryResult<T>> {
+  async query<T = Record<string, unknown>>(
+    text: string,
+    params: unknown[] = [],
+  ): Promise<QueryResult<T>> {
     const trimmed = text.trim();
 
     // Check for advisory lock queries
     if (/pg_advisory_lock/i.test(trimmed)) {
       const lockKeyMatch = trimmed.match(/pg_advisory_lock\s*\(\s*(\$1|\d+)\s*\)/i);
-      const lockKey = params[0] !== undefined ? String(params[0]) : lockKeyMatch ? lockKeyMatch[1] : "default";
+      const lockKey =
+        params[0] !== undefined ? String(params[0]) : lockKeyMatch ? lockKeyMatch[1] : "default";
       const acquired = await this.acquireAdvisoryLock(lockKey);
       return { rows: [{ pg_advisory_lock: acquired }] as unknown as T[], rowCount: 1 };
     }
 
     if (/pg_advisory_unlock/i.test(trimmed)) {
       const lockKeyMatch = trimmed.match(/pg_advisory_unlock\s*\(\s*(\$1|\d+)\s*\)/i);
-      const lockKey = params[0] !== undefined ? String(params[0]) : lockKeyMatch ? lockKeyMatch[1] : "default";
+      const lockKey =
+        params[0] !== undefined ? String(params[0]) : lockKeyMatch ? lockKeyMatch[1] : "default";
       const released = await this.releaseAdvisoryLock(lockKey);
       return { rows: [{ pg_advisory_unlock: released }] as unknown as T[], rowCount: 1 };
     }
@@ -160,7 +166,11 @@ export class MemoryDatabasePool implements DatabasePool {
     }
 
     // CREATE INDEX or other DDL
-    if (/^CREATE\s+(?:UNIQUE\s+)?INDEX/i.test(trimmed) || /^DROP/i.test(trimmed) || /^ALTER/i.test(trimmed)) {
+    if (
+      /^CREATE\s+(?:UNIQUE\s+)?INDEX/i.test(trimmed) ||
+      /^DROP/i.test(trimmed) ||
+      /^ALTER/i.test(trimmed)
+    ) {
       if (/^DROP\s+TABLE/i.test(trimmed)) {
         const match = trimmed.match(/DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([a-zA-Z0-9_".]+)/i);
         if (match) {
@@ -187,10 +197,16 @@ export class MemoryDatabasePool implements DatabasePool {
         }
 
         // Determine primary key: id, or version, or first column
-        const pk = (record.id as string) || (record.version !== undefined ? String(record.version) : String(record[columns[0]] ?? Math.random()));
-        
+        const pk =
+          (record.id as string) ||
+          (record.version !== undefined
+            ? String(record.version)
+            : String(record[columns[0]] ?? Math.random()));
+
         // Handle ON CONFLICT DO UPDATE
-        const conflictUpdateMatch = trimmed.match(/ON\s+CONFLICT\s*\([^)]+\)\s*DO\s+UPDATE\s+SET\s+(.+)$/i);
+        const conflictUpdateMatch = trimmed.match(
+          /ON\s+CONFLICT\s*\([^)]+\)\s*DO\s+UPDATE\s+SET\s+(.+)$/i,
+        );
         if (conflictUpdateMatch && table.has(pk)) {
           const existing = table.get(pk)!;
           const merged = { ...existing, ...record };
@@ -291,7 +307,9 @@ export class MemoryDatabasePool implements DatabasePool {
     // UPDATE statement
     if (/^UPDATE/i.test(trimmed)) {
       const normalized = trimmed.replace(/\s+/g, " ");
-      const match = normalized.match(/UPDATE\s+([a-zA-Z0-9_".]+)\s+SET\s+(.+?)(?:\s+WHERE\s+(.+))?$/i);
+      const match = normalized.match(
+        /UPDATE\s+([a-zA-Z0-9_".]+)\s+SET\s+(.+?)(?:\s+WHERE\s+(.+))?$/i,
+      );
       if (match) {
         const tableName = match[1].replace(/["`]/g, "").toLowerCase();
         const setClause = match[2].trim();
@@ -408,7 +426,9 @@ export class MemoryDatabasePool implements DatabasePool {
       }
 
       // Check equality and comparison: col = $N or col = 'val'
-      const eqMatch = trimmedCond.match(/([a-zA-Z0-9_.]+)\s*(=|!=|<>|<=|>=|<|>)\s*(\$?\w+|'[^']*')/i);
+      const eqMatch = trimmedCond.match(
+        /([a-zA-Z0-9_.]+)\s*(=|!=|<>|<=|>=|<|>)\s*(\$?\w+|'[^']*')/i,
+      );
       if (eqMatch) {
         const col = eqMatch[1].replace(/["`]/g, "");
         const op = eqMatch[2];
@@ -488,7 +508,10 @@ export class PostgresDatabasePool implements DatabasePool {
     return this.memoryFallback.releaseAdvisoryLock(key);
   }
 
-  async query<T = Record<string, unknown>>(text: string, params?: unknown[]): Promise<QueryResult<T>> {
+  async query<T = Record<string, unknown>>(
+    text: string,
+    params?: unknown[],
+  ): Promise<QueryResult<T>> {
     return this.memoryFallback.query<T>(text, params);
   }
 }
@@ -497,7 +520,11 @@ export class PostgresDatabasePool implements DatabasePool {
  * Factory function creating appropriate database pool based on configuration.
  */
 export function createDatabasePool(config: DatabaseConfig): DatabasePool {
-  if (config.url.startsWith("memory:") || config.host === "memory" || process.env.NODE_ENV === "test") {
+  if (
+    config.url.startsWith("memory:") ||
+    config.host === "memory" ||
+    process.env.NODE_ENV === "test"
+  ) {
     return new MemoryDatabasePool();
   }
   return new PostgresDatabasePool(config);

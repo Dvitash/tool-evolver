@@ -23,11 +23,43 @@ function makeManifest(overrides?: Partial<ToolManifest>): ToolManifest {
       maxOutputSizeBytes: 1048576,
     },
     capabilities: overrides?.capabilities ?? {
-      fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
-      net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https" as const], allowLocalhost: false, denyPrivateRanges: true },
-      command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-      secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-      limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+      fs: {
+        readPaths: [],
+        writePaths: [],
+        allowWorkspaceRoot: true,
+        allowTemp: true,
+        denyPaths: [],
+        maxFileSizeBytes: 10485760,
+      },
+      net: {
+        allowOutbound: false,
+        allowedDomains: [],
+        allowedHosts: [],
+        allowedPorts: [],
+        allowedProtocols: ["https" as const],
+        allowLocalhost: false,
+        denyPrivateRanges: true,
+      },
+      command: {
+        allowShellExecution: false,
+        allowedCommands: [],
+        allowedBinaries: [],
+        forbiddenPatterns: [],
+        allowEnvPassthrough: [],
+      },
+      secrets: {
+        allowedSecretNames: [],
+        allowedPrefixes: [],
+        denyDirectRead: true,
+        injectAsEnv: true,
+      },
+      limits: {
+        maxConcurrentExecutions: 4,
+        maxCpuUsagePercent: 100,
+        maxMemoryMb: 128,
+        maxExecutionTimeMs: 30000,
+        maxOutputSizeBytes: 1048576,
+      },
     },
     limits: overrides?.limits ?? {
       timeoutMs: 30000,
@@ -89,9 +121,9 @@ describe("ToolRegistry - Debounced Catalog Change Events", () => {
     expect(evt.changedToolIds).toContain("t_1");
     expect(evt.changedToolIds).toContain("t_2");
     expect(evt.changedToolIds).toContain("t_3");
-    expect(evt.snapshot.tools["t_1"]).toBeDefined();
-    expect(evt.snapshot.tools["t_2"]).toBeDefined();
-    expect(evt.snapshot.tools["t_3"]).toBeDefined();
+    expect(evt.snapshot.tools.t_1).toBeDefined();
+    expect(evt.snapshot.tools.t_2).toBeDefined();
+    expect(evt.snapshot.tools.t_3).toBeDefined();
 
     unsubscribe();
   });

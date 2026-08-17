@@ -63,7 +63,10 @@ describe("Model Router, Fallback & Circuit Breaking", () => {
 
   it("should automatically fallback to secondary provider when primary provider fails", async () => {
     const primary = new FakeModelProvider({ id: "primary-failing" });
-    primary.injectError(() => true, new ProviderServerError("Primary 503 Outage", "primary-failing", 503));
+    primary.injectError(
+      () => true,
+      new ProviderServerError("Primary 503 Outage", "primary-failing", 503),
+    );
 
     const secondary = new FakeModelProvider({ id: "secondary-backup" });
 
@@ -156,6 +159,8 @@ describe("Model Router, Fallback & Circuit Breaking", () => {
     expect(() => router.checkTenantRateLimit(tenantId, limit)).not.toThrow();
 
     // 4th request exceeds rate limit
-    expect(() => router.checkTenantRateLimit(tenantId, limit)).toThrow(TenantRateLimitExceededError);
+    expect(() => router.checkTenantRateLimit(tenantId, limit)).toThrow(
+      TenantRateLimitExceededError,
+    );
   });
 });

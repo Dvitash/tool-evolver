@@ -1,7 +1,7 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import type { FsCapability } from "@tool-evolver/contracts";
 import {
   expandWorkspacePlaceholder,
@@ -107,7 +107,7 @@ export class FilesystemBroker extends BaseCapabilityBroker {
     rawPath: string,
     mode: "read" | "write" | "delete",
     context: BrokerContext,
-    fsCap: FsCapability
+    fsCap: FsCapability,
   ): string {
     if (!rawPath || typeof rawPath !== "string") {
       throw new BrokerSecurityError("INVALID_PATH", "Path must be a non-empty string");
@@ -115,9 +115,7 @@ export class FilesystemBroker extends BaseCapabilityBroker {
 
     validatePathCharacters(rawPath);
 
-    const workspaceRoot = normalizeSlashes(
-      path.resolve(context.workspaceRoot ?? process.cwd())
-    );
+    const workspaceRoot = normalizeSlashes(path.resolve(context.workspaceRoot ?? process.cwd()));
     const scratchDir = context.scratchDir
       ? normalizeSlashes(path.resolve(context.scratchDir))
       : undefined;
@@ -140,14 +138,14 @@ export class FilesystemBroker extends BaseCapabilityBroker {
         throw new BrokerSecurityError(
           "PATH_DENIED",
           `Path is explicitly denied by capability policy: ${rawPath}`,
-          { path: rawPath, deniedByPattern: denyPattern }
+          { path: rawPath, deniedByPattern: denyPattern },
         );
       }
     }
 
     // Check default sensitive paths unless explicitly allowed in readPaths or writePaths
-    const isExplicitlyAllowed = (mode === "read" ? fsCap.readPaths : fsCap.writePaths)?.some((pattern) =>
-      matchesPathPattern(canonicalTarget, pattern, workspaceRoot)
+    const isExplicitlyAllowed = (mode === "read" ? fsCap.readPaths : fsCap.writePaths)?.some(
+      (pattern) => matchesPathPattern(canonicalTarget, pattern, workspaceRoot),
     );
 
     if (!isExplicitlyAllowed) {
@@ -156,7 +154,7 @@ export class FilesystemBroker extends BaseCapabilityBroker {
           throw new BrokerSecurityError(
             "HIDDEN_FILE_DENIED",
             `Access to sensitive or hidden path is denied: ${rawPath}`,
-            { path: rawPath }
+            { path: rawPath },
           );
         }
       }
@@ -190,7 +188,7 @@ export class FilesystemBroker extends BaseCapabilityBroker {
       throw new BrokerSecurityError(
         "OUTSIDE_ALLOWED_ROOT",
         `Path is outside authorized ${mode} roots: ${rawPath}`,
-        { path: rawPath, mode }
+        { path: rawPath, mode },
       );
     }
     // Symlink / Realpath containment check
@@ -206,7 +204,7 @@ export class FilesystemBroker extends BaseCapabilityBroker {
     targetPath: string,
     workspaceRoot: string,
     scratchDir: string | undefined,
-    fsCap: FsCapability
+    fsCap: FsCapability,
   ): void {
     let checkPath = targetPath;
 
@@ -241,13 +239,16 @@ export class FilesystemBroker extends BaseCapabilityBroker {
           throw new BrokerSecurityError(
             "SYMLINK_ESCAPE",
             `Symlink target escapes authorized capability roots: ${checkPath} -> ${realTarget}`,
-            { path: checkPath, realTarget }
+            { path: checkPath, realTarget },
           );
         }
       } catch (err) {
         if (err instanceof BrokerSecurityError) throw err;
         // If realpath fails, fail closed
-        throw new BrokerSecurityError("INVALID_PATH", `Failed to resolve real path for ${checkPath}`);
+        throw new BrokerSecurityError(
+          "INVALID_PATH",
+          `Failed to resolve real path for ${checkPath}`,
+        );
       }
     }
   }
@@ -263,7 +264,10 @@ export class FilesystemBroker extends BaseCapabilityBroker {
     try {
       const targetPath = this.resolveAndAuthorizePath(params.path, "read", context, fsCap);
       if (!fs.existsSync(targetPath)) {
-        throw new BrokerSecurityError("FILE_NOT_FOUND", `File or directory not found: ${params.path}`);
+        throw new BrokerSecurityError(
+          "FILE_NOT_FOUND",
+          `File or directory not found: ${params.path}`,
+        );
       }
 
       const stat = fs.statSync(targetPath);
@@ -278,19 +282,32 @@ export class FilesystemBroker extends BaseCapabilityBroker {
         mode: stat.mode,
       };
 
-      this.recordAudit("stat", context, "allowed", { path: params.path, size: stat.size }, {
-        durationMs: Date.now() - startTime,
-      });
+      this.recordAudit(
+        "stat",
+        context,
+        "allowed",
+        { path: params.path, size: stat.size },
+        {
+          durationMs: Date.now() - startTime,
+        },
+      );
 
       return result;
     } catch (error) {
-      const err = error instanceof BrokerSecurityError
-        ? error
-        : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
-      this.recordAudit("stat", context, "denied", { path: params.path }, {
-        error: { code: err.code, message: err.message },
-        durationMs: Date.now() - startTime,
-      });
+      const err =
+        error instanceof BrokerSecurityError
+          ? error
+          : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
+      this.recordAudit(
+        "stat",
+        context,
+        "denied",
+        { path: params.path },
+        {
+          error: { code: err.code, message: err.message },
+          durationMs: Date.now() - startTime,
+        },
+      );
       throw err;
     }
   }
@@ -307,7 +324,10 @@ export class FilesystemBroker extends BaseCapabilityBroker {
       const exists = fs.existsSync(targetPath);
       return { exists };
     } catch (error) {
-      if (error instanceof BrokerSecurityError && (error.code === "PATH_DENIED" || error.code === "OUTSIDE_ALLOWED_ROOT")) {
+      if (
+        error instanceof BrokerSecurityError &&
+        (error.code === "PATH_DENIED" || error.code === "OUTSIDE_ALLOWED_ROOT")
+      ) {
         throw error;
       }
       return { exists: false };
@@ -332,14 +352,17 @@ export class FilesystemBroker extends BaseCapabilityBroker {
 
       const stat = fs.statSync(targetPath);
       if (stat.isDirectory()) {
-        throw new BrokerSecurityError("OPERATION_NOT_PERMITTED", `Cannot readFile on directory: ${params.path}`);
+        throw new BrokerSecurityError(
+          "OPERATION_NOT_PERMITTED",
+          `Cannot readFile on directory: ${params.path}`,
+        );
       }
 
       if (stat.size > maxSizeBytes) {
         throw new BrokerSecurityError(
           "MAX_FILE_SIZE_EXCEEDED",
           `File size ${stat.size} bytes exceeds maximum allowed limit ${maxSizeBytes} bytes`,
-          { size: stat.size, maxSizeBytes }
+          { size: stat.size, maxSizeBytes },
         );
       }
 
@@ -350,11 +373,17 @@ export class FilesystemBroker extends BaseCapabilityBroker {
       const buffer = fs.readFileSync(targetPath);
       const content = encoding === "base64" ? buffer.toString("base64") : buffer.toString("utf-8");
 
-      this.recordAudit("readFile", context, "allowed", {
-        path: params.path,
-        size: stat.size,
-        encoding,
-      }, { durationMs: Date.now() - startTime });
+      this.recordAudit(
+        "readFile",
+        context,
+        "allowed",
+        {
+          path: params.path,
+          size: stat.size,
+          encoding,
+        },
+        { durationMs: Date.now() - startTime },
+      );
 
       return {
         content,
@@ -362,13 +391,20 @@ export class FilesystemBroker extends BaseCapabilityBroker {
         size: stat.size,
       };
     } catch (error) {
-      const err = error instanceof BrokerSecurityError
-        ? error
-        : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
-      this.recordAudit("readFile", context, "denied", { path: params.path }, {
-        error: { code: err.code, message: err.message },
-        durationMs: Date.now() - startTime,
-      });
+      const err =
+        error instanceof BrokerSecurityError
+          ? error
+          : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
+      this.recordAudit(
+        "readFile",
+        context,
+        "denied",
+        { path: params.path },
+        {
+          error: { code: err.code, message: err.message },
+          durationMs: Date.now() - startTime,
+        },
+      );
       throw err;
     }
   }
@@ -376,7 +412,10 @@ export class FilesystemBroker extends BaseCapabilityBroker {
   /**
    * Write file contents atomically with max size enforcement.
    */
-  async writeFile(params: WriteFileParams, context: BrokerContext): Promise<{ bytesWritten: number }> {
+  async writeFile(
+    params: WriteFileParams,
+    context: BrokerContext,
+  ): Promise<{ bytesWritten: number }> {
     const startTime = Date.now();
     const grant = this.validateGrant(context);
     const fsCap = grant.capabilities.fs ?? {};
@@ -385,15 +424,18 @@ export class FilesystemBroker extends BaseCapabilityBroker {
     try {
       const targetPath = this.resolveAndAuthorizePath(params.path, "write", context, fsCap);
 
-      const buffer = typeof params.content === "string"
-        ? (params.encoding === "base64" ? Buffer.from(params.content, "base64") : Buffer.from(params.content, "utf-8"))
-        : Buffer.from(params.content);
+      const buffer =
+        typeof params.content === "string"
+          ? params.encoding === "base64"
+            ? Buffer.from(params.content, "base64")
+            : Buffer.from(params.content, "utf-8")
+          : Buffer.from(params.content);
 
       if (buffer.length > maxSizeBytes) {
         throw new BrokerSecurityError(
           "MAX_FILE_SIZE_EXCEEDED",
           `Content size ${buffer.length} bytes exceeds maximum allowed limit ${maxSizeBytes} bytes`,
-          { size: buffer.length, maxSizeBytes }
+          { size: buffer.length, maxSizeBytes },
         );
       }
 
@@ -418,21 +460,34 @@ export class FilesystemBroker extends BaseCapabilityBroker {
         fs.writeFileSync(targetPath, buffer);
       }
 
-      this.recordAudit("writeFile", context, "allowed", {
-        path: params.path,
-        bytesWritten: buffer.length,
-        atomic: isAtomic,
-      }, { durationMs: Date.now() - startTime });
+      this.recordAudit(
+        "writeFile",
+        context,
+        "allowed",
+        {
+          path: params.path,
+          bytesWritten: buffer.length,
+          atomic: isAtomic,
+        },
+        { durationMs: Date.now() - startTime },
+      );
 
       return { bytesWritten: buffer.length };
     } catch (error) {
-      const err = error instanceof BrokerSecurityError
-        ? error
-        : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
-      this.recordAudit("writeFile", context, "denied", { path: params.path }, {
-        error: { code: err.code, message: err.message },
-        durationMs: Date.now() - startTime,
-      });
+      const err =
+        error instanceof BrokerSecurityError
+          ? error
+          : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
+      this.recordAudit(
+        "writeFile",
+        context,
+        "denied",
+        { path: params.path },
+        {
+          error: { code: err.code, message: err.message },
+          durationMs: Date.now() - startTime,
+        },
+      );
       throw err;
     }
   }
@@ -440,7 +495,10 @@ export class FilesystemBroker extends BaseCapabilityBroker {
   /**
    * Append content to a file.
    */
-  async appendFile(params: AppendFileParams, context: BrokerContext): Promise<{ bytesWritten: number }> {
+  async appendFile(
+    params: AppendFileParams,
+    context: BrokerContext,
+  ): Promise<{ bytesWritten: number }> {
     const startTime = Date.now();
     const grant = this.validateGrant(context);
     const fsCap = grant.capabilities.fs ?? {};
@@ -449,16 +507,19 @@ export class FilesystemBroker extends BaseCapabilityBroker {
     try {
       const targetPath = this.resolveAndAuthorizePath(params.path, "write", context, fsCap);
 
-      const buffer = typeof params.content === "string"
-        ? (params.encoding === "base64" ? Buffer.from(params.content, "base64") : Buffer.from(params.content, "utf-8"))
-        : Buffer.from(params.content);
+      const buffer =
+        typeof params.content === "string"
+          ? params.encoding === "base64"
+            ? Buffer.from(params.content, "base64")
+            : Buffer.from(params.content, "utf-8")
+          : Buffer.from(params.content);
 
       const existingSize = fs.existsSync(targetPath) ? fs.statSync(targetPath).size : 0;
       if (existingSize + buffer.length > maxSizeBytes) {
         throw new BrokerSecurityError(
           "MAX_FILE_SIZE_EXCEEDED",
           `Total file size ${existingSize + buffer.length} bytes would exceed maximum allowed limit ${maxSizeBytes} bytes`,
-          { totalSize: existingSize + buffer.length, maxSizeBytes }
+          { totalSize: existingSize + buffer.length, maxSizeBytes },
         );
       }
 
@@ -469,20 +530,33 @@ export class FilesystemBroker extends BaseCapabilityBroker {
 
       fs.appendFileSync(targetPath, buffer);
 
-      this.recordAudit("appendFile", context, "allowed", {
-        path: params.path,
-        bytesWritten: buffer.length,
-      }, { durationMs: Date.now() - startTime });
+      this.recordAudit(
+        "appendFile",
+        context,
+        "allowed",
+        {
+          path: params.path,
+          bytesWritten: buffer.length,
+        },
+        { durationMs: Date.now() - startTime },
+      );
 
       return { bytesWritten: buffer.length };
     } catch (error) {
-      const err = error instanceof BrokerSecurityError
-        ? error
-        : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
-      this.recordAudit("appendFile", context, "denied", { path: params.path }, {
-        error: { code: err.code, message: err.message },
-        durationMs: Date.now() - startTime,
-      });
+      const err =
+        error instanceof BrokerSecurityError
+          ? error
+          : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
+      this.recordAudit(
+        "appendFile",
+        context,
+        "denied",
+        { path: params.path },
+        {
+          error: { code: err.code, message: err.message },
+          durationMs: Date.now() - startTime,
+        },
+      );
       throw err;
     }
   }
@@ -510,18 +584,31 @@ export class FilesystemBroker extends BaseCapabilityBroker {
 
       fs.renameSync(oldTarget, newTarget);
 
-      this.recordAudit("rename", context, "allowed", {
-        oldPath: params.oldPath,
-        newPath: params.newPath,
-      }, { durationMs: Date.now() - startTime });
+      this.recordAudit(
+        "rename",
+        context,
+        "allowed",
+        {
+          oldPath: params.oldPath,
+          newPath: params.newPath,
+        },
+        { durationMs: Date.now() - startTime },
+      );
     } catch (error) {
-      const err = error instanceof BrokerSecurityError
-        ? error
-        : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
-      this.recordAudit("rename", context, "denied", { oldPath: params.oldPath, newPath: params.newPath }, {
-        error: { code: err.code, message: err.message },
-        durationMs: Date.now() - startTime,
-      });
+      const err =
+        error instanceof BrokerSecurityError
+          ? error
+          : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
+      this.recordAudit(
+        "rename",
+        context,
+        "denied",
+        { oldPath: params.oldPath, newPath: params.newPath },
+        {
+          error: { code: err.code, message: err.message },
+          durationMs: Date.now() - startTime,
+        },
+      );
       throw err;
     }
   }
@@ -548,18 +635,31 @@ export class FilesystemBroker extends BaseCapabilityBroker {
         fs.unlinkSync(targetPath);
       }
 
-      this.recordAudit("delete", context, "allowed", {
-        path: params.path,
-        recursive: params.recursive,
-      }, { durationMs: Date.now() - startTime });
+      this.recordAudit(
+        "delete",
+        context,
+        "allowed",
+        {
+          path: params.path,
+          recursive: params.recursive,
+        },
+        { durationMs: Date.now() - startTime },
+      );
     } catch (error) {
-      const err = error instanceof BrokerSecurityError
-        ? error
-        : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
-      this.recordAudit("delete", context, "denied", { path: params.path }, {
-        error: { code: err.code, message: err.message },
-        durationMs: Date.now() - startTime,
-      });
+      const err =
+        error instanceof BrokerSecurityError
+          ? error
+          : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
+      this.recordAudit(
+        "delete",
+        context,
+        "denied",
+        { path: params.path },
+        {
+          error: { code: err.code, message: err.message },
+          durationMs: Date.now() - startTime,
+        },
+      );
       throw err;
     }
   }
@@ -586,18 +686,31 @@ export class FilesystemBroker extends BaseCapabilityBroker {
         fs.mkdirSync(targetPath, { recursive: params.recursive !== false });
       }
 
-      this.recordAudit("createDirectory", context, "allowed", {
-        path: params.path,
-        recursive: params.recursive,
-      }, { durationMs: Date.now() - startTime });
+      this.recordAudit(
+        "createDirectory",
+        context,
+        "allowed",
+        {
+          path: params.path,
+          recursive: params.recursive,
+        },
+        { durationMs: Date.now() - startTime },
+      );
     } catch (error) {
-      const err = error instanceof BrokerSecurityError
-        ? error
-        : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
-      this.recordAudit("createDirectory", context, "denied", { path: params.path }, {
-        error: { code: err.code, message: err.message },
-        durationMs: Date.now() - startTime,
-      });
+      const err =
+        error instanceof BrokerSecurityError
+          ? error
+          : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
+      this.recordAudit(
+        "createDirectory",
+        context,
+        "denied",
+        { path: params.path },
+        {
+          error: { code: err.code, message: err.message },
+          durationMs: Date.now() - startTime,
+        },
+      );
       throw err;
     }
   }
@@ -620,7 +733,10 @@ export class FilesystemBroker extends BaseCapabilityBroker {
 
       const stat = fs.statSync(targetPath);
       if (!stat.isDirectory()) {
-        throw new BrokerSecurityError("OPERATION_NOT_PERMITTED", `Path is not a directory: ${dirPath}`);
+        throw new BrokerSecurityError(
+          "OPERATION_NOT_PERMITTED",
+          `Path is not a directory: ${dirPath}`,
+        );
       }
 
       const entries: string[] = [];
@@ -637,21 +753,34 @@ export class FilesystemBroker extends BaseCapabilityBroker {
 
       readEntries(targetPath, "");
 
-      this.recordAudit("listDirectory", context, "allowed", {
-        path: dirPath,
-        entryCount: entries.length,
-        recursive: params.recursive,
-      }, { durationMs: Date.now() - startTime });
+      this.recordAudit(
+        "listDirectory",
+        context,
+        "allowed",
+        {
+          path: dirPath,
+          entryCount: entries.length,
+          recursive: params.recursive,
+        },
+        { durationMs: Date.now() - startTime },
+      );
 
       return entries;
     } catch (error) {
-      const err = error instanceof BrokerSecurityError
-        ? error
-        : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
-      this.recordAudit("listDirectory", context, "denied", { path: dirPath }, {
-        error: { code: err.code, message: err.message },
-        durationMs: Date.now() - startTime,
-      });
+      const err =
+        error instanceof BrokerSecurityError
+          ? error
+          : new BrokerSecurityError("OPERATION_NOT_PERMITTED", (error as Error).message);
+      this.recordAudit(
+        "listDirectory",
+        context,
+        "denied",
+        { path: dirPath },
+        {
+          error: { code: err.code, message: err.message },
+          durationMs: Date.now() - startTime,
+        },
+      );
       throw err;
     }
   }

@@ -3,6 +3,9 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { createAuthService } from "../../src/auth/index.js";
+import { loadConfig } from "../../src/config.js";
+import { MemoryDatabasePool } from "../../src/db/index.js";
 import {
   CloudCatalogService,
   CloudMcpServer,
@@ -10,15 +13,23 @@ import {
   createCloudCatalogService,
   createCloudMcpServer,
 } from "../../src/mcp/index.js";
-import { createAuthService } from "../../src/auth/index.js";
-import { loadConfig } from "../../src/config.js";
-import { MemoryDatabasePool } from "../../src/db/index.js";
 import { createCloudServer } from "../../src/server/index.js";
 
 describe("Cloud MCP Server - Protocol & Transport", () => {
   const config = loadConfig({
-    server: { port: 0, host: "127.0.0.1", logLevel: "info", bodyLimitBytes: 1048576, requestTimeoutMs: 5000, cors: { origin: "*", allowHeaders: ["*"], allowMethods: ["*"] } },
-    auth: { allowAnonymous: false, jwtSecret: "test-secret-at-least-32-chars-long-for-hmac", tokenTtlSeconds: 3600 },
+    server: {
+      port: 0,
+      host: "127.0.0.1",
+      logLevel: "info",
+      bodyLimitBytes: 1048576,
+      requestTimeoutMs: 5000,
+      cors: { origin: "*", allowHeaders: ["*"], allowMethods: ["*"] },
+    },
+    auth: {
+      allowAnonymous: false,
+      jwtSecret: "test-secret-at-least-32-chars-long-for-hmac",
+      tokenTtlSeconds: 3600,
+    },
   });
 
   const tenant = {
@@ -261,7 +272,12 @@ describe("Cloud MCP Server - Protocol & Transport", () => {
         headers,
         body: JSON.stringify([
           { jsonrpc: "2.0", id: 10, method: "ping" },
-          { jsonrpc: "2.0", id: 11, method: "tools/call", params: { name: "echo", arguments: { message: "batch-1" } } },
+          {
+            jsonrpc: "2.0",
+            id: 11,
+            method: "tools/call",
+            params: { name: "echo", arguments: { message: "batch-1" } },
+          },
         ]),
       });
 

@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { canonicalJsonStringify } from "@tool-evolver/contracts";
-import { DatabasePool, Queryable } from "../db/client.js";
-import { TenantContext } from "../tenant.js";
-import {
+import type { DatabasePool, Queryable } from "../db/client.js";
+import type { TenantContext } from "../tenant.js";
+import type {
   DeletionJobEntity,
   DeletionScope,
   ExportJobEntity,
   ExportScope,
 } from "./models/retention.js";
-import { ObjectStore } from "./object-store.js";
+import type { ObjectStore } from "./object-store.js";
 import { EvidenceRepository } from "./repositories/evidence-repository.js";
 import { ObservationRepository } from "./repositories/observation-repository.js";
 import { RetentionRepository } from "./repositories/retention-repository.js";
@@ -18,7 +18,10 @@ import { SessionRepository } from "./repositories/session-repository.js";
  * Error raised when a deletion is blocked by an active retention hold.
  */
 export class ActiveRetentionHoldBlockedError extends Error {
-  constructor(public readonly targetType: string, public readonly targetId: string) {
+  constructor(
+    public readonly targetType: string,
+    public readonly targetId: string,
+  ) {
     super(`Deletion blocked by active retention hold on ${targetType} '${targetId}'`);
     this.name = "ActiveRetentionHoldBlockedError";
   }
@@ -77,7 +80,10 @@ export class ExportService {
         sessionsQuery += ` AND id = $3`;
         sessionsParams.push(request.targetId);
       }
-      const sessionsRes = await this.pool.query<Record<string, unknown>>(sessionsQuery, sessionsParams);
+      const sessionsRes = await this.pool.query<Record<string, unknown>>(
+        sessionsQuery,
+        sessionsParams,
+      );
       const sessions = sessionsRes.rows;
 
       let branchesQuery = `SELECT * FROM session_branches WHERE account_id = $1 AND workspace_id = $2`;
@@ -86,7 +92,10 @@ export class ExportService {
         branchesQuery += ` AND session_id = $3`;
         branchesParams.push(request.targetId);
       }
-      const branchesRes = await this.pool.query<Record<string, unknown>>(branchesQuery, branchesParams);
+      const branchesRes = await this.pool.query<Record<string, unknown>>(
+        branchesQuery,
+        branchesParams,
+      );
       const branches = branchesRes.rows;
 
       let eventsQuery = `SELECT * FROM normalized_events WHERE account_id = $1 AND workspace_id = $2`;
@@ -104,7 +113,10 @@ export class ExportService {
         evidenceQuery += ` AND session_id = $3`;
         evidenceParams.push(request.targetId);
       }
-      const evidenceRes = await this.pool.query<Record<string, unknown>>(evidenceQuery, evidenceParams);
+      const evidenceRes = await this.pool.query<Record<string, unknown>>(
+        evidenceQuery,
+        evidenceParams,
+      );
       const evidenceSets = evidenceRes.rows;
       const bucketsRes = await this.pool.query<Record<string, unknown>>(
         `SELECT * FROM telemetry_buckets WHERE account_id = $1 AND workspace_id = $2`,
@@ -244,13 +256,28 @@ export class ExportService {
       // Check retention holds unless force is specified
       if (!request.force) {
         if (request.scope === "account") {
-          const isHeld = await this.retentionRepo.isTargetHeld(tenant, "account", request.targetId, nowIso);
+          const isHeld = await this.retentionRepo.isTargetHeld(
+            tenant,
+            "account",
+            request.targetId,
+            nowIso,
+          );
           if (isHeld) throw new ActiveRetentionHoldBlockedError("account", request.targetId);
         } else if (request.scope === "workspace") {
-          const isHeld = await this.retentionRepo.isTargetHeld(tenant, "workspace", request.targetId, nowIso);
+          const isHeld = await this.retentionRepo.isTargetHeld(
+            tenant,
+            "workspace",
+            request.targetId,
+            nowIso,
+          );
           if (isHeld) throw new ActiveRetentionHoldBlockedError("workspace", request.targetId);
         } else if (request.scope === "session") {
-          const isHeld = await this.retentionRepo.isTargetHeld(tenant, "session", request.targetId, nowIso);
+          const isHeld = await this.retentionRepo.isTargetHeld(
+            tenant,
+            "session",
+            request.targetId,
+            nowIso,
+          );
           if (isHeld) throw new ActiveRetentionHoldBlockedError("session", request.targetId);
         }
       }

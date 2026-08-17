@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import {
-  hashCanonical,
   type CapabilityEnvelope,
   type CapabilityManifest,
   type EvaluationDecision as ContractEvaluationDecision,
@@ -10,11 +9,20 @@ import {
   type EvaluationVerdict,
   type EvolutionCandidate,
   type ToolManifest,
+  hashCanonical,
 } from "@tool-evolver/contracts";
 import type { CandidateRevision } from "../generator/types.js";
-import type { CandidateValidationResult, CandidateValidationTarget } from "../testing/types.js";
-import type { HistoricalReplayResult } from "../replay/types.js";
 import type { OpportunityDetection } from "../opportunity/types.js";
+import type { HistoricalReplayResult } from "../replay/types.js";
+import type { CandidateValidationResult, CandidateValidationTarget } from "../testing/types.js";
+import { HardGateEvaluator } from "./hard-gates.js";
+import {
+  type EvaluationPolicyRegistry,
+  classifyRiskTier,
+  defaultPolicyRegistry,
+} from "./policy.js";
+import { CandidateScorer } from "./scorer.js";
+import { ShadowCalibrationAggregator, ShadowPolicyEvaluator } from "./shadow.js";
 import type {
   ActiveToolBaseline,
   CandidateEvaluationInput,
@@ -32,15 +40,7 @@ import type {
   ShadowEvaluationResult,
   UpdateRegressionResult,
 } from "./types.js";
-import {
-  EvaluationPolicyRegistry,
-  classifyRiskTier,
-  defaultPolicyRegistry,
-} from "./policy.js";
-import { HardGateEvaluator } from "./hard-gates.js";
-import { CandidateScorer } from "./scorer.js";
 import { UpdateComparator } from "./update-comparator.js";
-import { ShadowCalibrationAggregator, ShadowPolicyEvaluator } from "./shadow.js";
 
 /**
  * Options for configuring CandidateEvaluationService.
@@ -54,7 +54,10 @@ export interface CandidateEvaluationServiceOptions {
 /**
  * Mapping from internal dimension keys to contracts dimension names.
  */
-const DIMENSION_TO_CONTRACT_NAME: Record<EvaluationDimensionKey, ContractEvaluationDimensionName | undefined> = {
+const DIMENSION_TO_CONTRACT_NAME: Record<
+  EvaluationDimensionKey,
+  ContractEvaluationDimensionName | undefined
+> = {
   correctness: "test",
   replay_coverage: "replay",
   security_policy_fit: "security",
@@ -106,7 +109,8 @@ export class CandidateEvaluationService {
     const policy = this.policyRegistry.resolve(input.policy);
 
     // 3. Classify risk tier
-    const riskTier = input.options?.forceRiskTier ?? classifyRiskTier(manifest, requiredCapabilities);
+    const riskTier =
+      input.options?.forceRiskTier ?? classifyRiskTier(manifest, requiredCapabilities);
     const tierThresholds = policy.riskTierThresholds[riskTier];
 
     // 4. Evaluate non-negotiable hard safety gates
@@ -165,8 +169,8 @@ export class CandidateEvaluationService {
       decision === "eligible_for_artifact"
         ? "pass"
         : decision === "rejected"
-        ? "fail"
-        : "conditional";
+          ? "fail"
+          : "conditional";
 
     // 9. Formulate structured repair guidance if repair requested
     let repairGuidance: EvaluationRepairGuidance | undefined;
@@ -242,7 +246,7 @@ export class CandidateEvaluationService {
         shadowResults = this.shadowEvaluator.evaluateShadowPolicies(
           input,
           decisionRecord,
-          shadowPolicies
+          shadowPolicies,
         );
 
         for (const sr of shadowResults) {
@@ -268,7 +272,9 @@ export class CandidateEvaluationService {
         score: scoringResult.compositeScore,
         confidence: scoringResult.confidenceScore,
         threshold: tierThresholds.minCompositeScore,
-        notes: decisionRecord.notes ?? (hardGateResult.passed ? "All hard gates passed." : hardGateResult.rejectionReason),
+        notes:
+          decisionRecord.notes ??
+          (hardGateResult.passed ? "All hard gates passed." : hardGateResult.rejectionReason),
         evaluatedBy: input.options?.evaluatedBy ?? "CandidateEvaluationService",
         evaluatedAt,
       },
@@ -328,7 +334,10 @@ export class CandidateEvaluationService {
   /**
    * Generates a shadow policy calibration report.
    */
-  getCalibrationReport(shadowPolicyId: string, shadowPolicyVersion = "1.0.0"): ShadowCalibrationReport {
+  getCalibrationReport(
+    shadowPolicyId: string,
+    shadowPolicyVersion = "1.0.0",
+  ): ShadowCalibrationReport {
     return this.shadowCalibrationAggregator.generateReport(shadowPolicyId, shadowPolicyVersion);
   }
 
@@ -369,10 +378,14 @@ export class CandidateEvaluationService {
     };
     regressionResult?: UpdateRegressionResult;
   }): EvaluationDecision {
-    const { validationResult, replayResult, hardGateResult, scoringResult, regressionResult } = params;
+    const { validationResult, replayResult, hardGateResult, scoringResult, regressionResult } =
+      params;
 
     // 1. Infrastructure failures trigger retry
-    if (validationResult.status === "infrastructure_fail" || replayResult?.status === "infrastructure_failure") {
+    if (
+      validationResult.status === "infrastructure_fail" ||
+      replayResult?.status === "infrastructure_failure"
+    ) {
       return "infrastructure_retry";
     }
 
@@ -488,7 +501,9 @@ export class CandidateEvaluationService {
     dimensionScores: Array<{ dimension: string; adjustedScore: number; passed: boolean }>;
   }): string {
     const sortedGates = [...summary.hardGates].sort((a, b) => a.gate.localeCompare(b.gate));
-    const sortedDims = [...summary.dimensionScores].sort((a, b) => a.dimension.localeCompare(b.dimension));
+    const sortedDims = [...summary.dimensionScores].sort((a, b) =>
+      a.dimension.localeCompare(b.dimension),
+    );
 
     return hashCanonical({
       candidateId: summary.candidateId,
@@ -508,7 +523,9 @@ export class CandidateEvaluationService {
   /**
    * Maps 9 internal dimension scores to the contract's standard EvaluationDimension array.
    */
-  private mapToContractDimensions(dimensionScores: DimensionScore[]): ContractEvaluationDimension[] {
+  private mapToContractDimensions(
+    dimensionScores: DimensionScore[],
+  ): ContractEvaluationDimension[] {
     const results: ContractEvaluationDimension[] = [];
 
     for (const d of dimensionScores) {
@@ -534,7 +551,7 @@ export class CandidateEvaluationService {
    */
   private buildSecurityChecklist(
     hardGateResult: HardGateResult,
-    validationResult: CandidateValidationResult
+    validationResult: CandidateValidationResult,
   ): Record<string, boolean> {
     const errors = validationResult.staticFindings.filter((f) => f.severity === "error");
     const warnings = validationResult.staticFindings.filter((f) => f.severity === "warning");
@@ -549,9 +566,7 @@ export class CandidateEvaluationService {
     };
   }
 
-  private extractCandidateInfo(
-    candidate: CandidateEvaluationInput["candidate"]
-  ): {
+  private extractCandidateInfo(candidate: CandidateEvaluationInput["candidate"]): {
     candidateId: string;
     revisionId?: string;
     manifest: ToolManifest;
@@ -561,7 +576,7 @@ export class CandidateEvaluationService {
     return extractCandidateInfo(candidate);
   }
   resolveActiveBaseline(
-    baseline: ActiveToolBaseline | CandidateRevision | EvolutionCandidate
+    baseline: ActiveToolBaseline | CandidateRevision | EvolutionCandidate,
   ): ActiveToolBaseline | undefined {
     return resolveActiveBaseline(baseline);
   }
@@ -570,9 +585,7 @@ export class CandidateEvaluationService {
 /**
  * Helper extracting uniform metadata from various candidate target representations.
  */
-export function extractCandidateInfo(
-  candidate: CandidateEvaluationInput["candidate"]
-): {
+export function extractCandidateInfo(candidate: CandidateEvaluationInput["candidate"]): {
   candidateId: string;
   revisionId?: string;
   manifest: ToolManifest;
@@ -622,7 +635,7 @@ export function extractCandidateInfo(
  * Helper extracting baseline object from various forms.
  */
 export function resolveActiveBaseline(
-  baseline: ActiveToolBaseline | CandidateRevision | EvolutionCandidate
+  baseline: ActiveToolBaseline | CandidateRevision | EvolutionCandidate,
 ): ActiveToolBaseline | undefined {
   if ("manifest" in baseline && "toolVersion" in baseline) {
     return baseline as ActiveToolBaseline;
@@ -657,7 +670,7 @@ export function resolveActiveBaseline(
  * Factory function creating a CandidateEvaluationService instance.
  */
 export function createCandidateEvaluationService(
-  options: CandidateEvaluationServiceOptions = {}
+  options: CandidateEvaluationServiceOptions = {},
 ): CandidateEvaluationService {
   return new CandidateEvaluationService(options);
 }

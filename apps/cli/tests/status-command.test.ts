@@ -38,7 +38,13 @@ describe("status command & collector", () => {
   const toolEvolverHome = path.join(homeDir, ".tool-evolver");
 
   it("parses CLI status flags correctly", () => {
-    const flags1 = parseStatusFlags(["--json", "--home", "/custom/home", "--socket", "/custom/sock"]);
+    const flags1 = parseStatusFlags([
+      "--json",
+      "--home",
+      "/custom/home",
+      "--socket",
+      "/custom/sock",
+    ]);
     expect(flags1.json).toBe(true);
     expect(flags1.home).toBe("/custom/home");
     expect(flags1.socket).toBe("/custom/sock");
@@ -53,9 +59,13 @@ describe("status command & collector", () => {
     const ompPath = path.join(homeDir, ".omp", "config.json");
 
     const fsBridge = createMockFsBridge({
-      [claudePath]: JSON.stringify({ mcpServers: { "tool-evolver": { url: "http://localhost:9400" } } }),
+      [claudePath]: JSON.stringify({
+        mcpServers: { "tool-evolver": { url: "http://localhost:9400" } },
+      }),
       [codexPath]: "[mcp_servers.tool-evolver]\nurl = 'http://localhost:9400'\n",
-      [ompPath]: JSON.stringify({ mcpServers: { "tool-evolver": { url: "http://localhost:9400" } } }),
+      [ompPath]: JSON.stringify({
+        mcpServers: { "tool-evolver": { url: "http://localhost:9400" } },
+      }),
     });
 
     const summary = await collectStatus({

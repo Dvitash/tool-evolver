@@ -33,10 +33,35 @@ describe("StaticAnalyzer (AST & Security Analysis)", () => {
             denyPaths: [],
             maxFileSizeBytes: 10485760,
           },
-          net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-          command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+          net: {
+            allowOutbound: false,
+            allowedDomains: [],
+            allowedHosts: [],
+            allowedPorts: [],
+            allowedProtocols: ["https"],
+            allowLocalhost: false,
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowShellExecution: false,
+            allowedCommands: [],
+            allowedBinaries: [],
+            forbiddenPatterns: [],
+            allowEnvPassthrough: [],
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 4,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 30000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
@@ -49,11 +74,43 @@ describe("StaticAnalyzer (AST & Security Analysis)", () => {
       const manifest = createMockManifest({
         name: "data_fetcher",
         capabilities: {
-          fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-          net: { allowOutbound: true, allowedDomains: ["api.example.com"], allowedHosts: [], allowedPorts: [443], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-          command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+          fs: {
+            readPaths: [],
+            writePaths: [],
+            allowWorkspaceRoot: false,
+            allowTemp: false,
+            denyPaths: [],
+            maxFileSizeBytes: 10485760,
+          },
+          net: {
+            allowOutbound: true,
+            allowedDomains: ["api.example.com"],
+            allowedHosts: [],
+            allowedPorts: [443],
+            allowedProtocols: ["https"],
+            allowLocalhost: false,
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowShellExecution: false,
+            allowedCommands: [],
+            allowedBinaries: [],
+            forbiddenPatterns: [],
+            allowEnvPassthrough: [],
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 4,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 30000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
@@ -66,11 +123,43 @@ describe("StaticAnalyzer (AST & Security Analysis)", () => {
       const manifest = createMockManifest({
         name: "command_runner",
         capabilities: {
-          fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-          net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-          command: { allowShellExecution: true, allowedCommands: ["echo"], allowedBinaries: ["echo"], forbiddenPatterns: [], allowEnvPassthrough: [] },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+          fs: {
+            readPaths: [],
+            writePaths: [],
+            allowWorkspaceRoot: false,
+            allowTemp: false,
+            denyPaths: [],
+            maxFileSizeBytes: 10485760,
+          },
+          net: {
+            allowOutbound: false,
+            allowedDomains: [],
+            allowedHosts: [],
+            allowedPorts: [],
+            allowedProtocols: ["https"],
+            allowLocalhost: false,
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowShellExecution: true,
+            allowedCommands: ["echo"],
+            allowedBinaries: ["echo"],
+            forbiddenPatterns: [],
+            allowEnvPassthrough: [],
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 4,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 30000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
@@ -83,11 +172,43 @@ describe("StaticAnalyzer (AST & Security Analysis)", () => {
       const manifest = createMockManifest({
         name: "secret_consumer",
         capabilities: {
-          fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-          net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-          command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-          secrets: { allowedSecretNames: ["API_KEY"], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+          fs: {
+            readPaths: [],
+            writePaths: [],
+            allowWorkspaceRoot: false,
+            allowTemp: false,
+            denyPaths: [],
+            maxFileSizeBytes: 10485760,
+          },
+          net: {
+            allowOutbound: false,
+            allowedDomains: [],
+            allowedHosts: [],
+            allowedPorts: [],
+            allowedProtocols: ["https"],
+            allowLocalhost: false,
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowShellExecution: false,
+            allowedCommands: [],
+            allowedBinaries: [],
+            forbiddenPatterns: [],
+            allowEnvPassthrough: [],
+          },
+          secrets: {
+            allowedSecretNames: ["API_KEY"],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 4,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 30000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
@@ -106,7 +227,9 @@ describe("StaticAnalyzer (AST & Security Analysis)", () => {
       `;
 
       const findings = analyzer.analyze(badCode);
-      const fsFinding = findings.find((f) => f.category === "forbidden_import" && f.message.includes("node:fs"));
+      const fsFinding = findings.find(
+        (f) => f.category === "forbidden_import" && f.message.includes("node:fs"),
+      );
       expect(fsFinding).toBeDefined();
       expect(fsFinding?.severity).toBe("error");
     });
@@ -119,7 +242,9 @@ describe("StaticAnalyzer (AST & Security Analysis)", () => {
       `;
 
       const findings = analyzer.analyze(badCode);
-      const cpFinding = findings.find((f) => f.category === "forbidden_import" && f.message.includes("child_process"));
+      const cpFinding = findings.find(
+        (f) => f.category === "forbidden_import" && f.message.includes("child_process"),
+      );
       expect(cpFinding).toBeDefined();
     });
 
@@ -176,17 +301,49 @@ describe("StaticAnalyzer (AST & Security Analysis)", () => {
     it("should report undeclared filesystem capability when broker.fs is called without fs grant", () => {
       const manifest = createMockManifest({
         capabilities: {
-          fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-          net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-          command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+          fs: {
+            readPaths: [],
+            writePaths: [],
+            allowWorkspaceRoot: false,
+            allowTemp: false,
+            denyPaths: [],
+            maxFileSizeBytes: 10485760,
+          },
+          net: {
+            allowOutbound: false,
+            allowedDomains: [],
+            allowedHosts: [],
+            allowedPorts: [],
+            allowedProtocols: ["https"],
+            allowLocalhost: false,
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowShellExecution: false,
+            allowedCommands: [],
+            allowedBinaries: [],
+            forbiddenPatterns: [],
+            allowEnvPassthrough: [],
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 4,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 30000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
       const findings = analyzer.analyze(FS_TOOL_SOURCE, manifest, manifest.capabilities);
       const undeclaredFs = findings.find(
-        (f) => f.category === "undeclared_capability" && f.message.includes("filesystem")
+        (f) => f.category === "undeclared_capability" && f.message.includes("filesystem"),
       );
       expect(undeclaredFs).toBeDefined();
       expect(undeclaredFs?.severity).toBe("error");
@@ -195,17 +352,49 @@ describe("StaticAnalyzer (AST & Security Analysis)", () => {
     it("should report undeclared network capability when broker.net.fetch is called without net.allowOutbound", () => {
       const manifest = createMockManifest({
         capabilities: {
-          fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-          net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-          command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+          fs: {
+            readPaths: [],
+            writePaths: [],
+            allowWorkspaceRoot: false,
+            allowTemp: false,
+            denyPaths: [],
+            maxFileSizeBytes: 10485760,
+          },
+          net: {
+            allowOutbound: false,
+            allowedDomains: [],
+            allowedHosts: [],
+            allowedPorts: [],
+            allowedProtocols: ["https"],
+            allowLocalhost: false,
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowShellExecution: false,
+            allowedCommands: [],
+            allowedBinaries: [],
+            forbiddenPatterns: [],
+            allowEnvPassthrough: [],
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 4,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 30000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
       const findings = analyzer.analyze(NET_TOOL_SOURCE, manifest, manifest.capabilities);
       const undeclaredNet = findings.find(
-        (f) => f.category === "undeclared_capability" && f.message.includes("network")
+        (f) => f.category === "undeclared_capability" && f.message.includes("network"),
       );
       expect(undeclaredNet).toBeDefined();
       expect(undeclaredNet?.severity).toBe("error");
@@ -214,17 +403,49 @@ describe("StaticAnalyzer (AST & Security Analysis)", () => {
     it("should report undeclared command execution capability when broker.cmd is called", () => {
       const manifest = createMockManifest({
         capabilities: {
-          fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-          net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-          command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+          fs: {
+            readPaths: [],
+            writePaths: [],
+            allowWorkspaceRoot: false,
+            allowTemp: false,
+            denyPaths: [],
+            maxFileSizeBytes: 10485760,
+          },
+          net: {
+            allowOutbound: false,
+            allowedDomains: [],
+            allowedHosts: [],
+            allowedPorts: [],
+            allowedProtocols: ["https"],
+            allowLocalhost: false,
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowShellExecution: false,
+            allowedCommands: [],
+            allowedBinaries: [],
+            forbiddenPatterns: [],
+            allowEnvPassthrough: [],
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 4,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 30000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
       const findings = analyzer.analyze(CMD_TOOL_SOURCE, manifest, manifest.capabilities);
       const undeclaredCmd = findings.find(
-        (f) => f.category === "undeclared_capability" && f.message.includes("command")
+        (f) => f.category === "undeclared_capability" && f.message.includes("command"),
       );
       expect(undeclaredCmd).toBeDefined();
       expect(undeclaredCmd?.severity).toBe("error");
@@ -233,17 +454,49 @@ describe("StaticAnalyzer (AST & Security Analysis)", () => {
     it("should report undeclared secret capability when broker.secret is called", () => {
       const manifest = createMockManifest({
         capabilities: {
-          fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-          net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-          command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+          fs: {
+            readPaths: [],
+            writePaths: [],
+            allowWorkspaceRoot: false,
+            allowTemp: false,
+            denyPaths: [],
+            maxFileSizeBytes: 10485760,
+          },
+          net: {
+            allowOutbound: false,
+            allowedDomains: [],
+            allowedHosts: [],
+            allowedPorts: [],
+            allowedProtocols: ["https"],
+            allowLocalhost: false,
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowShellExecution: false,
+            allowedCommands: [],
+            allowedBinaries: [],
+            forbiddenPatterns: [],
+            allowEnvPassthrough: [],
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 4,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 30000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
       const findings = analyzer.analyze(SECRET_TOOL_SOURCE, manifest, manifest.capabilities);
       const undeclaredSecret = findings.find(
-        (f) => f.category === "undeclared_capability" && f.message.includes("secret")
+        (f) => f.category === "undeclared_capability" && f.message.includes("secret"),
       );
       expect(undeclaredSecret).toBeDefined();
       expect(undeclaredSecret?.severity).toBe("error");
@@ -263,7 +516,9 @@ describe("StaticAnalyzer (AST & Security Analysis)", () => {
       `;
 
       const findings = analyzer.analyze(loopCode);
-      const loopFinding = findings.find((f) => f.category === "static_flaw" && f.message.includes("infinite loop"));
+      const loopFinding = findings.find(
+        (f) => f.category === "static_flaw" && f.message.includes("infinite loop"),
+      );
       expect(loopFinding).toBeDefined();
       expect(loopFinding?.severity).toBe("error");
     });
@@ -280,7 +535,9 @@ describe("StaticAnalyzer (AST & Security Analysis)", () => {
       `;
 
       const findings = analyzer.analyze(swallowCode);
-      const catchFinding = findings.find((f) => f.category === "static_flaw" && f.message.includes("Swallowed error"));
+      const catchFinding = findings.find(
+        (f) => f.category === "static_flaw" && f.message.includes("Swallowed error"),
+      );
       expect(catchFinding).toBeDefined();
     });
 
@@ -295,7 +552,9 @@ describe("StaticAnalyzer (AST & Security Analysis)", () => {
       `;
 
       const findings = analyzer.analyze(redosCode);
-      const redosFinding = findings.find((f) => f.category === "static_flaw" && f.message.includes("catastrophic backtracking"));
+      const redosFinding = findings.find(
+        (f) => f.category === "static_flaw" && f.message.includes("catastrophic backtracking"),
+      );
       expect(redosFinding).toBeDefined();
       expect(redosFinding?.severity).toBe("error");
     });
@@ -311,7 +570,10 @@ describe("StaticAnalyzer (AST & Security Analysis)", () => {
       `;
 
       const findings = analyzer.analyze(leakCode);
-      const leakFinding = findings.find((f) => f.category === "static_flaw" && f.message.includes("retains state across invocations"));
+      const leakFinding = findings.find(
+        (f) =>
+          f.category === "static_flaw" && f.message.includes("retains state across invocations"),
+      );
       expect(leakFinding).toBeDefined();
       expect(leakFinding?.severity).toBe("warning");
     });
@@ -325,7 +587,9 @@ describe("StaticAnalyzer (AST & Security Analysis)", () => {
       `;
 
       const findings = analyzer.analyze(missingExport);
-      const structureFinding = findings.find((f) => f.message.includes("default export wrapped with 'defineTool'"));
+      const structureFinding = findings.find((f) =>
+        f.message.includes("default export wrapped with 'defineTool'"),
+      );
       expect(structureFinding).toBeDefined();
       expect(structureFinding?.severity).toBe("error");
     });

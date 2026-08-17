@@ -1,16 +1,13 @@
-import { IncomingMessage, ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { gunzipSync, inflateSync } from "node:zlib";
 import { ChecksumMismatchError, hasRequiredScope } from "@tool-evolver/protocol";
-import { AuthContext } from "../auth/middleware.js";
-import {
-  ConsentRequiredError,
-  RawConsentRequiredError,
-} from "./consent-guard.js";
+import type { AuthContext } from "../auth/middleware.js";
+import { ConsentRequiredError, RawConsentRequiredError } from "./consent-guard.js";
 import { BatchConflictError } from "./deduplicator.js";
 import { QuotaExceededError } from "./quota.js";
 import {
-  IngestionContext,
-  ObservationIngestionService,
+  type IngestionContext,
+  type ObservationIngestionService,
   TenantMismatchError,
 } from "./service.js";
 import {
@@ -23,7 +20,10 @@ import {
 /**
  * Reads raw request body as Buffer from IncomingMessage.
  */
-async function readBodyBuffer(req: IncomingMessage, limitBytes = 10 * 1024 * 1024): Promise<Buffer> {
+async function readBodyBuffer(
+  req: IncomingMessage,
+  limitBytes = 10 * 1024 * 1024,
+): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
     let totalLength = 0;
@@ -61,7 +61,12 @@ export async function handleObservationBatchRoute(
   res: ServerResponse,
   authContext: AuthContext,
   ingestionService: ObservationIngestionService,
-  sendJson: (res: ServerResponse, status: number, data: unknown, headers?: Record<string, string>) => void,
+  sendJson: (
+    res: ServerResponse,
+    status: number,
+    data: unknown,
+    headers?: Record<string, string>,
+  ) => void,
   headers: Record<string, string> = {},
 ): Promise<void> {
   // 1. Check Scope: observations:write

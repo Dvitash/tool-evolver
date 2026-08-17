@@ -123,7 +123,10 @@ export class ToolRegistryRepository {
     const row = res.rows[0];
 
     if (tenant.accountId && row.account_id && tenant.accountId !== row.account_id) {
-      TenantGuard.assertAccess({ accountId: String(row.account_id), workspaceId: String(row.workspace_id) });
+      TenantGuard.assertAccess({
+        accountId: String(row.account_id),
+        workspaceId: String(row.workspace_id),
+      });
     }
 
     return {
@@ -133,7 +136,10 @@ export class ToolRegistryRepository {
       name: String(row.name),
       description: row.description ? String(row.description) : undefined,
       activeVersion: row.active_version ? String(row.active_version) : undefined,
-      metadata: typeof row.metadata === "string" ? JSON.parse(row.metadata) : (row.metadata as Record<string, unknown> | undefined),
+      metadata:
+        typeof row.metadata === "string"
+          ? JSON.parse(row.metadata)
+          : (row.metadata as Record<string, unknown> | undefined),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     };
@@ -162,7 +168,10 @@ export class ToolRegistryRepository {
       name: String(row.name),
       description: row.description ? String(row.description) : undefined,
       activeVersion: row.active_version ? String(row.active_version) : undefined,
-      metadata: typeof row.metadata === "string" ? JSON.parse(row.metadata) : (row.metadata as Record<string, unknown> | undefined),
+      metadata:
+        typeof row.metadata === "string"
+          ? JSON.parse(row.metadata)
+          : (row.metadata as Record<string, unknown> | undefined),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     }));
@@ -200,7 +209,12 @@ export class ToolRegistryRepository {
     const versionId = `${tenant.workspaceId}:${toolVersion.toolId}:${toolVersion.version}`;
 
     // Verify immutability if existing
-    const existing = await this.getToolVersion(tenant, toolVersion.toolId, toolVersion.version, client);
+    const existing = await this.getToolVersion(
+      tenant,
+      toolVersion.toolId,
+      toolVersion.version,
+      client,
+    );
     if (existing) {
       if (
         existing.artifactDigest !== toolVersion.artifactDigest ||
@@ -353,7 +367,12 @@ export class ToolRegistryRepository {
     toolId: string,
     db?: Queryable,
   ): Promise<ToolVersion[]> {
-    const versions = await this.listToolVersions(tenant, toolId, { status: ["active", "deprecated"] }, db);
+    const versions = await this.listToolVersions(
+      tenant,
+      toolId,
+      { status: ["active", "deprecated"] },
+      db,
+    );
     return versions;
   }
 

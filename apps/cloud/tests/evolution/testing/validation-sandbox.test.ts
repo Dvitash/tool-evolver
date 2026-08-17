@@ -218,7 +218,7 @@ describe("ValidationSandbox (Ephemeral Test Execution & Broker Fakes)", () => {
         expect.objectContaining({
           success: true,
           lineCount: 3,
-        })
+        }),
       );
     });
 
@@ -258,7 +258,7 @@ describe("ValidationSandbox (Ephemeral Test Execution & Broker Fakes)", () => {
         expect.objectContaining({
           success: true,
           status: 200,
-        })
+        }),
       );
     });
 
@@ -296,7 +296,7 @@ describe("ValidationSandbox (Ephemeral Test Execution & Broker Fakes)", () => {
           success: true,
           stdout: "hello world\n",
           exitCode: 0,
-        })
+        }),
       );
     });
 
@@ -332,7 +332,7 @@ describe("ValidationSandbox (Ephemeral Test Execution & Broker Fakes)", () => {
           success: true,
           hasSecret: true,
           secretPrefix: "sk_t",
-        })
+        }),
       );
     });
   });
@@ -372,7 +372,9 @@ describe("ValidationSandbox (Ephemeral Test Execution & Broker Fakes)", () => {
         ],
       };
 
-      const report = await sandbox.executeTestSuite(hangingToolSource, manifest, testSuite, { timeoutMs: 100 });
+      const report = await sandbox.executeTestSuite(hangingToolSource, manifest, testSuite, {
+        timeoutMs: 100,
+      });
       expect(report.timeouts + report.failed).toBe(1);
       expect(report.passed).toBe(0);
     });

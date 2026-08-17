@@ -2,12 +2,12 @@
  * @tool-evolver/cloud - Deterministic Dev & Test Fixture Tools
  */
 
+import { McpInvocationError } from "../middleware.js";
 import type {
   CallToolResult,
   CloudMcpInvocationContext,
   CloudMcpToolDefinition,
 } from "../types.js";
-import { McpInvocationError } from "../middleware.js";
 import { MCP_ERROR_CODES } from "../types.js";
 
 /**
@@ -131,7 +131,9 @@ export const testFailureFixtureTool: CloudMcpToolDefinition = {
         if (context.signal) {
           context.signal.addEventListener("abort", () => {
             clearTimeout(timer);
-            reject(new McpInvocationError(MCP_ERROR_CODES.CANCELLED, "Execution aborted during delay"));
+            reject(
+              new McpInvocationError(MCP_ERROR_CODES.CANCELLED, "Execution aborted during delay"),
+            );
           });
         }
       });

@@ -1,6 +1,6 @@
 import { hashCanonicalContent } from "@tool-evolver/contracts";
 import { SignatureExtractor } from "./signature.js";
-import {
+import type {
   ClusterMetrics,
   ClustererOptions,
   Episode,
@@ -100,10 +100,12 @@ export class StructuralClusterer {
     }
 
     // Extract signatures for all episodes
-    const episodePairs: Array<{ episode: Episode; signature: EpisodeSignature }> = episodes.map((ep) => ({
-      episode: ep,
-      signature: this.extractor.extractSignature(ep),
-    }));
+    const episodePairs: Array<{ episode: Episode; signature: EpisodeSignature }> = episodes.map(
+      (ep) => ({
+        episode: ep,
+        signature: this.extractor.extractSignature(ep),
+      }),
+    );
 
     // Group by workspace first
     const byWorkspace = new Map<string, Array<{ episode: Episode; signature: EpisodeSignature }>>();
@@ -211,7 +213,8 @@ export class StructuralClusterer {
 
     const avgDurationMs = episodeCount > 0 ? Math.round(totalDurationMs / episodeCount) : 0;
     const avgTokens = episodeCount > 0 ? Math.round(totalTokens / episodeCount) : 0;
-    const avgStepCount = episodeCount > 0 ? Math.round((totalStepCount / episodeCount) * 10) / 10 : 0;
+    const avgStepCount =
+      episodeCount > 0 ? Math.round((totalStepCount / episodeCount) * 10) / 10 : 0;
 
     const metrics: ClusterMetrics = {
       totalDurationMs,
@@ -248,7 +251,10 @@ export class StructuralClusterer {
 /**
  * Convenience function to cluster episodes.
  */
-export function clusterWorkflowEpisodes(episodes: Episode[], options?: ClustererOptions): WorkflowCluster[] {
+export function clusterWorkflowEpisodes(
+  episodes: Episode[],
+  options?: ClustererOptions,
+): WorkflowCluster[] {
   const clusterer = new StructuralClusterer(options);
   return clusterer.clusterEpisodes(episodes);
 }

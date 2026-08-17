@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
+import type { z } from "zod";
 import { InferenceCache, computeInferenceCacheKey } from "./cache.js";
 import { OutboundPrivacyGate } from "./privacy-gate.js";
 import { PromptRegistry } from "./prompt-registry.js";
 import { ModelRouter } from "./router.js";
-import {
+import type {
   InferenceProvenance,
   InferenceRequest,
   InferenceResponse,
@@ -24,7 +24,9 @@ export class PromptTemplateNotFoundError extends Error {
   public readonly version?: string;
 
   constructor(templateId: string, version?: string) {
-    super(`Prompt template '${templateId}' (version: ${version ?? "latest"}) not found in registry`);
+    super(
+      `Prompt template '${templateId}' (version: ${version ?? "latest"}) not found in registry`,
+    );
     this.name = "PromptTemplateNotFoundError";
     this.templateId = templateId;
     this.version = version;
@@ -40,7 +42,9 @@ export class InferenceExecutionError extends Error {
   public readonly cause?: unknown;
 
   constructor(message: string, requestId: string, attempts: number, cause?: unknown) {
-    super(`Inference execution failed for request '${requestId}' after ${attempts} attempts: ${message}`);
+    super(
+      `Inference execution failed for request '${requestId}' after ${attempts} attempts: ${message}`,
+    );
     this.name = "InferenceExecutionError";
     this.requestId = requestId;
     this.attempts = attempts;
@@ -94,7 +98,10 @@ export class InferenceService {
       request.promptTemplateVersion,
     );
     if (!template) {
-      throw new PromptTemplateNotFoundError(request.promptTemplateId, request.promptTemplateVersion);
+      throw new PromptTemplateNotFoundError(
+        request.promptTemplateId,
+        request.promptTemplateVersion,
+      );
     }
 
     // 2. Render prompt and compute digests

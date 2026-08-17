@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { EfficiencyCalculator } from "../../src/analytics/efficiency.js";
 import { MetricsRepository } from "../../src/analytics/repositories/metrics-repository.js";
 import { MemoryDatabasePool } from "../../src/db/client.js";
@@ -92,7 +92,9 @@ describe("EfficiencyCalculator: Measured vs Counterfactual Savings & Uncertainty
 
     // 2. Counterfactual Savings
     expect(result.counterfactualSavings.confidenceLevel).toBe(0.95);
-    expect(result.counterfactualSavings.lowerBoundUsd).toBeLessThanOrEqual(result.counterfactualSavings.upperBoundUsd);
+    expect(result.counterfactualSavings.lowerBoundUsd).toBeLessThanOrEqual(
+      result.counterfactualSavings.upperBoundUsd,
+    );
     expect(result.counterfactualSavings.standardErrorUsd).toBeGreaterThanOrEqual(0);
 
     // 3. Net Savings Score

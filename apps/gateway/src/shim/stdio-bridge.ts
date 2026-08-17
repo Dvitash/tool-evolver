@@ -2,9 +2,9 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import { getDaemonPaths } from "@tool-evolver/observer";
-import { withResolvers } from "../utils/deferred.js";
 import { LocalMcpGateway } from "../gateway.js";
 import { FakeGatewayRouter } from "../router.js";
+import { withResolvers } from "../utils/deferred.js";
 
 export interface McpStdioShimOptions {
   socketPath?: string;
@@ -30,10 +30,7 @@ export interface ShimStatus {
 /**
  * Checks if the daemon IPC socket is active and accepting connections.
  */
-export async function checkDaemonReachable(
-  socketPath: string,
-  timeoutMs = 1500
-): Promise<boolean> {
+export async function checkDaemonReachable(socketPath: string, timeoutMs = 1500): Promise<boolean> {
   const { promise, resolve } = withResolvers<boolean>();
 
   try {
@@ -76,10 +73,7 @@ export async function checkDaemonReachable(
 /**
  * Attempts a bounded daemon startup if the binary is present.
  */
-export async function attemptDaemonStartup(
-  socketPath: string,
-  maxWaitMs = 3000
-): Promise<boolean> {
+export async function attemptDaemonStartup(socketPath: string, maxWaitMs = 3000): Promise<boolean> {
   try {
     // Attempt spawning daemon detached
     const child = spawn("tool-evolver-daemon", ["start"], {
@@ -149,10 +143,7 @@ export class McpStdioShim {
 
     // 2. If daemon not reachable, attempt bounded startup
     if (!daemonReachable && this.maxStartupAttempts > 0) {
-      daemonReachable = await attemptDaemonStartup(
-        this.socketPath,
-        this.startupTimeoutMs
-      );
+      daemonReachable = await attemptDaemonStartup(this.socketPath, this.startupTimeoutMs);
     }
 
     // 3. Connect to daemon or fallback to standalone in-process gateway
@@ -188,10 +179,7 @@ export class McpStdioShim {
       };
     }
 
-    const actionMsg =
-      `Tool Evolver Daemon is not running at '${this.socketPath}'.\n` +
-      `To start the daemon, run: 'tool-evolver daemon start'\n` +
-      `Or launch MCP in standalone mode with: 'tool-evolver-mcp --standalone'\n`;
+    const actionMsg = `Tool Evolver Daemon is not running at '${this.socketPath}'.\nTo start the daemon, run: 'tool-evolver daemon start'\nOr launch MCP in standalone mode with: 'tool-evolver-mcp --standalone'\n`;
     this.writeStderr(actionMsg);
 
     return {

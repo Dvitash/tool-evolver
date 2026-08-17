@@ -1,14 +1,14 @@
-import { IncomingMessage } from "node:http";
 import { randomUUID } from "node:crypto";
+import type { IncomingMessage } from "node:http";
 import {
-  AuthClaims,
-  AuthScope,
+  type AuthClaims,
+  type AuthScope,
   PROTOCOL_VERSION,
   hasRequiredScope,
 } from "@tool-evolver/protocol";
-import { TenantContext } from "../tenant.js";
-import { TokenError } from "./tokens.js";
+import type { TenantContext } from "../tenant.js";
 import type { AuthService } from "./index.js";
+import { TokenError } from "./tokens.js";
 
 /**
  * Validated Authentication Context.
@@ -37,19 +37,23 @@ export async function authenticateHttpRequest(
   authService: AuthService,
   options: AuthMiddlewareOptions = {},
 ): Promise<AuthContext> {
-  const authHeader = req.headers["authorization"];
+  const authHeader = req.headers.authorization;
   const accountIdHeader = req.headers["x-account-id"] as string | undefined;
   const workspaceIdHeader = req.headers["x-workspace-id"] as string | undefined;
   const protocolVersionHeader = req.headers["x-protocol-version"] as string | undefined;
   const traceId =
     (req.headers["x-trace-id"] as string | undefined) ||
-    (req.headers["traceparent"] as string | undefined);
+    (req.headers.traceparent as string | undefined);
   const correlationId = (req.headers["x-request-id"] as string | undefined) || randomUUID();
 
   // 1. Enforce Protocol Version Header if provided
   if (protocolVersionHeader && options.requiredProtocolVersion) {
     if (protocolVersionHeader !== options.requiredProtocolVersion) {
-      throw new TokenError("unsupported_grant_type", `Protocol version mismatch: expected ${options.requiredProtocolVersion}, got ${protocolVersionHeader}`, 400);
+      throw new TokenError(
+        "unsupported_grant_type",
+        `Protocol version mismatch: expected ${options.requiredProtocolVersion}, got ${protocolVersionHeader}`,
+        400,
+      );
     }
   }
 
@@ -170,7 +174,7 @@ export async function authenticateWebSocket(
     }
 
     // 2. Try standard Authorization header
-    const authHeader = req.headers["authorization"];
+    const authHeader = req.headers.authorization;
     if (authHeader?.startsWith("Bearer ")) {
       const token = authHeader.slice(7).trim();
       const verifyResult = await authService.tokens.verifyAccessToken(token);

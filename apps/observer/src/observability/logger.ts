@@ -59,12 +59,14 @@ export interface LoggerOptions {
   redactSecrets?: boolean;
 }
 
-const SENSITIVE_KEY_PATTERN = /token|secret|password|key|auth|credential|jwt|cookie|session|signature|private|cert/i;
+const SENSITIVE_KEY_PATTERN =
+  /token|secret|password|key|auth|credential|jwt|cookie|session|signature|private|cert/i;
 const REDACTED_MARKER = "[REDACTED]";
 
 const COMMON_SECRET_PATTERNS: Array<{ regex: RegExp; replacement: string }> = [
   {
-    regex: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/g,
+    regex:
+      /-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/g,
     replacement: "[REDACTED_PRIVATE_KEY]",
   },
   {
@@ -72,7 +74,8 @@ const COMMON_SECRET_PATTERNS: Array<{ regex: RegExp; replacement: string }> = [
     replacement: "Bearer [REDACTED]",
   },
   {
-    regex: /(?:sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{20,}|gho_[a-zA-Z0-9]{20,}|glpat-[a-zA-Z0-9_\-]{20,}|xoxb-[a-zA-Z0-9\-]{20,})/g,
+    regex:
+      /(?:sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{20,}|gho_[a-zA-Z0-9]{20,}|glpat-[a-zA-Z0-9_\-]{20,}|xoxb-[a-zA-Z0-9\-]{20,})/g,
     replacement: "[REDACTED_API_KEY]",
   },
   {
@@ -259,7 +262,11 @@ export class StructuredLogger {
     this.log("error", msg, meta);
   }
 
-  log(level: Exclude<LogLevel, "silent">, message: string, meta?: Record<string, unknown> | Error): void {
+  log(
+    level: Exclude<LogLevel, "silent">,
+    message: string,
+    meta?: Record<string, unknown> | Error,
+  ): void {
     if (LOG_LEVEL_SEVERITY[level] < LOG_LEVEL_SEVERITY[this.level]) {
       return;
     }
@@ -283,7 +290,11 @@ export class StructuredLogger {
     }
 
     const rawMessage = this.redact ? (redactSecrets(message) as string) : message;
-    const rawMeta = extraMeta ? (this.redact ? (redactSecrets(extraMeta) as Record<string, unknown>) : extraMeta) : undefined;
+    const rawMeta = extraMeta
+      ? this.redact
+        ? (redactSecrets(extraMeta) as Record<string, unknown>)
+        : extraMeta
+      : undefined;
 
     const entry: LogEntry = {
       timestamp,

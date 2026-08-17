@@ -2,10 +2,10 @@ import type { ToolManifest } from "@tool-evolver/contracts";
 import type { CatalogSnapshotResponse, StreamCatalogInvalidation } from "@tool-evolver/protocol";
 import type { ToolRegistry } from "../registry/index.js";
 import type { RegistryTool } from "../registry/types.js";
-import { CloudCatalogCache } from "./cache.js";
-import { CloudCircuitBreaker } from "./circuit-breaker.js";
-import { CloudCatalogClient } from "./client.js";
-import { CloudInvocationRouter } from "./router.js";
+import type { CloudCatalogCache } from "./cache.js";
+import type { CloudCircuitBreaker } from "./circuit-breaker.js";
+import type { CloudCatalogClient } from "./client.js";
+import type { CloudInvocationRouter } from "./router.js";
 
 export interface CloudCatalogSyncOptions {
   client: CloudCatalogClient;
@@ -51,7 +51,11 @@ export class CloudCatalogSyncCoordinator {
 
     // Listen to circuit breaker state changes
     this.circuitBreaker.onHealthChange(async (report) => {
-      if (report.status === "offline" || report.status === "unauthorized" || report.status === "upgrade_required") {
+      if (
+        report.status === "offline" ||
+        report.status === "unauthorized" ||
+        report.status === "upgrade_required"
+      ) {
         await this.markOffline(report.lastErrorReason || `Cloud entered ${report.status} state`);
       } else if (report.status === "online") {
         await this.markOnline();
@@ -64,11 +68,13 @@ export class CloudCatalogSyncCoordinator {
    * If network is down or circuit is open, gracefully marks cached tools stale
    * and preserves local tool functionality without crashing.
    */
-  async sync(options: {
-    forceFullSnapshot?: boolean;
-    filterScopes?: string[];
-    signal?: AbortSignal;
-  } = {}): Promise<CatalogSnapshotResponse | null> {
+  async sync(
+    options: {
+      forceFullSnapshot?: boolean;
+      filterScopes?: string[];
+      signal?: AbortSignal;
+    } = {},
+  ): Promise<CatalogSnapshotResponse | null> {
     // If a sync is already in flight, return the active promise
     if (this.activeSyncPromise) {
       return await this.activeSyncPromise;

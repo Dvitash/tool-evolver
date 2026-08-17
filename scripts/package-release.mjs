@@ -24,28 +24,121 @@ export const RELEASE_DATE = "2026-08-17T00:00:00.000Z";
 export const DETERMINISTIC_MTIME = 1786924800; // 2026-08-17T00:00:00Z in Unix seconds
 
 export const PLATFORMS = [
-  { id: "linux-x64", os: "linux", arch: "x64", isWsl: false, filename: `tool-evolver-v${RELEASE_VERSION}-linux-x64.tar.gz` },
-  { id: "linux-arm64", os: "linux", arch: "arm64", isWsl: false, filename: `tool-evolver-v${RELEASE_VERSION}-linux-arm64.tar.gz` },
-  { id: "darwin-x64", os: "darwin", arch: "x64", isWsl: false, filename: `tool-evolver-v${RELEASE_VERSION}-darwin-x64.tar.gz` },
-  { id: "darwin-arm64", os: "darwin", arch: "arm64", isWsl: false, filename: `tool-evolver-v${RELEASE_VERSION}-darwin-arm64.tar.gz` },
-  { id: "wsl", os: "linux", arch: "x64", isWsl: true, filename: `tool-evolver-v${RELEASE_VERSION}-wsl.tar.gz` },
+  {
+    id: "linux-x64",
+    os: "linux",
+    arch: "x64",
+    isWsl: false,
+    filename: `tool-evolver-v${RELEASE_VERSION}-linux-x64.tar.gz`,
+  },
+  {
+    id: "linux-arm64",
+    os: "linux",
+    arch: "arm64",
+    isWsl: false,
+    filename: `tool-evolver-v${RELEASE_VERSION}-linux-arm64.tar.gz`,
+  },
+  {
+    id: "darwin-x64",
+    os: "darwin",
+    arch: "x64",
+    isWsl: false,
+    filename: `tool-evolver-v${RELEASE_VERSION}-darwin-x64.tar.gz`,
+  },
+  {
+    id: "darwin-arm64",
+    os: "darwin",
+    arch: "arm64",
+    isWsl: false,
+    filename: `tool-evolver-v${RELEASE_VERSION}-darwin-arm64.tar.gz`,
+  },
+  {
+    id: "wsl",
+    os: "linux",
+    arch: "x64",
+    isWsl: true,
+    filename: `tool-evolver-v${RELEASE_VERSION}-wsl.tar.gz`,
+  },
 ];
 
 export const WORKSPACE_PACKAGES = [
-  { name: "@tool-evolver/contracts", path: "packages/contracts", entry: "dist/index.js", type: "package" },
-  { name: "@tool-evolver/crypto", path: "packages/crypto", entry: "dist/index.js", type: "package" },
+  {
+    name: "@tool-evolver/contracts",
+    path: "packages/contracts",
+    entry: "dist/index.js",
+    type: "package",
+  },
+  {
+    name: "@tool-evolver/crypto",
+    path: "packages/crypto",
+    entry: "dist/index.js",
+    type: "package",
+  },
   { name: "@tool-evolver/db", path: "packages/db", entry: "dist/index.js", type: "package" },
-  { name: "@tool-evolver/harness-contracts", path: "packages/harness-contracts", entry: "dist/index.js", type: "package" },
-  { name: "@tool-evolver/protocol", path: "packages/protocol", entry: "dist/index.js", type: "package" },
-  { name: "@tool-evolver/runtime", path: "packages/runtime", entry: "dist/index.js", type: "package" },
-  { name: "@tool-evolver/cli", path: "apps/cli", entry: "dist/index.js", bin: "dist/bin/cli.js", type: "app" },
-  { name: "@tool-evolver/gateway", path: "apps/gateway", entry: "dist/index.js", bin: "dist/bin/gateway.js", type: "app" },
-  { name: "@tool-evolver/observer", path: "apps/observer", entry: "dist/index.js", bin: "dist/bin/daemon.js", type: "app" },
+  {
+    name: "@tool-evolver/harness-contracts",
+    path: "packages/harness-contracts",
+    entry: "dist/index.js",
+    type: "package",
+  },
+  {
+    name: "@tool-evolver/protocol",
+    path: "packages/protocol",
+    entry: "dist/index.js",
+    type: "package",
+  },
+  {
+    name: "@tool-evolver/runtime",
+    path: "packages/runtime",
+    entry: "dist/index.js",
+    type: "package",
+  },
+  {
+    name: "@tool-evolver/cli",
+    path: "apps/cli",
+    entry: "dist/index.js",
+    bin: "dist/bin/cli.js",
+    type: "app",
+  },
+  {
+    name: "@tool-evolver/gateway",
+    path: "apps/gateway",
+    entry: "dist/index.js",
+    bin: "dist/bin/gateway.js",
+    type: "app",
+  },
+  {
+    name: "@tool-evolver/observer",
+    path: "apps/observer",
+    entry: "dist/index.js",
+    bin: "dist/bin/daemon.js",
+    type: "app",
+  },
   { name: "@tool-evolver/cloud", path: "apps/cloud", entry: "dist/index.js", type: "app" },
-  { name: "@tool-evolver/adapter-claude-code", path: "adapters/claude-code", entry: "dist/index.js", type: "adapter" },
-  { name: "@tool-evolver/adapter-codex", path: "adapters/codex-cli", entry: "dist/index.js", type: "adapter" },
-  { name: "@tool-evolver/adapter-omp", path: "adapters/omp", entry: "dist/index.js", type: "adapter" },
-  { name: "@tool-evolver/test-fixtures", path: "fixtures/test-fixtures", entry: "dist/index.js", type: "fixture" },
+  {
+    name: "@tool-evolver/adapter-claude-code",
+    path: "adapters/claude-code",
+    entry: "dist/index.js",
+    type: "adapter",
+  },
+  {
+    name: "@tool-evolver/adapter-codex",
+    path: "adapters/codex-cli",
+    entry: "dist/index.js",
+    type: "adapter",
+  },
+  {
+    name: "@tool-evolver/adapter-omp",
+    path: "adapters/omp",
+    entry: "dist/index.js",
+    type: "adapter",
+  },
+  {
+    name: "@tool-evolver/test-fixtures",
+    path: "fixtures/test-fixtures",
+    entry: "dist/index.js",
+    type: "fixture",
+  },
   { name: "@tool-evolver/e2e", path: "fixtures/e2e", entry: "dist/index.js", type: "fixture" },
 ];
 
@@ -110,11 +203,11 @@ export function createUstarHeader({
   }
 
   buf.write(nameField, 0, 100, "utf8");
-  buf.write(mode.toString(8).padStart(6, "0") + " \0", 100, 8, "ascii");
-  buf.write((0).toString(8).padStart(6, "0") + " \0", 108, 8, "ascii");
-  buf.write((0).toString(8).padStart(6, "0") + " \0", 116, 8, "ascii");
-  buf.write(size.toString(8).padStart(11, "0") + " ", 124, 12, "ascii");
-  buf.write(mtime.toString(8).padStart(11, "0") + " ", 136, 12, "ascii");
+  buf.write(`${mode.toString(8).padStart(6, "0")} \0`, 100, 8, "ascii");
+  buf.write(`${(0).toString(8).padStart(6, "0")} \0`, 108, 8, "ascii");
+  buf.write(`${(0).toString(8).padStart(6, "0")} \0`, 116, 8, "ascii");
+  buf.write(`${size.toString(8).padStart(11, "0")} `, 124, 12, "ascii");
+  buf.write(`${mtime.toString(8).padStart(11, "0")} `, 136, 12, "ascii");
 
   buf.write(typeflag, 156, 1, "ascii");
   buf.write("ustar\0", 257, 6, "ascii");
@@ -132,7 +225,7 @@ export function createUstarHeader({
   for (let i = 0; i < 512; i++) {
     checksum += buf[i];
   }
-  buf.write(checksum.toString(8).padStart(6, "0") + "\0 ", 148, 8, "ascii");
+  buf.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
 
   return buf;
 }
@@ -234,7 +327,9 @@ export function generatePackageDigests(rootDir = process.cwd()) {
   for (const pkg of WORKSPACE_PACKAGES) {
     const pkgDir = path.resolve(rootDir, pkg.path);
     const pkgJsonPath = path.join(pkgDir, "package.json");
-    const pkgJson = fs.existsSync(pkgJsonPath) ? JSON.parse(fs.readFileSync(pkgJsonPath, "utf8")) : { version: RELEASE_VERSION };
+    const pkgJson = fs.existsSync(pkgJsonPath)
+      ? JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"))
+      : { version: RELEASE_VERSION };
     const entryPath = path.join(pkgDir, pkg.entry);
 
     let entrySha256 = "";
@@ -273,7 +368,7 @@ export function generatePackageDigests(rootDir = process.cwd()) {
  * @param {string} outputDir
  * @returns {Record<string, { filename: string, platform: string, arch: string, isWsl: boolean, sizeBytes: number, sha256: string }>}
  */
-export function createPlatformReleaseTarballs(rootDir = process.cwd(), outputDir) {
+export function createPlatformReleaseTarballs(rootDir, outputDir) {
   fs.mkdirSync(outputDir, { recursive: true });
 
   const rootPkgJson = JSON.parse(fs.readFileSync(path.resolve(rootDir, "package.json"), "utf8"));
@@ -305,17 +400,20 @@ export function createPlatformReleaseTarballs(rootDir = process.cwd(), outputDir
     },
     {
       path: "tool-evolver/bin/tool-evolver",
-      content: "#!/usr/bin/env node\nimport { cliMain } from '../apps/cli/dist/index.js';\ncliMain(process.argv.slice(2));\n",
+      content:
+        "#!/usr/bin/env node\nimport { cliMain } from '../apps/cli/dist/index.js';\ncliMain(process.argv.slice(2));\n",
       mode: 0o755,
     },
     {
       path: "tool-evolver/bin/tool-evolver-daemon",
-      content: "#!/usr/bin/env node\nimport { daemonMain } from '../apps/observer/dist/index.js';\ndaemonMain();\n",
+      content:
+        "#!/usr/bin/env node\nimport { daemonMain } from '../apps/observer/dist/index.js';\ndaemonMain();\n",
       mode: 0o755,
     },
     {
       path: "tool-evolver/bin/tool-evolver-mcp",
-      content: "#!/usr/bin/env node\nimport { gatewayMain } from '../apps/gateway/dist/index.js';\ngatewayMain();\n",
+      content:
+        "#!/usr/bin/env node\nimport { gatewayMain } from '../apps/gateway/dist/index.js';\ngatewayMain();\n",
       mode: 0o755,
     },
     {
@@ -442,7 +540,10 @@ export function generateSignedManifest(packageDigests, assetDigests, options = {
     const sig = crypto.sign(null, signBuffer, ephemeral.privateKey);
     signatureHex = sig.toString("hex");
     keyPair.publicKeyPem = ephemeral.publicKey.export({ type: "spki", format: "pem" }).toString();
-    keyPair.publicKeyHex = ephemeral.publicKey.export({ type: "spki", format: "der" }).subarray(-32).toString("hex");
+    keyPair.publicKeyHex = ephemeral.publicKey
+      .export({ type: "spki", format: "der" })
+      .subarray(-32)
+      .toString("hex");
   }
 
   const manifest = {
@@ -468,7 +569,7 @@ export function generateSignedManifest(packageDigests, assetDigests, options = {
  * @param {Record<string, any>} packageDigests
  * @returns {object}
  */
-export function generateCycloneDxSbom(rootDir = process.cwd(), packageDigests) {
+export function generateCycloneDxSbom(rootDir, packageDigests) {
   const components = [];
 
   // Add all 15 workspace packages
@@ -594,7 +695,9 @@ export function packageRelease(options = {}) {
   const assetDigests = createPlatformReleaseTarballs(rootDir, distDir);
   console.log(`📦 Generated ${Object.keys(assetDigests).length} platform release tarballs:`);
   for (const asset of Object.values(assetDigests)) {
-    console.log(`   - ${asset.filename} (${asset.sizeBytes} bytes, sha256: ${asset.sha256.slice(0, 16)}...)`);
+    console.log(
+      `   - ${asset.filename} (${asset.sizeBytes} bytes, sha256: ${asset.sha256.slice(0, 16)}...)`,
+    );
   }
 
   // 3. Signed release manifest
@@ -603,7 +706,9 @@ export function packageRelease(options = {}) {
   const manifestContent = JSON.stringify(manifest, null, 2);
   fs.writeFileSync(manifestPath, manifestContent);
   const manifestSha256 = sha256Hex(manifestContent);
-  console.log(`✍️ Generated and signed release manifest: manifest.json (sha256: ${manifestSha256.slice(0, 16)}...)`);
+  console.log(
+    `✍️ Generated and signed release manifest: manifest.json (sha256: ${manifestSha256.slice(0, 16)}...)`,
+  );
 
   // 4. CycloneDX SBOM
   const sbom = generateCycloneDxSbom(rootDir, packageDigests);

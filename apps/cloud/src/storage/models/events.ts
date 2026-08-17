@@ -1,4 +1,3 @@
-import { z } from "zod";
 import {
   CausalRefSchema,
   ISOTimestampSchema,
@@ -9,6 +8,7 @@ import {
   SchemaVersionSchema,
   Sha256DigestSchema,
 } from "@tool-evolver/contracts";
+import { z } from "zod";
 
 /**
  * Database entity schema for normalized events stored in the cloud.

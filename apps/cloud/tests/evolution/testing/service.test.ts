@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  CandidateValidationService,
+  type CandidateValidationService,
   createCandidateValidationService,
 } from "../../../src/evolution/testing/service.js";
 import {
@@ -52,10 +52,35 @@ describe("CandidateValidationService (End-to-End Candidate Validation)", () => {
             denyPaths: [],
             maxFileSizeBytes: 10485760,
           },
-          net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-          command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+          net: {
+            allowOutbound: false,
+            allowedDomains: [],
+            allowedHosts: [],
+            allowedPorts: [],
+            allowedProtocols: ["https"],
+            allowLocalhost: false,
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowShellExecution: false,
+            allowedCommands: [],
+            allowedBinaries: [],
+            forbiddenPatterns: [],
+            allowEnvPassthrough: [],
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 4,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 30000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
@@ -66,7 +91,7 @@ describe("CandidateValidationService (End-to-End Candidate Validation)", () => {
           sourceCode: FS_TOOL_SOURCE,
           requiredCapabilities: manifest.capabilities,
         },
-        { skipLlmTestSynthesis: true }
+        { skipLlmTestSynthesis: true },
       );
 
       expect(result.status).toBe("pass");
@@ -85,11 +110,43 @@ describe("CandidateValidationService (End-to-End Candidate Validation)", () => {
           required: ["endpointUrl"],
         },
         capabilities: {
-          fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-          net: { allowOutbound: true, allowedDomains: ["api.example.com"], allowedHosts: [], allowedPorts: [443], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-          command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+          fs: {
+            readPaths: [],
+            writePaths: [],
+            allowWorkspaceRoot: false,
+            allowTemp: false,
+            denyPaths: [],
+            maxFileSizeBytes: 10485760,
+          },
+          net: {
+            allowOutbound: true,
+            allowedDomains: ["api.example.com"],
+            allowedHosts: [],
+            allowedPorts: [443],
+            allowedProtocols: ["https"],
+            allowLocalhost: false,
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowShellExecution: false,
+            allowedCommands: [],
+            allowedBinaries: [],
+            forbiddenPatterns: [],
+            allowEnvPassthrough: [],
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 4,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 30000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
@@ -100,7 +157,7 @@ describe("CandidateValidationService (End-to-End Candidate Validation)", () => {
           sourceCode: NET_TOOL_SOURCE,
           requiredCapabilities: manifest.capabilities,
         },
-        { skipLlmTestSynthesis: true }
+        { skipLlmTestSynthesis: true },
       );
 
       expect(result.status).toBe("pass");
@@ -118,11 +175,43 @@ describe("CandidateValidationService (End-to-End Candidate Validation)", () => {
           required: ["command"],
         },
         capabilities: {
-          fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-          net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-          command: { allowShellExecution: true, allowedCommands: ["echo"], allowedBinaries: ["echo"], forbiddenPatterns: [], allowEnvPassthrough: [] },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+          fs: {
+            readPaths: [],
+            writePaths: [],
+            allowWorkspaceRoot: false,
+            allowTemp: false,
+            denyPaths: [],
+            maxFileSizeBytes: 10485760,
+          },
+          net: {
+            allowOutbound: false,
+            allowedDomains: [],
+            allowedHosts: [],
+            allowedPorts: [],
+            allowedProtocols: ["https"],
+            allowLocalhost: false,
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowShellExecution: true,
+            allowedCommands: ["echo"],
+            allowedBinaries: ["echo"],
+            forbiddenPatterns: [],
+            allowEnvPassthrough: [],
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 4,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 30000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
@@ -133,7 +222,7 @@ describe("CandidateValidationService (End-to-End Candidate Validation)", () => {
           sourceCode: CMD_TOOL_SOURCE,
           requiredCapabilities: cmdManifest.capabilities,
         },
-        { skipLlmTestSynthesis: true }
+        { skipLlmTestSynthesis: true },
       );
       expect(cmdResult.status).toBe("pass");
 
@@ -147,11 +236,43 @@ describe("CandidateValidationService (End-to-End Candidate Validation)", () => {
           required: ["secretName"],
         },
         capabilities: {
-          fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-          net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-          command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-          secrets: { allowedSecretNames: ["API_KEY"], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+          fs: {
+            readPaths: [],
+            writePaths: [],
+            allowWorkspaceRoot: false,
+            allowTemp: false,
+            denyPaths: [],
+            maxFileSizeBytes: 10485760,
+          },
+          net: {
+            allowOutbound: false,
+            allowedDomains: [],
+            allowedHosts: [],
+            allowedPorts: [],
+            allowedProtocols: ["https"],
+            allowLocalhost: false,
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowShellExecution: false,
+            allowedCommands: [],
+            allowedBinaries: [],
+            forbiddenPatterns: [],
+            allowEnvPassthrough: [],
+          },
+          secrets: {
+            allowedSecretNames: ["API_KEY"],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 4,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 30000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
@@ -162,7 +283,7 @@ describe("CandidateValidationService (End-to-End Candidate Validation)", () => {
           sourceCode: SECRET_TOOL_SOURCE,
           requiredCapabilities: secManifest.capabilities,
         },
-        { skipLlmTestSynthesis: true }
+        { skipLlmTestSynthesis: true },
       );
       expect(secResult.status).toBe("pass");
     });
@@ -193,11 +314,43 @@ describe("CandidateValidationService (End-to-End Candidate Validation)", () => {
       const manifest = createMockManifest({
         name: "file_tool_without_caps",
         capabilities: {
-          fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-          net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-          command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-          secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-          limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+          fs: {
+            readPaths: [],
+            writePaths: [],
+            allowWorkspaceRoot: false,
+            allowTemp: false,
+            denyPaths: [],
+            maxFileSizeBytes: 10485760,
+          },
+          net: {
+            allowOutbound: false,
+            allowedDomains: [],
+            allowedHosts: [],
+            allowedPorts: [],
+            allowedProtocols: ["https"],
+            allowLocalhost: false,
+            denyPrivateRanges: true,
+          },
+          command: {
+            allowShellExecution: false,
+            allowedCommands: [],
+            allowedBinaries: [],
+            forbiddenPatterns: [],
+            allowEnvPassthrough: [],
+          },
+          secrets: {
+            allowedSecretNames: [],
+            allowedPrefixes: [],
+            denyDirectRead: true,
+            injectAsEnv: true,
+          },
+          limits: {
+            maxConcurrentExecutions: 4,
+            maxCpuUsagePercent: 100,
+            maxMemoryMb: 128,
+            maxExecutionTimeMs: 30000,
+            maxOutputSizeBytes: 1048576,
+          },
         },
       });
 
@@ -213,7 +366,9 @@ describe("CandidateValidationService (End-to-End Candidate Validation)", () => {
       expect(result.repairFeedback).toBeDefined();
       expect(result.repairFeedback?.canRepair).toBe(true);
       expect(result.repairFeedback?.recommendedChanges.capabilities?.fs).toBeDefined();
-      expect(result.repairFeedback?.recommendedChanges.capabilities?.fs?.allowWorkspaceRoot).toBe(true);
+      expect(result.repairFeedback?.recommendedChanges.capabilities?.fs?.allowWorkspaceRoot).toBe(
+        true,
+      );
     });
   });
 
@@ -269,7 +424,7 @@ describe("CandidateValidationService (End-to-End Candidate Validation)", () => {
           manifest,
           sourceCode: failingToolSource,
         },
-        { skipLlmTestSynthesis: true }
+        { skipLlmTestSynthesis: true },
       );
 
       expect(result.status).toBe("repairable_fail");

@@ -258,7 +258,9 @@ export function validateCompatibilityManifest(manifest: unknown): {
   if (result.success) {
     return { valid: true, manifest: result.data };
   }
-  const errors = (result.error as z.ZodError).issues.map((i: z.ZodIssue) => `${i.path.join(".")}: ${i.message}`);
+  const errors = (result.error as z.ZodError).issues.map(
+    (i: z.ZodIssue) => `${i.path.join(".")}: ${i.message}`,
+  );
   return { valid: false, errors };
 }
 

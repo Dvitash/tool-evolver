@@ -1,4 +1,4 @@
-import { z } from "zod";
+import type { z } from "zod";
 
 /**
  * Error thrown when structured output validation fails after all repair attempts are exhausted.

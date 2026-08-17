@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { RolloutWindowMaterializer } from "../../src/analytics/materializer.js";
 import { MetricsRepository } from "../../src/analytics/repositories/metrics-repository.js";
 import { MemoryDatabasePool } from "../../src/db/client.js";
@@ -41,8 +41,7 @@ describe("RolloutWindowMaterializer: Protected Metric Windows for TE-037", () =>
   it("should compute accurate rates, percentiles, and confidence from telemetry events", async () => {
     // Insert 20 telemetry events (18 success, 2 failures, varying latencies, 3 devices)
     const latencies = [
-      50, 55, 60, 65, 70, 75, 80, 85, 90, 95,
-      100, 105, 110, 115, 120, 130, 140, 150, 200, 500,
+      50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 130, 140, 150, 200, 500,
     ];
 
     for (let i = 0; i < 20; i++) {

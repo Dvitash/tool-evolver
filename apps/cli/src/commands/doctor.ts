@@ -36,7 +36,16 @@ export interface DoctorCommandFlags {
 export interface DoctorDiagnosticItem {
   id: string;
   name: string;
-  category: "platform" | "filesystem" | "service" | "ipc" | "database" | "gateway" | "harness" | "auth" | "runtime";
+  category:
+    | "platform"
+    | "filesystem"
+    | "service"
+    | "ipc"
+    | "database"
+    | "gateway"
+    | "harness"
+    | "auth"
+    | "runtime";
   status: "pass" | "warn" | "fail";
   message: string;
   remediation?: string;
@@ -284,7 +293,10 @@ export async function runDiagnostics(options: {
     fsBridge.readFile(path.join(customHome, ".omp", "config.json")),
   ]);
 
-  if (claudeContent && (claudeContent.includes("tool-evolver") || claudeContent.includes("toolevolver"))) {
+  if (
+    claudeContent &&
+    (claudeContent.includes("tool-evolver") || claudeContent.includes("toolevolver"))
+  ) {
     items.push({
       id: "harness_claude-code",
       name: "Harness MCP Integration (Claude Code)",
@@ -294,7 +306,10 @@ export async function runDiagnostics(options: {
       fixable: true,
     });
   }
-  if (codexContent && (codexContent.includes("tool-evolver") || codexContent.includes("toolevolver"))) {
+  if (
+    codexContent &&
+    (codexContent.includes("tool-evolver") || codexContent.includes("toolevolver"))
+  ) {
     items.push({
       id: "harness_codex-cli",
       name: "Harness MCP Integration (Codex CLI)",
@@ -394,7 +409,9 @@ export async function repairState(options: {
       autoStart: true,
     });
     if (installResult.success) {
-      actions.push(`Installed user background service (${serviceManager.platform}): ${installResult.serviceName}`);
+      actions.push(
+        `Installed user background service (${serviceManager.platform}): ${installResult.serviceName}`,
+      );
     }
   } else if (!svcStatus.active) {
     try {
@@ -542,9 +559,7 @@ export async function doctorCommand(
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (flags.json) {
-      process.stdout.write(
-        `${JSON.stringify({ error: msg, success: false }, null, 2)}\n`,
-      );
+      process.stdout.write(`${JSON.stringify({ error: msg, success: false }, null, 2)}\n`);
     } else {
       process.stderr.write(`\nDoctor failed: ${msg}\n`);
     }

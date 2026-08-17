@@ -38,7 +38,7 @@ export class SecretManager {
   async addSecret(
     name: string,
     value: string,
-    options: SetSecretOptions = {}
+    options: SetSecretOptions = {},
   ): Promise<SecretMetadata> {
     if (!name || typeof name !== "string" || name.trim().length === 0) {
       throw new Error("Secret name must be a non-empty string");
@@ -59,7 +59,7 @@ export class SecretManager {
   async rotateSecret(
     name: string,
     newValue: string,
-    workspaceId?: string
+    workspaceId?: string,
   ): Promise<SecretMetadata> {
     if (!name || typeof name !== "string" || name.trim().length === 0) {
       throw new Error("Secret name must be a non-empty string");
@@ -126,7 +126,7 @@ export class SecretManager {
   async getSecretForMediation(
     nameOrAlias: string,
     mode: MediationMode,
-    workspaceId?: string
+    workspaceId?: string,
   ): Promise<string> {
     const meta = await this.store.getMetadata(nameOrAlias);
     if (!meta) {
@@ -134,13 +134,15 @@ export class SecretManager {
     }
 
     if (workspaceId && meta.workspaceId && meta.workspaceId !== workspaceId) {
-      throw new Error(`Secret '${nameOrAlias}' belongs to workspace '${meta.workspaceId}', not '${workspaceId}'`);
+      throw new Error(
+        `Secret '${nameOrAlias}' belongs to workspace '${meta.workspaceId}', not '${workspaceId}'`,
+      );
     }
 
     if (meta.allowedMediationModes && meta.allowedMediationModes.length > 0) {
       if (!meta.allowedMediationModes.includes(mode)) {
         throw new Error(
-          `Mediation mode '${mode}' is not permitted for secret '${nameOrAlias}'. Allowed: ${meta.allowedMediationModes.join(", ")}`
+          `Mediation mode '${mode}' is not permitted for secret '${nameOrAlias}'. Allowed: ${meta.allowedMediationModes.join(", ")}`,
         );
       }
     }

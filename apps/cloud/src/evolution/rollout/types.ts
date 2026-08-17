@@ -1,10 +1,10 @@
-import { z } from "zod";
 import {
   ISOTimestampSchema,
   IdentifierSchema,
   SchemaVersionSchema,
   Sha256DigestSchema,
 } from "@tool-evolver/contracts";
+import { z } from "zod";
 
 /**
  * Rollout lifecycle states.
@@ -44,11 +44,7 @@ export const RolloutRiskTierSchema = z.enum([
   "critical",
 ]);
 
-export type RolloutRiskTier =
-  | "tier1_low"
-  | "tier2_medium"
-  | "tier3_high"
-  | "critical";
+export type RolloutRiskTier = "tier1_low" | "tier2_medium" | "tier3_high" | "critical";
 
 /**
  * Latency tolerance thresholds for canary evaluation.
@@ -494,14 +490,7 @@ export const DeploymentCommandSchema = z.object({
   deviceId: z.string().optional(),
   toolId: IdentifierSchema,
   targetVersion: SchemaVersionSchema,
-  action: z.enum([
-    "install_canary",
-    "activate",
-    "promote",
-    "suspend",
-    "rollback",
-    "deactivate",
-  ]),
+  action: z.enum(["install_canary", "activate", "promote", "suspend", "rollback", "deactivate"]),
   canaryTrafficPercentage: z.number().min(0).max(100),
   artifactDigest: Sha256DigestSchema,
   manifestDigest: Sha256DigestSchema,
@@ -516,13 +505,7 @@ export interface DeploymentCommand {
   deviceId?: string;
   toolId: string;
   targetVersion: string;
-  action:
-    | "install_canary"
-    | "activate"
-    | "promote"
-    | "suspend"
-    | "rollback"
-    | "deactivate";
+  action: "install_canary" | "activate" | "promote" | "suspend" | "rollback" | "deactivate";
   canaryTrafficPercentage: number;
   artifactDigest: string;
   manifestDigest: string;

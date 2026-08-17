@@ -1,15 +1,15 @@
-import { z } from "zod";
 import {
   ISOTimestampSchema,
   IdentifierSchema,
-  SchemaVersionSchema,
   type InvocationRecord,
+  SchemaVersionSchema,
 } from "@tool-evolver/contracts";
 import type {
-  TelemetryMetric,
   TelemetryBatchRequest,
   TelemetryBatchResponse,
+  TelemetryMetric,
 } from "@tool-evolver/protocol";
+import { z } from "zod";
 import type { CanaryMetricsWindow } from "../evolution/rollout/types.js";
 
 /**

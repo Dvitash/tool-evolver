@@ -1,6 +1,7 @@
 import type { SecretCapability } from "@tool-evolver/contracts";
 import type { SecretManager } from "@tool-evolver/crypto";
-import { BrokerAuditEmitter, defaultBrokerAuditEmitter } from "./audit.js";
+import type { BrokerRequestHandlerFn } from "../worker/sdk.js";
+import { type BrokerAuditEmitter, defaultBrokerAuditEmitter } from "./audit.js";
 import {
   type BaseCapabilityBrokerOptions,
   type BrokerContext,
@@ -10,7 +11,6 @@ import { CommandBroker } from "./cmd-broker.js";
 import { FilesystemBroker } from "./fs-broker.js";
 import { NetworkBroker } from "./net-broker.js";
 import { SecretBroker } from "./secret-broker.js";
-import type { BrokerRequestHandlerFn } from "../worker/sdk.js";
 
 export interface CapabilityBrokerManagerOptions extends BaseCapabilityBrokerOptions {
   fsBroker?: FilesystemBroker;
@@ -63,7 +63,7 @@ export class CapabilityBrokerManager {
     service: "fs" | "net" | "cmd" | "secret",
     action: string,
     payload: Record<string, unknown>,
-    context: BrokerContext
+    context: BrokerContext,
   ): Promise<unknown> {
     switch (service) {
       case "fs":
@@ -77,7 +77,7 @@ export class CapabilityBrokerManager {
       default:
         throw new BrokerSecurityError(
           "OPERATION_NOT_PERMITTED",
-          `Unsupported broker service: '${service}'`
+          `Unsupported broker service: '${service}'`,
         );
     }
   }
@@ -86,8 +86,7 @@ export class CapabilityBrokerManager {
    * Creates a bound request handler function suitable for SDK clients or worker processes.
    */
   createRequestHandler(context: BrokerContext): BrokerRequestHandlerFn {
-    return (service, action, payload) =>
-      this.handleRequest(service, action, payload, context);
+    return (service, action, payload) => this.handleRequest(service, action, payload, context);
   }
 
   /**
@@ -103,7 +102,7 @@ export class CapabilityBrokerManager {
   private async handleFsRequest(
     action: string,
     payload: Record<string, unknown>,
-    context: BrokerContext
+    context: BrokerContext,
   ): Promise<unknown> {
     switch (action) {
       case "readFile":
@@ -112,7 +111,7 @@ export class CapabilityBrokerManager {
             path: String(payload.path ?? ""),
             encoding: payload.encoding as "utf-8" | "base64" | "buffer" | undefined,
           },
-          context
+          context,
         );
       case "writeFile":
         return this.fs.writeFile(
@@ -122,7 +121,7 @@ export class CapabilityBrokerManager {
             encoding: payload.encoding as "utf-8" | "base64" | undefined,
             atomic: payload.atomic as boolean | undefined,
           },
-          context
+          context,
         );
       case "appendFile":
         return this.fs.appendFile(
@@ -131,7 +130,7 @@ export class CapabilityBrokerManager {
             content: payload.content as string | Uint8Array,
             encoding: payload.encoding as "utf-8" | "base64" | undefined,
           },
-          context
+          context,
         );
       case "rename":
         return this.fs.rename(
@@ -139,7 +138,7 @@ export class CapabilityBrokerManager {
             oldPath: String(payload.oldPath ?? ""),
             newPath: String(payload.newPath ?? ""),
           },
-          context
+          context,
         );
       case "delete":
       case "removeFile":
@@ -148,7 +147,7 @@ export class CapabilityBrokerManager {
             path: String(payload.path ?? ""),
             recursive: payload.recursive as boolean | undefined,
           },
-          context
+          context,
         );
       case "createDirectory":
       case "mkdir":
@@ -157,7 +156,7 @@ export class CapabilityBrokerManager {
             path: String(payload.path ?? ""),
             recursive: payload.recursive as boolean | undefined,
           },
-          context
+          context,
         );
       case "listDirectory":
       case "listDir":
@@ -166,26 +165,26 @@ export class CapabilityBrokerManager {
             path: payload.path !== undefined ? String(payload.path) : undefined,
             recursive: payload.recursive as boolean | undefined,
           },
-          context
+          context,
         );
       case "exists":
         return this.fs.exists(
           {
             path: String(payload.path ?? ""),
           },
-          context
+          context,
         );
       case "stat":
         return this.fs.stat(
           {
             path: String(payload.path ?? ""),
           },
-          context
+          context,
         );
       default:
         throw new BrokerSecurityError(
           "OPERATION_NOT_PERMITTED",
-          `Unsupported filesystem broker action: '${action}'`
+          `Unsupported filesystem broker action: '${action}'`,
         );
     }
   }
@@ -193,7 +192,7 @@ export class CapabilityBrokerManager {
   private async handleNetRequest(
     action: string,
     payload: Record<string, unknown>,
-    context: BrokerContext
+    context: BrokerContext,
   ): Promise<unknown> {
     switch (action) {
       case "fetch": {
@@ -217,13 +216,13 @@ export class CapabilityBrokerManager {
             redirect: payload.redirect as "follow" | "error" | "manual" | undefined,
             maxRedirects: payload.maxRedirects as number | undefined,
           },
-          context
+          context,
         );
       }
       default:
         throw new BrokerSecurityError(
           "OPERATION_NOT_PERMITTED",
-          `Unsupported network broker action: '${action}'`
+          `Unsupported network broker action: '${action}'`,
         );
     }
   }
@@ -231,7 +230,7 @@ export class CapabilityBrokerManager {
   private async handleCmdRequest(
     action: string,
     payload: Record<string, unknown>,
-    context: BrokerContext
+    context: BrokerContext,
   ): Promise<unknown> {
     switch (action) {
       case "execute":
@@ -260,13 +259,13 @@ export class CapabilityBrokerManager {
             timeoutMs: payload.timeoutMs as number | undefined,
             maxOutputSizeBytes: payload.maxOutputSizeBytes as number | undefined,
           },
-          context
+          context,
         );
       }
       default:
         throw new BrokerSecurityError(
           "OPERATION_NOT_PERMITTED",
-          `Unsupported command broker action: '${action}'`
+          `Unsupported command broker action: '${action}'`,
         );
     }
   }
@@ -274,7 +273,7 @@ export class CapabilityBrokerManager {
   private async handleSecretRequest(
     action: string,
     payload: Record<string, unknown>,
-    context: BrokerContext
+    context: BrokerContext,
   ): Promise<unknown> {
     return this.secret.handleRequest(action, payload, context);
   }

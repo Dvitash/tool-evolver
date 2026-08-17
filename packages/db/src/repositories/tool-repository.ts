@@ -319,10 +319,9 @@ export class ToolRepository {
       timestamp: string;
       tools_json: string;
       digest: string;
-    }>(
-      "SELECT * FROM catalog_snapshots WHERE workspace_id = ? ORDER BY timestamp DESC LIMIT 1;",
-      [workspaceId],
-    );
+    }>("SELECT * FROM catalog_snapshots WHERE workspace_id = ? ORDER BY timestamp DESC LIMIT 1;", [
+      workspaceId,
+    ]);
 
     if (!row) {
       return null;
@@ -378,7 +377,18 @@ export class ToolRepository {
       workspace_id: string;
       tool_id: string;
       tool_version: string;
-      state: "drafted" | "validating" | "rejected" | "replaying" | "eligible" | "canary" | "promoted" | "suspended" | "rolling_back" | "rolled_back" | "retired";
+      state:
+        | "drafted"
+        | "validating"
+        | "rejected"
+        | "replaying"
+        | "eligible"
+        | "canary"
+        | "promoted"
+        | "suspended"
+        | "rolling_back"
+        | "rolled_back"
+        | "retired";
       canary_config_json: string | null;
       history_json: string;
       active_traffic_percentage: number;
@@ -422,7 +432,18 @@ export class ToolRepository {
       workspace_id: string;
       tool_id: string;
       tool_version: string;
-      state: "drafted" | "validating" | "rejected" | "replaying" | "eligible" | "canary" | "promoted" | "suspended" | "rolling_back" | "rolled_back" | "retired";
+      state:
+        | "drafted"
+        | "validating"
+        | "rejected"
+        | "replaying"
+        | "eligible"
+        | "canary"
+        | "promoted"
+        | "suspended"
+        | "rolling_back"
+        | "rolled_back"
+        | "retired";
       canary_config_json: string | null;
       history_json: string;
       active_traffic_percentage: number;
@@ -480,7 +501,18 @@ export class ToolRepository {
       workspace_id: string;
       tool_id: string;
       tool_version: string;
-      state: "drafted" | "validating" | "rejected" | "replaying" | "eligible" | "canary" | "promoted" | "suspended" | "rolling_back" | "rolled_back" | "retired";
+      state:
+        | "drafted"
+        | "validating"
+        | "rejected"
+        | "replaying"
+        | "eligible"
+        | "canary"
+        | "promoted"
+        | "suspended"
+        | "rolling_back"
+        | "rolled_back"
+        | "retired";
       canary_config_json: string | null;
       history_json: string;
       active_traffic_percentage: number;

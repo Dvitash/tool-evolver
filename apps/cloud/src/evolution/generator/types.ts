@@ -1,12 +1,12 @@
 import {
   CandidateTriggerReason,
-  CapabilityEnvelope,
-  CapabilityManifest,
-  EvolutionCandidate,
-  ToolManifest,
-  ToolParameterSchema,
-  ToolOutputSchema,
-  ToolRuntimeRequirement,
+  type CapabilityEnvelope,
+  type CapabilityManifest,
+  type EvolutionCandidate,
+  type ToolManifest,
+  type ToolOutputSchema,
+  type ToolParameterSchema,
+  type ToolRuntimeRequirement,
 } from "@tool-evolver/contracts";
 import { z } from "zod";
 

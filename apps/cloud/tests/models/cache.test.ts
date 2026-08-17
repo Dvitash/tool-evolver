@@ -146,7 +146,10 @@ describe("Deterministic Response Cache & Tenant Isolation", () => {
     };
 
     await cache.set("key-1", "tenant-1", { output: { a: 1 }, provenance: fakeProv });
-    await cache.set("key-2", "tenant-2", { output: { b: 2 }, provenance: { ...fakeProv, tenantId: "tenant-2" } });
+    await cache.set("key-2", "tenant-2", {
+      output: { b: 2 },
+      provenance: { ...fakeProv, tenantId: "tenant-2" },
+    });
 
     expect(await cache.get("key-1", "tenant-1")).not.toBeNull();
     expect(await cache.get("key-2", "tenant-2")).not.toBeNull();

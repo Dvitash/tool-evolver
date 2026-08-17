@@ -1,33 +1,30 @@
 import { randomUUID } from "node:crypto";
 import type { DatabasePool } from "../../db/client.js";
-import { OutboxRepository, type OutboxPublisher } from "../../db/outbox.js";
-import type { TenantContext } from "../../tenant.js";
+import { type OutboxPublisher, OutboxRepository } from "../../db/outbox.js";
 import type { CloudCatalogService } from "../../mcp/catalog-service.js";
+import type { TenantContext } from "../../tenant.js";
 import type { ToolRegistryRepository } from "../artifacts/repositories/tool-registry-repository.js";
-import {
-  type AssignmentResolutionContext,
-  RolloutAssignmentRouter,
-} from "./assignment.js";
+import { type AssignmentResolutionContext, RolloutAssignmentRouter } from "./assignment.js";
 import { RolloutEvaluator } from "./evaluator.js";
 import { RolloutPolicyRegistry } from "./policy.js";
 import { RolloutRepository } from "./repositories/rollout-repository.js";
 import {
   type CanaryMetricsWindow,
   type DeploymentCommand,
+  RolloutCooldownActiveError,
   type RolloutDecision,
   type RolloutEntity,
   type RolloutFilter,
   type RolloutIncidentRecord,
+  RolloutNotFoundError,
   type RolloutOverrideRecord,
+  RolloutPinnedVersionConflictError,
   type RolloutPolicy,
   type RolloutRiskTier,
   type RolloutSessionAssignment,
   type RolloutState,
-  type RolloutTelemetryEvent,
-  RolloutCooldownActiveError,
-  RolloutNotFoundError,
-  RolloutPinnedVersionConflictError,
   RolloutStateTransitionError,
+  type RolloutTelemetryEvent,
   RolloutToolDisabledError,
 } from "./types.js";
 
@@ -78,14 +75,11 @@ export class RolloutController {
     private pool: DatabasePool,
     options: RolloutControllerOptions = {},
   ) {
-    this.rolloutRepo =
-      options.rolloutRepo ?? new RolloutRepository(this.pool);
-    this.policyRegistry =
-      options.policyRegistry ?? new RolloutPolicyRegistry();
+    this.rolloutRepo = options.rolloutRepo ?? new RolloutRepository(this.pool);
+    this.policyRegistry = options.policyRegistry ?? new RolloutPolicyRegistry();
     this.evaluator = options.evaluator ?? new RolloutEvaluator();
     this.assignmentRouter =
-      options.assignmentRouter ??
-      new RolloutAssignmentRouter(this.rolloutRepo);
+      options.assignmentRouter ?? new RolloutAssignmentRouter(this.rolloutRepo);
     this.toolRegistryRepo = options.toolRegistryRepo;
     this.outboxPublisher = options.outboxPublisher;
     this.catalogService = options.catalogService;
@@ -126,10 +120,7 @@ export class RolloutController {
     }
 
     // 2. Enforce User Configuration Overrides
-    const override = await this.rolloutRepo.getOverride(
-      workspaceId,
-      params.toolId,
-    );
+    const override = await this.rolloutRepo.getOverride(workspaceId, params.toolId);
     if (override) {
       if (override.overrideType === "disabled") {
         throw new RolloutToolDisabledError(params.toolId, workspaceId);
@@ -156,9 +147,7 @@ export class RolloutController {
       }
       policy = found;
     } else {
-      policy = this.policyRegistry.getPolicyForRiskTier(
-        params.riskTier ?? "tier1_low",
-      );
+      policy = this.policyRegistry.getPolicyForRiskTier(params.riskTier ?? "tier1_low");
     }
 
     // 4. Discover Previous Known Good Version
@@ -181,8 +170,7 @@ export class RolloutController {
     // 5. Build Initial Rollout Entity
     const rolloutId = randomUUID();
     const canaryPercentage =
-      params.canaryTrafficPercentage ??
-      Math.round(policy.canaryExposureRatio * 100);
+      params.canaryTrafficPercentage ?? Math.round(policy.canaryExposureRatio * 100);
 
     const rollout: RolloutEntity = {
       id: rolloutId,
@@ -257,9 +245,7 @@ export class RolloutController {
    * Fast-path: If the event contains a hard security/quarantine/breach signal,
    * an instant automatic rollback is triggered immediately!
    */
-  async recordTelemetry(
-    event: RolloutTelemetryEvent,
-  ): Promise<RolloutDecision | null> {
+  async recordTelemetry(event: RolloutTelemetryEvent): Promise<RolloutDecision | null> {
     // 1. Persist telemetry event
     await this.rolloutRepo.saveTelemetryEvent(event);
 
@@ -275,9 +261,7 @@ export class RolloutController {
 
     // 3. Update invocation & failure counters
     const newInvocations = activeRollout.invocationsCount + 1;
-    const newFailures = event.success
-      ? activeRollout.failureCount
-      : activeRollout.failureCount + 1;
+    const newFailures = event.success ? activeRollout.failureCount : activeRollout.failureCount + 1;
 
     // 4. Hard Signal Fast Path (Instant Automatic Rollback)
     const isHardSignal =
@@ -336,8 +320,7 @@ export class RolloutController {
             ? [
                 {
                   type: "security_violation",
-                  reason:
-                    event.securityViolationReason ?? "Security violation reported",
+                  reason: event.securityViolationReason ?? "Security violation reported",
                   timestamp: event.timestamp,
                 },
               ]
@@ -406,10 +389,7 @@ export class RolloutController {
       this.policyRegistry.getPolicy(rollout.policyId) ??
       this.policyRegistry.getPolicyForRiskTier(rollout.riskTier);
 
-    const userOverride = await this.rolloutRepo.getOverride(
-      rollout.workspaceId,
-      rollout.toolId,
-    );
+    const userOverride = await this.rolloutRepo.getOverride(rollout.workspaceId, rollout.toolId);
 
     // 2. Compute Metrics Window
     const windowStart =
@@ -443,12 +423,7 @@ export class RolloutController {
     };
 
     if (decision.action === "trigger_rollback") {
-      return this.executeRollback(
-        rollout,
-        decision.reason,
-        decision.triggers,
-        metrics,
-      );
+      return this.executeRollback(rollout, decision.reason, decision.triggers, metrics);
     }
 
     if (decision.action === "promote") {
@@ -538,9 +513,7 @@ export class RolloutController {
       this.policyRegistry.getPolicyForRiskTier(rollout.riskTier);
 
     const targetRollbackVersion = rollout.previousVersion ?? "1.0.0";
-    const cooldownUntil = new Date(
-      Date.now() + policy.cooldownDurationMs,
-    ).toISOString();
+    const cooldownUntil = new Date(Date.now() + policy.cooldownDurationMs).toISOString();
 
     const tenant: TenantContext = {
       accountId: rollout.accountId ?? "acc_default",
@@ -559,7 +532,9 @@ export class RolloutController {
 
     // 2. Record Incident
     const severity = triggers.some((t) =>
-      ["security_violation", "quarantine_signal", "capability_breach", "signature_tamper"].includes(t),
+      ["security_violation", "quarantine_signal", "capability_breach", "signature_tamper"].includes(
+        t,
+      ),
     )
       ? "critical"
       : "high";
@@ -633,18 +608,12 @@ export class RolloutController {
 
     // 5. Invalidate MCP Catalog / Tool Registry Active Version
     if (this.toolRegistryRepo) {
-      await this.toolRegistryRepo.setActiveVersion(
-        tenant,
-        rollout.toolId,
-        targetRollbackVersion,
-      );
+      await this.toolRegistryRepo.setActiveVersion(tenant, rollout.toolId, targetRollbackVersion);
     }
     if (this.catalogService) {
-      await this.catalogService.invalidateWorkspaceCatalog(
-        tenant,
-        "emergency_revocation",
-        [rollout.toolId],
-      );
+      await this.catalogService.invalidateWorkspaceCatalog(tenant, "emergency_revocation", [
+        rollout.toolId,
+      ]);
     }
 
     // 6. Emit Outbox Events
@@ -705,35 +674,24 @@ export class RolloutController {
 
     // 3. Update Tool Registry Active Version
     if (this.toolRegistryRepo) {
-      await this.toolRegistryRepo.setActiveVersion(
-        tenant,
-        rollout.toolId,
-        rollout.targetVersion,
-      );
+      await this.toolRegistryRepo.setActiveVersion(tenant, rollout.toolId, rollout.targetVersion);
     }
 
     // 4. Invalidate MCP Catalog
     if (this.catalogService) {
-      await this.catalogService.invalidateWorkspaceCatalog(
-        tenant,
-        "version_published",
-        [rollout.toolId],
-      );
+      await this.catalogService.invalidateWorkspaceCatalog(tenant, "version_published", [
+        rollout.toolId,
+      ]);
     }
 
     // 5. Supersede older active rollouts for this tool
-    const olderRollouts = await this.rolloutRepo.listRollouts(
-      rollout.workspaceId,
-      {
-        toolId: rollout.toolId,
-      },
-    );
+    const olderRollouts = await this.rolloutRepo.listRollouts(rollout.workspaceId, {
+      toolId: rollout.toolId,
+    });
     for (const older of olderRollouts) {
       if (
         older.id !== rollout.id &&
-        (older.state === "canary" ||
-          older.state === "observing" ||
-          older.state === "suspended")
+        (older.state === "canary" || older.state === "observing" || older.state === "suspended")
       ) {
         await this.rolloutRepo.updateRollout(older.id, {
           state: "superseded",
@@ -829,8 +787,7 @@ export class RolloutController {
     if (active) {
       if (
         override.overrideType === "disabled" ||
-        (override.overrideType === "pinned" &&
-          override.pinnedVersion !== active.targetVersion)
+        (override.overrideType === "pinned" && override.pinnedVersion !== active.targetVersion)
       ) {
         await this.evaluateRollout(active.id);
       }
@@ -846,10 +803,7 @@ export class RolloutController {
     return this.rolloutRepo.getOverride(tenant.workspaceId, toolId);
   }
 
-  async removeUserOverride(
-    tenant: TenantContext,
-    toolId: string,
-  ): Promise<void> {
+  async removeUserOverride(tenant: TenantContext, toolId: string): Promise<void> {
     await this.rolloutRepo.removeOverride(tenant.workspaceId, toolId);
   }
 
@@ -873,10 +827,7 @@ export class RolloutController {
 
     let userOverride = context.userOverride;
     if (userOverride === undefined) {
-      userOverride = await this.rolloutRepo.getOverride(
-        context.workspaceId,
-        context.toolId,
-      );
+      userOverride = await this.rolloutRepo.getOverride(context.workspaceId, context.toolId);
     }
 
     return this.assignmentRouter.resolveAssignment({
@@ -901,10 +852,7 @@ export class RolloutController {
     return this.rolloutRepo.getActiveRolloutForTool(workspaceId, toolId);
   }
 
-  async listRollouts(
-    workspaceId: string,
-    filter?: RolloutFilter,
-  ): Promise<RolloutEntity[]> {
+  async listRollouts(workspaceId: string, filter?: RolloutFilter): Promise<RolloutEntity[]> {
     return this.rolloutRepo.listRollouts(workspaceId, filter);
   }
 

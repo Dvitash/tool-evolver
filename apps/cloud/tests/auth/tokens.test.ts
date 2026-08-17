@@ -1,14 +1,9 @@
 import { describe, expect, it } from "vitest";
-import {
-  AuthService,
-  createAuthService,
-  signJwt,
-  verifyJwt,
-} from "../../src/auth/index.js";
-import { CloudServer, createCloudServer } from "../../src/server/index.js";
+import { AuthService, createAuthService, signJwt, verifyJwt } from "../../src/auth/index.js";
 import { loadConfig } from "../../src/config.js";
 import { MemoryDatabasePool } from "../../src/db/index.js";
 import { MemoryDurableQueue } from "../../src/queue/index.js";
+import { CloudServer, createCloudServer } from "../../src/server/index.js";
 import { MemoryObjectStore } from "../../src/storage/index.js";
 
 describe("JWT & Token Management Lifecycle", () => {
@@ -41,7 +36,9 @@ describe("JWT & Token Management Lifecycle", () => {
     const token = signJwt(payload, secret);
     const parts = token.split(".");
     // Tamper with payload
-    const tamperedPayload = Buffer.from(JSON.stringify({ ...payload, sub: "usr_attacker" })).toString("base64url");
+    const tamperedPayload = Buffer.from(
+      JSON.stringify({ ...payload, sub: "usr_attacker" }),
+    ).toString("base64url");
     const tamperedToken = `${parts[0]}.${tamperedPayload}.${parts[2]}`;
 
     const result = verifyJwt(tamperedToken, secret);

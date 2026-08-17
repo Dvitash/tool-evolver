@@ -8,7 +8,6 @@ import {
 import { MemoryDatabasePool } from "../../../src/db/client.js";
 import { runMigrations } from "../../../src/db/migrations.js";
 import { OutboxPublisher } from "../../../src/db/outbox.js";
-import { MemoryObjectStore } from "../../../src/storage/object-store.js";
 import { ArtifactBuilder } from "../../../src/evolution/artifacts/builder.js";
 import {
   SigningKeyRepository,
@@ -19,17 +18,15 @@ import { ArtifactSigner } from "../../../src/evolution/artifacts/signer.js";
 import { SemanticVersionClassifier } from "../../../src/evolution/artifacts/versioning.js";
 import { RolloutAssignmentRouter } from "../../../src/evolution/rollout/assignment.js";
 import {
-  RolloutController,
   type CreateRolloutParams,
+  RolloutController,
 } from "../../../src/evolution/rollout/controller.js";
 import { RolloutEvaluator } from "../../../src/evolution/rollout/evaluator.js";
 import { RolloutPolicyRegistry } from "../../../src/evolution/rollout/policy.js";
 import { RolloutRepository } from "../../../src/evolution/rollout/repositories/rollout-repository.js";
-import {
-  type RolloutEntity,
-  type RolloutTelemetryEvent,
-} from "../../../src/evolution/rollout/types.js";
+import type { RolloutEntity, RolloutTelemetryEvent } from "../../../src/evolution/rollout/types.js";
 import { CloudCatalogService } from "../../../src/mcp/catalog-service.js";
+import { MemoryObjectStore } from "../../../src/storage/object-store.js";
 import type { TenantContext } from "../../../src/tenant.js";
 
 export const TEST_WORKSPACE_ID = "ws_rollout_test_001";
@@ -201,9 +198,7 @@ export function createMockTelemetryBatch(
 
   for (let i = 0; i < count; i++) {
     const isFailure = i < failureCount;
-    const duration = options.latencySpike
-      ? baseDuration + i * 200
-      : baseDuration + (i % 10) * 5;
+    const duration = options.latencySpike ? baseDuration + i * 200 : baseDuration + (i % 10) * 5;
 
     events.push({
       id: randomUUID(),
@@ -221,9 +216,7 @@ export function createMockTelemetryBatch(
         ? "Attempted path traversal to /etc/shadow"
         : undefined,
       quarantineSignal: Boolean(options.quarantineSignal && i === 0),
-      quarantineReason: options.quarantineSignal
-        ? "signature_mismatch"
-        : undefined,
+      quarantineReason: options.quarantineSignal ? "signature_mismatch" : undefined,
       capabilityBreach: Boolean(options.capabilityBreach && i === 0),
       signatureValid: options.signatureValid ?? true,
       timestamp: new Date().toISOString(),

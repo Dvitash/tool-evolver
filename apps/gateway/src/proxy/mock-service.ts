@@ -145,7 +145,10 @@ export class MockCloudMcpService {
   addTool(
     manifest: ToolManifest,
     deployment?: DeploymentRecord,
-    handler?: (params: Record<string, unknown>, context: CloudInvocationContext) => Promise<CallToolResult>
+    handler?: (
+      params: Record<string, unknown>,
+      context: CloudInvocationContext,
+    ) => Promise<CallToolResult>,
   ): void {
     const validated = ToolManifestSchema.parse(manifest);
     this.tools.set(validated.id, validated);
@@ -191,8 +194,12 @@ export class MockCloudMcpService {
 
   emitInvalidation(
     toolIds: string[],
-    reason: "version_published" | "tool_deprecated" | "emergency_revocation" | "config_changed" = "version_published",
-    workspaceId = this.workspaceId
+    reason:
+      | "version_published"
+      | "tool_deprecated"
+      | "emergency_revocation"
+      | "config_changed" = "version_published",
+    workspaceId = this.workspaceId,
   ): void {
     const event: StreamCatalogInvalidation = {
       type: "server.catalog_invalidation",
@@ -215,12 +222,14 @@ export class MockCloudMcpService {
 
   async handleCatalogSnapshot(
     request: CatalogSnapshotRequest,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<CatalogSnapshotResponse> {
     await this.applyFaultInjections(signal);
 
     const toolsList = Array.from(this.tools.values()).map((t) => ToolManifestSchema.parse(t));
-    const deploymentsList = Array.from(this.deployments.values()).map((d) => DeploymentRecordSchema.parse(d));
+    const deploymentsList = Array.from(this.deployments.values()).map((d) =>
+      DeploymentRecordSchema.parse(d),
+    );
 
     const checksum = hashCanonicalContent({
       tools: toolsList,
@@ -239,7 +248,7 @@ export class MockCloudMcpService {
   async handleToolInvocation(
     toolIdOrName: string,
     params: Record<string, unknown>,
-    context: CloudInvocationContext
+    context: CloudInvocationContext,
   ): Promise<CallToolResult> {
     await this.applyFaultInjections(context.signal);
 
@@ -247,14 +256,18 @@ export class MockCloudMcpService {
       this.tools.get(toolIdOrName) ||
       Array.from(this.tools.values()).find((t) => t.name === toolIdOrName);
     if (!tool) {
-      throw new ProtocolError("not_found", `Tool '${toolIdOrName}' not found in cloud catalog`, { status: 404 });
+      throw new ProtocolError("not_found", `Tool '${toolIdOrName}' not found in cloud catalog`, {
+        status: 404,
+      });
     }
 
     if (this.faultConfig.disconnectMidResult) {
       if (context.onProgress) {
         context.onProgress(50, 100);
       }
-      throw new ProtocolError("terminal", "Connection abruptly closed mid-stream by cloud peer", { status: 502 });
+      throw new ProtocolError("terminal", "Connection abruptly closed mid-stream by cloud peer", {
+        status: 502,
+      });
     }
 
     const handler = this.toolHandlers.get(tool.id) || this.toolHandlers.get(tool.name);
@@ -294,13 +307,17 @@ export class MockCloudMcpService {
     }
 
     if (this.faultConfig.unauthorized) {
-      throw new ProtocolError("unauthorized", "Unauthorized: Cloud device credentials invalid or expired", { status: 401 });
+      throw new ProtocolError(
+        "unauthorized",
+        "Unauthorized: Cloud device credentials invalid or expired",
+        { status: 401 },
+      );
     }
 
     if (this.faultConfig.upgradeRequired) {
       throw new UpgradeRequiredError(
         "Protocol upgrade required",
-        this.faultConfig.upgradeRequired.minSupportedVersion
+        this.faultConfig.upgradeRequired.minSupportedVersion,
       );
     }
 

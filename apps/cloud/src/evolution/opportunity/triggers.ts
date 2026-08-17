@@ -1,12 +1,12 @@
-import { CandidateTriggerReason } from "@tool-evolver/contracts";
+import type { CandidateTriggerReason } from "@tool-evolver/contracts";
 import {
   DEFAULT_WASTE_THRESHOLDS,
-  Episode,
-  TriggerOptions,
-  TriggerResult,
+  type Episode,
+  type TriggerOptions,
+  type TriggerResult,
   TriggerType,
-  WasteThresholds,
-  WorkflowCluster,
+  type WasteThresholds,
+  type WorkflowCluster,
 } from "./types.js";
 
 const DEFAULT_MIN_OCCURRENCES_NORMAL = 3;
@@ -30,7 +30,8 @@ export class TriggerEvaluator {
    * Evaluates if a workflow cluster meets opportunity trigger criteria.
    */
   evaluateCluster(cluster: WorkflowCluster): TriggerResult {
-    const occurrenceCount = cluster.completedOccurrences > 0 ? cluster.completedOccurrences : cluster.episodeCount;
+    const occurrenceCount =
+      cluster.completedOccurrences > 0 ? cluster.completedOccurrences : cluster.episodeCount;
     const maxEpisodeMetrics = this.getMaxEpisodeMetrics(cluster.episodes);
 
     // 1. Normal Frequency Trigger: >= 3 distinct completed occurrences
@@ -234,7 +235,10 @@ export class TriggerEvaluator {
 /**
  * Convenience function to evaluate triggers for a cluster.
  */
-export function evaluateOpportunityTriggers(cluster: WorkflowCluster, options?: TriggerOptions): TriggerResult {
+export function evaluateOpportunityTriggers(
+  cluster: WorkflowCluster,
+  options?: TriggerOptions,
+): TriggerResult {
   const evaluator = new TriggerEvaluator(options);
   return evaluator.evaluateCluster(cluster);
 }

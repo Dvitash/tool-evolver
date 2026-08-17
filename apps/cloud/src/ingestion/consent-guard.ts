@@ -1,5 +1,5 @@
-import { NormalizedSessionEvent } from "@tool-evolver/contracts";
-import { ConsentManager } from "../auth/consent.js";
+import type { NormalizedSessionEvent } from "@tool-evolver/contracts";
+import type { ConsentManager } from "../auth/consent.js";
 
 /**
  * Custom error thrown when normalized observation consent is missing.
@@ -76,9 +76,9 @@ export class IngestionConsentGuard {
     }
 
     // 2. Check Raw Upload Consent
-    const hasRawConsent = explicitRawConsent ?? (
-      await this.consentManager.hasRawUploadConsent(accountId, workspaceId, deviceId)
-    );
+    const hasRawConsent =
+      explicitRawConsent ??
+      (await this.consentManager.hasRawUploadConsent(accountId, workspaceId, deviceId));
 
     if (hasRawConsent) {
       return; // Raw content is permitted by explicit user consent
@@ -105,7 +105,9 @@ export class IngestionConsentGuard {
       if (event.metadata && typeof event.metadata === "object" && !Array.isArray(event.metadata)) {
         const meta = event.metadata as Record<string, unknown>;
         if (hasLocalOnlyOrRawMarker(meta)) {
-          violations.push(`Event ${eventId} at index ${i} has local-only or raw marker in metadata`);
+          violations.push(
+            `Event ${eventId} at index ${i} has local-only or raw marker in metadata`,
+          );
         }
       }
 

@@ -1,9 +1,6 @@
 import crypto from "node:crypto";
 import { canonicalJson } from "@tool-evolver/contracts";
-import type {
-  BundleSignatureAlgorithm,
-  BundleSignatureData,
-} from "./spec.js";
+import type { BundleSignatureAlgorithm, BundleSignatureData } from "./spec.js";
 
 export type { BundleSignatureAlgorithm, BundleSignatureData };
 

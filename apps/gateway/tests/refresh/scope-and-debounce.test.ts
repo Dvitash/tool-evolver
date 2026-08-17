@@ -178,7 +178,7 @@ describe("CatalogRefreshCoordinator - Scope Targeting and Debouncing", () => {
       supportsListChanged: true,
     });
 
-    let attemptsReceived: unknown[] = [];
+    const attemptsReceived: unknown[] = [];
     const mockGateway: McpGatewayLike = {
       getAllConnections: () => [conn.connection],
       getConnection: () => conn.connection,

@@ -1,4 +1,3 @@
-import { describe, expect, it } from "vitest";
 import type {
   CatalogSnapshot,
   DeploymentRecord,
@@ -31,6 +30,7 @@ import type {
   ObservationBatchResponse,
   StreamMessage,
 } from "@tool-evolver/protocol";
+import { describe, expect, it } from "vitest";
 import {
   type ApiHandlerClient,
   type RegistryAdapter,
@@ -100,13 +100,17 @@ describe("Consumer Test Suites", () => {
   describe("API Handler Suite", () => {
     it("runs successfully against a compliant ApiHandlerClient", async () => {
       const mockClient: ApiHandlerClient = {
-        async registerInstallation(req: InstallationRegisterRequest): Promise<InstallationRegisterResponse> {
+        async registerInstallation(
+          req: InstallationRegisterRequest,
+        ): Promise<InstallationRegisterResponse> {
           return {
             ...validInstallationRegisterResponse,
             installationId: req.installationId,
           };
         },
-        async bootstrapDevice(_req: DeviceAuthBootstrapRequest): Promise<DeviceAuthBootstrapResponse> {
+        async bootstrapDevice(
+          _req: DeviceAuthBootstrapRequest,
+        ): Promise<DeviceAuthBootstrapResponse> {
           return validDeviceAuthBootstrapResponse;
         },
         async pushObservations(req: ObservationBatchRequest): Promise<ObservationBatchResponse> {
@@ -240,7 +244,16 @@ describe("Consumer Test Suites", () => {
           return candidates.get(candidateId) || null;
         },
         async createSnapshot(): Promise<CatalogSnapshot> {
-          const toolSummaries: Record<string, { toolId: string; version: string; manifestDigest: string; scope: "workspace"; status: "active" }> = {};
+          const toolSummaries: Record<
+            string,
+            {
+              toolId: string;
+              version: string;
+              manifestDigest: string;
+              scope: "workspace";
+              status: "active";
+            }
+          > = {};
           for (const t of tools.values()) {
             toolSummaries[t.id] = {
               toolId: t.id,

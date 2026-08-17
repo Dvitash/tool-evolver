@@ -1,5 +1,5 @@
-import { z } from "zod";
 import type { CapabilityManifest, ToolManifest } from "@tool-evolver/contracts";
+import { z } from "zod";
 
 /**
  * Protocol version for daemon-to-worker RPC communications.
@@ -371,7 +371,13 @@ export function createResultMessage(params: {
 
 export function createErrorMessage(params: {
   invocationId?: string;
-  errorType: "validation_error" | "execution_error" | "timeout" | "permission_denied" | "fatal" | "cancelled";
+  errorType:
+    | "validation_error"
+    | "execution_error"
+    | "timeout"
+    | "permission_denied"
+    | "fatal"
+    | "cancelled";
   message: string;
   stack?: string;
   details?: unknown;
@@ -503,7 +509,7 @@ export class WorkerFrameDecoder {
 
       if (Buffer.byteLength(line, "utf-8") > this.maxMessageSize) {
         throw new Error(
-          `Message size exceeds maximum allowed limit (${this.maxMessageSize} bytes)`
+          `Message size exceeds maximum allowed limit (${this.maxMessageSize} bytes)`,
         );
       }
 
@@ -512,7 +518,9 @@ export class WorkerFrameDecoder {
         const validated = WorkerMessageSchema.parse(parsed);
         messages.push(validated);
       } catch (err: unknown) {
-        throw new Error(`Failed to decode worker frame: ${err instanceof Error ? err.message : String(err)}`);
+        throw new Error(
+          `Failed to decode worker frame: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
 
@@ -528,7 +536,7 @@ export class WorkerFrameDecoder {
 
       if (payloadLength > this.maxMessageSize) {
         throw new Error(
-          `Message payload size (${payloadLength} bytes) exceeds limit (${this.maxMessageSize} bytes)`
+          `Message payload size (${payloadLength} bytes) exceeds limit (${this.maxMessageSize} bytes)`,
         );
       }
 
@@ -546,7 +554,9 @@ export class WorkerFrameDecoder {
         const validated = WorkerMessageSchema.parse(parsed);
         messages.push(validated);
       } catch (err: unknown) {
-        throw new Error(`Failed to decode length-prefixed worker frame: ${err instanceof Error ? err.message : String(err)}`);
+        throw new Error(
+          `Failed to decode length-prefixed worker frame: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
 

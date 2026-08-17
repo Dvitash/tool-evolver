@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CandidatePlanner } from "../../../src/evolution/generator/planner.js";
-import { WorkflowStep } from "../../../src/evolution/generator/types.js";
+import type { WorkflowStep } from "../../../src/evolution/generator/types.js";
 import { WorkflowGenerator } from "../../../src/evolution/generator/workflow-generator.js";
 import { createMockOpportunity } from "./helpers.js";
 
@@ -102,7 +102,9 @@ describe("WorkflowGenerator", () => {
     const plan = planner.plan(opp, { targetType: "workflow" });
     const sourceCode = workflowGen.generateWorkflowSource(plan);
 
-    expect(sourceCode).toContain("import { defineTool, type ToolContext } from \"@tool-evolver/runtime\";");
+    expect(sourceCode).toContain(
+      'import { defineTool, type ToolContext } from "@tool-evolver/runtime";',
+    );
     expect(sourceCode).toContain("export const InputSchema =");
     expect(sourceCode).toContain("export const OutputSchema =");
     expect(sourceCode).toContain("export default defineTool<ToolInput, ToolOutput>(");

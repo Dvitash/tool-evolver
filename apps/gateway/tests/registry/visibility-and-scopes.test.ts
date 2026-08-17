@@ -22,11 +22,43 @@ function makeManifest(overrides?: Partial<ToolManifest>): ToolManifest {
       maxOutputSizeBytes: 1048576,
     },
     capabilities: overrides?.capabilities ?? {
-      fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
-      net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https" as const], allowLocalhost: false, denyPrivateRanges: true },
-      command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-      secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-      limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+      fs: {
+        readPaths: [],
+        writePaths: [],
+        allowWorkspaceRoot: true,
+        allowTemp: true,
+        denyPaths: [],
+        maxFileSizeBytes: 10485760,
+      },
+      net: {
+        allowOutbound: false,
+        allowedDomains: [],
+        allowedHosts: [],
+        allowedPorts: [],
+        allowedProtocols: ["https" as const],
+        allowLocalhost: false,
+        denyPrivateRanges: true,
+      },
+      command: {
+        allowShellExecution: false,
+        allowedCommands: [],
+        allowedBinaries: [],
+        forbiddenPatterns: [],
+        allowEnvPassthrough: [],
+      },
+      secrets: {
+        allowedSecretNames: [],
+        allowedPrefixes: [],
+        denyDirectRead: true,
+        injectAsEnv: true,
+      },
+      limits: {
+        maxConcurrentExecutions: 4,
+        maxCpuUsagePercent: 100,
+        maxMemoryMb: 128,
+        maxExecutionTimeMs: 30000,
+        maxOutputSizeBytes: 1048576,
+      },
     },
     limits: overrides?.limits ?? {
       timeoutMs: 30000,
@@ -61,10 +93,10 @@ describe("ToolRegistry - Workspace-Scoped Visibility & Scope Hierarchy", () => {
     const ws1Catalog = await registry.resolveCatalog("ws-1");
     const ws2Catalog = await registry.resolveCatalog("ws-2");
 
-    expect(ws1Catalog.tools["sys_fetch"]).toBeDefined();
-    expect(ws1Catalog.tools["sys_fetch"].version).toBe("1.0.0");
-    expect(ws2Catalog.tools["sys_fetch"]).toBeDefined();
-    expect(ws2Catalog.tools["sys_fetch"].version).toBe("1.0.0");
+    expect(ws1Catalog.tools.sys_fetch).toBeDefined();
+    expect(ws1Catalog.tools.sys_fetch.version).toBe("1.0.0");
+    expect(ws2Catalog.tools.sys_fetch).toBeDefined();
+    expect(ws2Catalog.tools.sys_fetch.version).toBe("1.0.0");
   });
 
   it("isolates workspace-scoped tools to their respective workspace", async () => {
@@ -81,8 +113,8 @@ describe("ToolRegistry - Workspace-Scoped Visibility & Scope Hierarchy", () => {
     const alphaCatalog = await registry.resolveCatalog("ws-alpha");
     const betaCatalog = await registry.resolveCatalog("ws-beta");
 
-    expect(alphaCatalog.tools["tool_editor"]).toBeDefined();
-    expect(betaCatalog.tools["tool_editor"]).toBeUndefined();
+    expect(alphaCatalog.tools.tool_editor).toBeDefined();
+    expect(betaCatalog.tools.tool_editor).toBeUndefined();
   });
 
   it("allows workspace tools to override system tools with same ID", async () => {
@@ -108,8 +140,8 @@ describe("ToolRegistry - Workspace-Scoped Visibility & Scope Hierarchy", () => {
     const customCatalog = await registry.resolveCatalog("ws-custom");
     const defaultCatalog = await registry.resolveCatalog("ws-other");
 
-    expect(customCatalog.tools["tool_search"].version).toBe("2.0.0");
-    expect(defaultCatalog.tools["tool_search"].version).toBe("1.0.0");
+    expect(customCatalog.tools.tool_search.version).toBe("2.0.0");
+    expect(defaultCatalog.tools.tool_search.version).toBe("1.0.0");
   });
 
   it("allows session tools to override workspace tools for a specific session", async () => {
@@ -137,7 +169,7 @@ describe("ToolRegistry - Workspace-Scoped Visibility & Scope Hierarchy", () => {
     const sessionCatalog = await registry.resolveCatalog("ws-main", "sess-canary-42");
     const generalCatalog = await registry.resolveCatalog("ws-main");
 
-    expect(sessionCatalog.tools["tool_runner"].version).toBe("1.1.0-canary");
-    expect(generalCatalog.tools["tool_runner"].version).toBe("1.0.0");
+    expect(sessionCatalog.tools.tool_runner.version).toBe("1.1.0-canary");
+    expect(generalCatalog.tools.tool_runner.version).toBe("1.0.0");
   });
 });

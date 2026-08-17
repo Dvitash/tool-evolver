@@ -38,11 +38,43 @@ function makeCloudManifest(overrides?: Partial<ToolManifest>): ToolManifest {
       maxOutputSizeBytes: 1048576,
     },
     capabilities: overrides?.capabilities ?? {
-      fs: { readPaths: [], writePaths: [], allowWorkspaceRoot: false, allowTemp: false, denyPaths: [], maxFileSizeBytes: 10485760 },
-      net: { allowOutbound: true, allowedDomains: ["api.weather.com"], allowedHosts: [], allowedPorts: [443], allowedProtocols: ["https" as const], allowLocalhost: false, denyPrivateRanges: true },
-      command: { allowShellExecution: false, allowedCommands: [], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: [] },
-      secrets: { allowedSecretNames: ["WEATHER_API_KEY"], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-      limits: { maxConcurrentExecutions: 4, maxCpuUsagePercent: 100, maxMemoryMb: 128, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+      fs: {
+        readPaths: [],
+        writePaths: [],
+        allowWorkspaceRoot: false,
+        allowTemp: false,
+        denyPaths: [],
+        maxFileSizeBytes: 10485760,
+      },
+      net: {
+        allowOutbound: true,
+        allowedDomains: ["api.weather.com"],
+        allowedHosts: [],
+        allowedPorts: [443],
+        allowedProtocols: ["https" as const],
+        allowLocalhost: false,
+        denyPrivateRanges: true,
+      },
+      command: {
+        allowShellExecution: false,
+        allowedCommands: [],
+        allowedBinaries: [],
+        forbiddenPatterns: [],
+        allowEnvPassthrough: [],
+      },
+      secrets: {
+        allowedSecretNames: ["WEATHER_API_KEY"],
+        allowedPrefixes: [],
+        denyDirectRead: true,
+        injectAsEnv: true,
+      },
+      limits: {
+        maxConcurrentExecutions: 4,
+        maxCpuUsagePercent: 100,
+        maxMemoryMb: 128,
+        maxExecutionTimeMs: 30000,
+        maxOutputSizeBytes: 1048576,
+      },
     },
     limits: overrides?.limits ?? {
       timeoutMs: 30000,
@@ -178,7 +210,7 @@ describe("Cloud Catalog Snapshot Ingestion & Validation", () => {
 
     // Verify resolved catalog includes cloud tool
     const catalog = await registry.resolveCatalog(workspaceId);
-    expect(catalog.tools["cloud_search"]).toBeDefined();
-    expect(catalog.tools["cloud_search"].toolId).toBe("cloud_search");
+    expect(catalog.tools.cloud_search).toBeDefined();
+    expect(catalog.tools.cloud_search.toolId).toBe("cloud_search");
   });
 });

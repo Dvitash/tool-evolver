@@ -144,11 +144,10 @@ export class NormalizationDeduplicator {
           event_id: string;
           payload_json: string;
           sequence: number;
-        }>("SELECT event_id, payload_json, sequence FROM normalized_events WHERE event_id = ? OR (session_id = ? AND sequence = ?);", [
-          eventId,
-          sessionId,
-          sequence,
-        ]);
+        }>(
+          "SELECT event_id, payload_json, sequence FROM normalized_events WHERE event_id = ? OR (session_id = ? AND sequence = ?);",
+          [eventId, sessionId, sequence],
+        );
 
         if (existingRow) {
           let existingEvent: NormalizedSessionEvent | null = null;
@@ -158,7 +157,9 @@ export class NormalizationDeduplicator {
             // Unparseable payload in DB
           }
 
-          const existingDigest = existingEvent ? this.computeContentHash(existingEvent) : "unknown_db_digest";
+          const existingDigest = existingEvent
+            ? this.computeContentHash(existingEvent)
+            : "unknown_db_digest";
 
           if (existingRow.event_id === eventId && existingDigest === incomingHash) {
             // Cache it

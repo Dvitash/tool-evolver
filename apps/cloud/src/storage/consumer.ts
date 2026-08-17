@@ -1,8 +1,8 @@
-import { NormalizedSessionEvent } from "@tool-evolver/contracts";
-import { DatabasePool, Queryable } from "../db/client.js";
+import type { NormalizedSessionEvent } from "@tool-evolver/contracts";
+import type { DatabasePool, Queryable } from "../db/client.js";
 import { OutboxRepository } from "../db/outbox.js";
 import type { JobEnvelope } from "../queue/envelope.js";
-import { TenantContext } from "../tenant.js";
+import type { TenantContext } from "../tenant.js";
 import { ObservationRepository } from "./repositories/observation-repository.js";
 import { SessionRepository } from "./repositories/session-repository.js";
 
@@ -95,7 +95,12 @@ export class StoreObservationBatchConsumer {
         // Handle branch forks if any
         for (const evt of events) {
           if (evt.type === "branch_fork") {
-            const forkPayload = evt as unknown as { forkBranchId?: string; parentBranchId?: string; name?: string; description?: string };
+            const forkPayload = evt as unknown as {
+              forkBranchId?: string;
+              parentBranchId?: string;
+              name?: string;
+              description?: string;
+            };
             const branchId = forkPayload.forkBranchId || evt.eventId;
             await this.sessionRepo.createBranch(
               tenant,
@@ -112,11 +117,20 @@ export class StoreObservationBatchConsumer {
         }
 
         // Insert events idempotently
-        const { newlyInserted } = await this.obsRepo.insertEventsBatchWithStatus(tenant, events, txClient);
+        const { newlyInserted } = await this.obsRepo.insertEventsBatchWithStatus(
+          tenant,
+          events,
+          txClient,
+        );
 
         // Materialize session summary updates for newly inserted events
         if (newlyInserted.length > 0) {
-          await this.sessionRepo.recordSessionEventsMaterialized(tenant, sessionId, newlyInserted, txClient);
+          await this.sessionRepo.recordSessionEventsMaterialized(
+            tenant,
+            sessionId,
+            newlyInserted,
+            txClient,
+          );
         }
       }
       // Publish observation-available event to transactional outbox

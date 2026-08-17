@@ -1,5 +1,5 @@
 import { SchemaGenerator } from "./schema-generator.js";
-import { ToolPlan } from "./types.js";
+import type { ToolPlan } from "./types.js";
 import { WorkflowGenerator } from "./workflow-generator.js";
 
 /**
@@ -9,10 +9,7 @@ export class CodeGenerator {
   private readonly schemaGenerator: SchemaGenerator;
   private readonly workflowGenerator: WorkflowGenerator;
 
-  constructor(
-    schemaGenerator?: SchemaGenerator,
-    workflowGenerator?: WorkflowGenerator
-  ) {
+  constructor(schemaGenerator?: SchemaGenerator, workflowGenerator?: WorkflowGenerator) {
     this.schemaGenerator = schemaGenerator ?? new SchemaGenerator();
     this.workflowGenerator = workflowGenerator ?? new WorkflowGenerator(this.schemaGenerator);
   }
@@ -62,7 +59,13 @@ export class CodeGenerator {
       written: true,
       bytesWritten: Buffer.byteLength(content, "utf-8"),
     };`;
-    } else if (action === "cmd.exec" || toolClass === "command" || toolClass === "test_runner" || toolClass === "build_tool" || toolClass === "vcs") {
+    } else if (
+      action === "cmd.exec" ||
+      toolClass === "command" ||
+      toolClass === "test_runner" ||
+      toolClass === "build_tool" ||
+      toolClass === "vcs"
+    ) {
       executionBody = `
     const command = (input as Record<string, unknown>).command as string ?? (input as Record<string, unknown>).cmd as string ?? ${JSON.stringify(step?.inputs.command ?? "echo 'done'")};
     const args = ((input as Record<string, unknown>).args as string[]) ?? [];

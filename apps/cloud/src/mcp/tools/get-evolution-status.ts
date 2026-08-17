@@ -3,17 +3,17 @@
  */
 
 import type { DatabasePool } from "../../db/client.js";
+import type { ToolRegistryRepository } from "../../evolution/artifacts/repositories/tool-registry-repository.js";
+import type { EvidenceRepository } from "../../storage/repositories/evidence-repository.js";
 import type { ObservationRepository } from "../../storage/repositories/observation-repository.js";
 import type { SessionRepository } from "../../storage/repositories/session-repository.js";
-import type { EvidenceRepository } from "../../storage/repositories/evidence-repository.js";
-import type { ToolRegistryRepository } from "../../evolution/artifacts/repositories/tool-registry-repository.js";
+import { McpInvocationError } from "../middleware.js";
 import type {
   CallToolResult,
   CloudMcpInvocationContext,
   CloudMcpToolDefinition,
 } from "../types.js";
 import { MCP_ERROR_CODES } from "../types.js";
-import { McpInvocationError } from "../middleware.js";
 
 /**
  * Options for configuring get_evolution_status tool.
@@ -100,8 +100,7 @@ export function createGetEvolutionStatusTool(
       params: Record<string, unknown>,
       context: CloudMcpInvocationContext,
     ): Promise<CallToolResult> => {
-      const targetWorkspaceId =
-        (params.workspaceId as string) || context.tenant.workspaceId;
+      const targetWorkspaceId = (params.workspaceId as string) || context.tenant.workspaceId;
       const timeframe = (params.timeframe as string) || "24h";
       const filterToolId = params.toolId as string | undefined;
 
@@ -129,10 +128,14 @@ export function createGetEvolutionStatusTool(
           totalEvents = obsResult.rows.length;
           for (const row of obsResult.rows) {
             try {
-              const payload = typeof row.raw_payload === "string"
-                ? JSON.parse(row.raw_payload)
-                : row.raw_payload;
-              if (payload && (payload.isError === true || payload.isError === "true" || payload.error !== undefined)) {
+              const payload =
+                typeof row.raw_payload === "string" ? JSON.parse(row.raw_payload) : row.raw_payload;
+              if (
+                payload &&
+                (payload.isError === true ||
+                  payload.isError === "true" ||
+                  payload.error !== undefined)
+              ) {
                 errorEvents++;
               }
             } catch {
@@ -145,14 +148,14 @@ export function createGetEvolutionStatusTool(
             "SELECT COUNT(*) as count FROM sessions WHERE workspace_id = $1",
             [targetWorkspaceId],
           );
-          totalSessions = parseInt(sessResult.rows[0]?.count || "0", 10);
+          totalSessions = Number.parseInt(sessResult.rows[0]?.count || "0", 10);
 
           // Count tools
           const toolResult = await dbPool.query<{ count: string }>(
             "SELECT COUNT(*) as count FROM tools WHERE workspace_id = $1",
             [targetWorkspaceId],
           );
-          activeToolsCount = parseInt(toolResult.rows[0]?.count || "0", 10);
+          activeToolsCount = Number.parseInt(toolResult.rows[0]?.count || "0", 10);
         } catch {
           // Fallback to repository queries or defaults if tables not yet populated
         }

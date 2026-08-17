@@ -158,15 +158,27 @@ export class CloudCircuitBreaker {
 
     // Check for specific error types / status codes
     const isUnauthorized =
-      (error && typeof error === "object" && "code" in error && (error as { code: unknown }).code === "unauthorized") ||
-      (error && typeof error === "object" && "status" in error && (error as { status: unknown }).status === 401) ||
+      (error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error as { code: unknown }).code === "unauthorized") ||
+      (error &&
+        typeof error === "object" &&
+        "status" in error &&
+        (error as { status: unknown }).status === 401) ||
       errorMsg.toLowerCase().includes("unauthorized") ||
       errorMsg.toLowerCase().includes("token expired") ||
       errorMsg.toLowerCase().includes("device revoked");
 
     const isUpgradeRequired =
-      (error && typeof error === "object" && "code" in error && (error as { code: unknown }).code === "upgrade_required") ||
-      (error && typeof error === "object" && "status" in error && (error as { status: unknown }).status === 426) ||
+      (error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error as { code: unknown }).code === "upgrade_required") ||
+      (error &&
+        typeof error === "object" &&
+        "status" in error &&
+        (error as { status: unknown }).status === 426) ||
       errorMsg.toLowerCase().includes("upgrade_required") ||
       errorMsg.toLowerCase().includes("upgrade required");
 
@@ -189,9 +201,15 @@ export class CloudCircuitBreaker {
     } else if (this.state === "CLOSED") {
       if (this.failureCount >= this.failureThreshold) {
         this.tripToOpen(now, errorMsg);
-        this.setHealth("offline", `Failure threshold (${this.failureThreshold}) reached: ${errorMsg}`);
+        this.setHealth(
+          "offline",
+          `Failure threshold (${this.failureThreshold}) reached: ${errorMsg}`,
+        );
       } else {
-        this.setHealth("degraded", `Encountered ${this.failureCount}/${this.failureThreshold} failures: ${errorMsg}`);
+        this.setHealth(
+          "degraded",
+          `Encountered ${this.failureCount}/${this.failureThreshold} failures: ${errorMsg}`,
+        );
       }
     }
   }
@@ -274,8 +292,8 @@ export class CloudCircuitBreaker {
     this.consecutiveOpenTrips++;
     const backoffExponent = Math.max(0, this.consecutiveOpenTrips - 1);
     const delay = Math.min(
-      this.initialResetTimeoutMs * Math.pow(this.backoffFactor, backoffExponent),
-      this.maxResetTimeoutMs
+      this.initialResetTimeoutMs * this.backoffFactor ** backoffExponent,
+      this.maxResetTimeoutMs,
     );
     this.nextRetryAllowedAt = now + delay;
     this.transitionTo("OPEN");

@@ -7,8 +7,8 @@ import {
   hashCanonicalContent,
 } from "@tool-evolver/contracts";
 import {
-  type BundleFileInput,
   type BuiltToolBundle,
+  type BundleFileInput,
   buildToolBundle,
   computeSha256,
 } from "@tool-evolver/runtime";
@@ -78,13 +78,17 @@ export class ArtifactBuilder {
     const capLines: string[] = [];
     if (caps) {
       if (caps.fs?.readPaths?.length || caps.fs?.writePaths?.length) {
-        capLines.push(`- **Filesystem**: Read \`[${(caps.fs.readPaths || []).join(", ")}]\`, Write \`[${(caps.fs.writePaths || []).join(", ")}]\``);
+        capLines.push(
+          `- **Filesystem**: Read \`[${(caps.fs.readPaths || []).join(", ")}]\`, Write \`[${(caps.fs.writePaths || []).join(", ")}]\``,
+        );
       }
       if (caps.net?.allowedHosts?.length) {
         capLines.push(`- **Network**: Allowed hosts \`[${caps.net.allowedHosts.join(", ")}]\``);
       }
       if (caps.command?.allowedCommands?.length || caps.command?.allowShellExecution) {
-        capLines.push(`- **Command Execution**: \`[${(caps.command.allowedCommands || []).join(", ")}]\` (Shell: ${caps.command.allowShellExecution ?? false})`);
+        capLines.push(
+          `- **Command Execution**: \`[${(caps.command.allowedCommands || []).join(", ")}]\` (Shell: ${caps.command.allowShellExecution ?? false})`,
+        );
       }
       if (caps.secrets?.allowedSecretNames?.length) {
         capLines.push(`- **Secrets**: \`[${caps.secrets.allowedSecretNames.join(", ")}]\``);
@@ -104,7 +108,10 @@ export class ArtifactBuilder {
   /**
    * Generates a standard package.json definition if not explicitly provided.
    */
-  generatePackageJson(manifest: ToolManifest, custom?: Record<string, unknown>): Record<string, unknown> {
+  generatePackageJson(
+    manifest: ToolManifest,
+    custom?: Record<string, unknown>,
+  ): Record<string, unknown> {
     return {
       name: `@tool-evolver-tools/${manifest.id}`,
       version: manifest.version,
@@ -119,7 +126,10 @@ export class ArtifactBuilder {
   /**
    * Generates a deterministic package-lock.json structure.
    */
-  generatePackageLock(manifest: ToolManifest, custom?: Record<string, unknown> | string): Record<string, unknown> {
+  generatePackageLock(
+    manifest: ToolManifest,
+    custom?: Record<string, unknown> | string,
+  ): Record<string, unknown> {
     if (typeof custom === "object" && custom !== null) {
       return custom;
     }
@@ -172,7 +182,7 @@ export class ArtifactBuilder {
     const files: BundleFileInput[] = [];
 
     // 1. Source code entrypoint
-    const sourceCode = options.sourceCode.trimEnd() + "\n";
+    const sourceCode = `${options.sourceCode.trimEnd()}\n`;
     files.push({
       path: "src/index.ts",
       content: sourceCode,
@@ -184,7 +194,7 @@ export class ArtifactBuilder {
     if (testCode) {
       files.push({
         path: "tests/index.test.ts",
-        content: testCode.trimEnd() + "\n",
+        content: `${testCode.trimEnd()}\n`,
         mode: 0o644,
       });
     }
@@ -193,7 +203,7 @@ export class ArtifactBuilder {
     const documentation = options.documentation ?? this.generateDocumentation(options.manifest);
     files.push({
       path: "README.md",
-      content: documentation.trimEnd() + "\n",
+      content: `${documentation.trimEnd()}\n`,
       mode: 0o644,
     });
 
@@ -214,7 +224,9 @@ export class ArtifactBuilder {
     });
 
     // 6. Provenance metadata
-    const provenance = options.provenance ?? this.generateProvenance(options.candidate, options.revision, options.synthesizerModel);
+    const provenance =
+      options.provenance ??
+      this.generateProvenance(options.candidate, options.revision, options.synthesizerModel);
     files.push({
       path: "provenance.json",
       content: canonicalJson(provenance),
