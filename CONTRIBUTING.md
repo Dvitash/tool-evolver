@@ -19,15 +19,15 @@ pnpm run check:all
 `pnpm run check:all` executes the complete sequence in order:
 1. `pnpm run check:adrs` — Architecture Decision Record (ADR) format, sequence, and glossary validation
 2. `pnpm run check:boundaries` — Monorepo package boundary and architectural import validation
-3. `pnpm run lint` — Biome formatting and code style linting
-4. `pnpm run typecheck` — TypeScript strict type checking across all packages and apps
-5. `pnpm run build` — Topological build of all workspace packages and apps
-6. `pnpm run test` — Unit test suite execution via Vitest
-7. `pnpm run test:e2e` — End-to-end integration test execution
-8. `pnpm run check:smoke` — Binary entry-point smoke tests for all 4 executable binaries
-9. `pnpm run release:verify` — Release artifact, manifest signature, SBOM, and documentation cross-link verification
-
-### Individual Commands
+3. `pnpm run check:secrets` — Standalone secret scanner checking for unencrypted private keys, tokens, credentials, and canary leaks
+4. `pnpm run lint` — Biome formatting and code style linting
+5. `pnpm run typecheck` — TypeScript strict type checking across all packages and apps
+6. `pnpm run build` — Topological build of all workspace packages and apps
+7. `pnpm run test` — Unit test suite execution via Vitest
+8. `pnpm run release:test` — Unit and integrity test suite for release packaging and Ed25519 verification
+9. `pnpm run test:e2e` — End-to-end integration test execution
+10. `pnpm run check:smoke` — Binary entry-point smoke tests for all 4 executable binaries
+11. `pnpm run release:verify` — Release artifact, manifest signature, SBOM, channel, and documentation verification
 
 - **Install Dependencies:** `pnpm install --frozen-lockfile`
 - **Lint & Format:** `pnpm run lint` / `pnpm run format`
@@ -52,17 +52,18 @@ The `main` branch is strictly protected and enforces PR-only release gates:
 - **Force Pushes Disabled:** Force-pushing to `main` is strictly forbidden.
 - **Independent Code Review Required:** Every PR requires at least one approving review from a designated code owner (`.github/CODEOWNERS`). The PR author cannot approve their own pull request.
 - **Dismiss Stale Approvals:** Any new commits pushed to an open pull request automatically dismiss previous approvals, requiring re-review.
+- **Branch Protection Automation:** Run `./scripts/configure-branch-protection.sh` (or `pnpm exec ./scripts/configure-branch-protection.sh`) to automatically configure strict branch protection rules via GitHub API / gh CLI.
 - **Required Status Checks:** All 10 parallel CI jobs and the rollup `ci-gate` must pass before merging:
   1. `lint` (Biome Lint & Format Check)
   2. `typecheck` (TypeScript Typecheck)
   3. `build` (Monorepo Build)
   4. `test-unit` (Unit Tests)
   5. `test-e2e` (End-to-End Tests)
-  6. `check-boundaries` (Package Boundaries Check)
-  7. `check-adrs` (ADR Verification)
-  8. `release-verification` (Release Artifact Verification)
-  9. `binary-smoke` (Binary Smoke Tests)
-  10. `secret-scan` (Gitleaks Secret Scanning)
+  6. `check-boundaries` (Package Import Boundaries)
+  7. `check-adrs` (ADR Integrity & Glossary Validation)
+  8. `release-verification` (Release Packaging, Digest, SBOM, and Docs Cross-Links)
+  9. `binary-smoke` (Binary Entry Point Smoke Tests)
+  10. `secret-scan` (Gitleaks and Standalone Secret Scanner)
   11. `ci-gate` (Rollup Status Gate)
 
 ### PR Template & Checklist

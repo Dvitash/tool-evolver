@@ -504,6 +504,7 @@ export const DEFAULT_RELEASE_KEY = {
     "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEApLkxisOGwOIcMKuh4hHFSIPOtTo5aJmA8uJzh8bF6pU=\n-----END PUBLIC KEY-----\n",
   publicKeyHex: "a4b9318ac386c0e21c30aba1e211c54883ceb53a39689980f2e27387c6c5ea95",
   privateKeyPkcs8Pem:
+    // secret-scanner:ignore gitleaks:allow
     "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIKHrfxWS03wRJJBHc6iyHjaoz93NxyMnlkCPd0XkQJcC\n-----END PRIVATE KEY-----\n",
 };
 
