@@ -420,7 +420,126 @@ export const observationsAndEvidenceMigration: Migration = {
   },
 };
 
-export const DEFAULT_MIGRATIONS: Migration[] = [initialSchemaMigration, observationsAndEvidenceMigration];
+/**
+ * Tool Registry, Versions, Publication Records & Cryptographic Keys Migration.
+ */
+export const toolRegistryAndArtifactsMigration: Migration = {
+  version: 3,
+  name: "003_tool_registry",
+  checksum: createHash("sha256").update("003_tool_registry_v1").digest("hex"),
+  up: async (db: Queryable) => {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS tools (
+        id VARCHAR(64) NOT NULL,
+        account_id VARCHAR(64) NOT NULL,
+        workspace_id VARCHAR(64) NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        active_version VARCHAR(64),
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (workspace_id, id)
+      );
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_tools_tenant ON tools(account_id, workspace_id);`);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS tool_versions (
+        id VARCHAR(64) PRIMARY KEY,
+        account_id VARCHAR(64) NOT NULL,
+        workspace_id VARCHAR(64) NOT NULL,
+        tool_id VARCHAR(64) NOT NULL,
+        version VARCHAR(64) NOT NULL,
+        manifest_digest VARCHAR(64) NOT NULL,
+        artifact_digest VARCHAR(64) NOT NULL,
+        manifest JSONB NOT NULL,
+        artifact JSONB NOT NULL,
+        provenance JSONB NOT NULL,
+        signature JSONB,
+        status VARCHAR(32) NOT NULL DEFAULT 'active',
+        superseded_by VARCHAR(64),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_by VARCHAR(255) NOT NULL DEFAULT 'system',
+        UNIQUE (workspace_id, tool_id, version)
+      );
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_tool_versions_tenant ON tool_versions(account_id, workspace_id, tool_id);`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_tool_versions_artifact_digest ON tool_versions(artifact_digest);`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_tool_versions_manifest_digest ON tool_versions(manifest_digest);`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_tool_versions_status ON tool_versions(workspace_id, tool_id, status);`);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS tool_publication_records (
+        id VARCHAR(64) PRIMARY KEY,
+        account_id VARCHAR(64) NOT NULL,
+        workspace_id VARCHAR(64) NOT NULL,
+        tool_id VARCHAR(64) NOT NULL,
+        version VARCHAR(64) NOT NULL,
+        candidate_id VARCHAR(64) NOT NULL,
+        revision_id VARCHAR(64),
+        state VARCHAR(32) NOT NULL,
+        manifest_digest VARCHAR(64) NOT NULL,
+        artifact_digest VARCHAR(64) NOT NULL,
+        storage_uri TEXT NOT NULL,
+        signed_by VARCHAR(64),
+        signature_algorithm VARCHAR(64),
+        provenance_digest VARCHAR(64),
+        version_diff JSONB,
+        error_message TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        published_at TIMESTAMPTZ
+      );
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_tool_publication_records_tenant ON tool_publication_records(account_id, workspace_id, tool_id);`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_tool_publication_records_state ON tool_publication_records(state);`);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS tool_version_aliases (
+        id VARCHAR(64) PRIMARY KEY,
+        account_id VARCHAR(64) NOT NULL,
+        workspace_id VARCHAR(64) NOT NULL,
+        tool_id VARCHAR(64) NOT NULL,
+        alias VARCHAR(64) NOT NULL,
+        version VARCHAR(64) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (workspace_id, tool_id, alias)
+      );
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_tool_version_aliases_lookup ON tool_version_aliases(workspace_id, tool_id, alias);`);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS signing_keys (
+        key_id VARCHAR(64) PRIMARY KEY,
+        algorithm VARCHAR(64) NOT NULL,
+        public_key_pem TEXT NOT NULL,
+        private_key_pem TEXT,
+        status VARCHAR(32) NOT NULL DEFAULT 'active',
+        trust_level VARCHAR(32) NOT NULL DEFAULT 'production',
+        revocation_reason TEXT,
+        revoked_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        rotated_at TIMESTAMPTZ
+      );
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_signing_keys_status ON signing_keys(status, algorithm);`);
+  },
+  down: async (db: Queryable) => {
+    await db.query(`DROP TABLE IF EXISTS signing_keys;`);
+    await db.query(`DROP TABLE IF EXISTS tool_version_aliases;`);
+    await db.query(`DROP TABLE IF EXISTS tool_publication_records;`);
+    await db.query(`DROP TABLE IF EXISTS tool_versions;`);
+    await db.query(`DROP TABLE IF EXISTS tools;`);
+  },
+};
+
+export const DEFAULT_MIGRATIONS: Migration[] = [
+  initialSchemaMigration,
+  observationsAndEvidenceMigration,
+  toolRegistryAndArtifactsMigration,
+];
 
 /**
  * Ensure the migration tracking table exists.

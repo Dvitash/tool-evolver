@@ -4,7 +4,11 @@
  * Cloud service platform, persistence, queue, storage, and worker runtime.
  */
 
-import type { NormalizedSessionEvent } from "@tool-evolver/contracts";
+import type {
+  EvaluationResult,
+  EvolutionCandidate,
+  NormalizedSessionEvent,
+} from "@tool-evolver/contracts";
 import { CloudConfig, RawCloudConfig, loadConfig } from "./config.js";
 import { DatabasePool, createDatabasePool } from "./db/client.js";
 import { runMigrations } from "./db/migrations.js";
@@ -54,6 +58,11 @@ import {
   type CandidateEvaluationInput,
   createCandidateEvaluationService,
 } from "./evolution/evaluation/index.js";
+import {
+  ToolArtifactRegistryService,
+  type PublishCandidateOptions,
+  createToolArtifactRegistryService,
+} from "./evolution/artifacts/index.js";
 
 // Configuration & Validation
 export * from "./config.js";
@@ -81,6 +90,9 @@ export * from "./ingestion/index.js";
 export * from "./server/index.js";
 
 // Evolution Opportunity Detection Engine
+// Evolution Artifact Registry & Immutable Version Catalog
+export * from "./evolution/artifacts/index.js";
+
 export * from "./evolution/opportunity/index.js";
 
 // Evolution Candidate Planning, Code Generation & Repair Engine
@@ -123,6 +135,7 @@ export class CloudService {
 
   readonly historicalReplayService: HistoricalReplayService;
   readonly candidateEvaluationService: CandidateEvaluationService;
+  readonly artifactRegistryService: ToolArtifactRegistryService;
   private isInitialized = false;
 
   constructor(options: { config?: Partial<RawCloudConfig> } = {}) {
@@ -169,6 +182,11 @@ export class CloudService {
       evidenceRepo: this.evidenceRepo,
       dbPool: this.dbPool,
     });
+    this.artifactRegistryService = createToolArtifactRegistryService(
+      this.dbPool,
+      this.objectStore,
+      { outboxPublisher: this.outboxPublisher },
+    );
 
     this.candidateEvaluationService = createCandidateEvaluationService();
     this.worker.registerHandler("opportunity.detect", async (job) => {
@@ -257,6 +275,20 @@ export class CloudService {
       const payload = job.payload as CandidateEvaluationInput | undefined;
       if (payload && payload.candidate && payload.validationResult) {
         await this.candidateEvaluationService.evaluateCandidate(payload);
+      }
+    });
+    this.worker.registerHandler("candidate.publish", async (job) => {
+      const payload = job.payload as {
+        candidate?: EvolutionCandidate;
+        evaluationResult?: EvaluationResult;
+        options?: PublishCandidateOptions;
+      } | undefined;
+      if (payload && payload.candidate && payload.evaluationResult) {
+        await this.artifactRegistryService.publishCandidate(
+          payload.candidate,
+          payload.evaluationResult,
+          payload.options,
+        );
       }
     });
 
