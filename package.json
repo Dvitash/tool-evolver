@@ -16,7 +16,8 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "typecheck": "turbo run typecheck",
-    "check": "turbo run check",
+    "check": "pnpm run check:adrs && pnpm run check:boundaries && turbo run check",
+    "check:adrs": "node scripts/verify-adrs.mjs",
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "clean": "turbo run clean"
   },

@@ -66,6 +66,8 @@ jobs:
       - name: Boundary Verification
         run: node scripts/check-boundaries.mjs
 
+      - name: ADR Verification
+        run: node scripts/verify-adrs.mjs
   secret-scan:
     name: Secret Scanning
     runs-on: ubuntu-latest
