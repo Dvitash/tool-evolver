@@ -106,12 +106,18 @@ importers:
       '@tool-evolver/contracts':
         specifier: workspace:*
         version: link:../contracts
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
   packages/protocol:
     dependencies:
       '@tool-evolver/contracts':
         specifier: workspace:*
         version: link:../contracts
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
   packages/runtime:
     dependencies:

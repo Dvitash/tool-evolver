@@ -6,6 +6,6 @@ describe("protocol", () => {
     const msg = createMessage("test", { key: "value" });
     expect(msg.type).toBe("test");
     expect(msg.payload).toEqual({ key: "value" });
-    expect(PROTOCOL_VERSION).toBe("0.1.0");
+    expect(PROTOCOL_VERSION).toBe("1.0.0");
   });
 });
