@@ -7,7 +7,21 @@ import {
   type SecretReference,
   isSecretReference,
 } from "@tool-evolver/contracts";
-import { isPathInsideRoot, normalizeSlashes } from "../policy/canonicalizers.js";
+import {
+  type CommandIdentity,
+  containsForbiddenArgMetacharacters,
+  containsShellMetacharacters,
+  isDangerousEnvVar,
+  isDangerousOption,
+  isInterpreterEscapeArg,
+  isPathInsideRoot,
+  isResponseFileEscape,
+  isShellExecutable,
+  matchesArgPattern,
+  normalizeSlashes,
+  resolveCanonicalBinary,
+  verifyExecutableIdentity,
+} from "../policy/canonicalizers.js";
 import { withResolvers } from "../worker/protocol.js";
 import {
   BaseCapabilityBroker,
@@ -50,23 +64,9 @@ export interface CommandBrokerOptions extends BaseCapabilityBrokerOptions {
 }
 
 /**
- * Dangerous shell metacharacters and control flow operators forbidden in binary arguments.
- */
-const FORBIDDEN_SHELL_PATTERNS = [
-  /`/, // Command substitution
-  /\$\(/, // Command substitution
-  /\$\{/, // Variable expansion
-  /\|\|/, // Conditional OR
-  /&&/, // Conditional AND
-  /[;|<>&]/, // Redirections and pipes
-  /\n|\r/, // Line breaks / multiline injections
-];
-
-/**
- * Capability broker for authorized subprocess execution.
- * Enforces binary allowlists, argument sanitization (preventing shell injection),
- * strict working directory isolation inside workspace/scratch boundaries,
- * environment isolation, timeout enforcement, output size quotas, and non-disclosure secret mediation.
+ * Broker that securely handles subprocess execution and command delegation.
+ * Enforces canonical binary path resolution, immutable executable identity verification,
+ * shell restriction, argument vector validation, and strict child environment sanitization.
  */
 export class CommandBroker extends BaseCapabilityBroker {
   readonly serviceName = "cmd" as const;
@@ -92,159 +92,251 @@ export class CommandBroker extends BaseCapabilityBroker {
     context: BrokerContext,
     cmdCap: CommandCapability,
   ): {
+    identity: CommandIdentity;
     executable: string;
     args: string[];
     cwd: string;
     childEnv: NodeJS.ProcessEnv;
   } {
-    // 1. Shell execution restriction
-    const SHELL_BINARIES = [
-      "sh",
-      "bash",
-      "zsh",
-      "csh",
-      "ksh",
-      "dash",
-      "cmd.exe",
-      "cmd",
-      "powershell.exe",
-      "powershell",
-      "pwsh",
-    ];
+    // 1. Extract raw binary and validate string
+    const rawBinary = params.executable ?? params.command?.trim().split(/\s+/)[0];
+    if (!rawBinary || typeof rawBinary !== "string" || rawBinary.trim().length === 0) {
+      throw new BrokerSecurityError("INVALID_PATH", "Executable binary name must be specified");
+    }
+    const binary = rawBinary.trim();
 
-    if (cmdCap.allowShellExecution === false && params.command && !params.executable) {
-      const parts = params.command.trim().split(/\s+/);
-      if (parts.length > 1 && !cmdCap.allowedBinaries.includes(parts[0])) {
+    // 2. Shell execution restriction
+    if (cmdCap.allowShellExecution === false) {
+      if (params.command && !params.executable) {
+        const parts = params.command.trim().split(/\s+/);
+        if (parts.length > 1 && !(cmdCap.allowedBinaries ?? []).includes(parts[0])) {
+          throw new BrokerSecurityError(
+            "SHELL_EXECUTION_DENIED",
+            "Arbitrary shell commands are prohibited; specify an authorized executable and explicit args array",
+            { command: params.command },
+          );
+        }
+      }
+      if (isShellExecutable(binary)) {
         throw new BrokerSecurityError(
           "SHELL_EXECUTION_DENIED",
-          "Arbitrary shell commands are prohibited; specify an authorized executable and explicit args array",
-          { command: params.command },
+          `Shell execution is prohibited by capability grant: ${path.basename(binary)}`,
+          { binary },
         );
       }
     }
-    // 2. Binary resolution
-    const binary = params.executable ?? params.command?.trim().split(/\s+/)[0];
-    if (!binary) {
-      throw new BrokerSecurityError("INVALID_PATH", "Executable binary name must be specified");
-    }
 
-    const binaryName = path.basename(binary);
-    if (cmdCap.allowShellExecution === false && SHELL_BINARIES.includes(binaryName)) {
+    // 3. Binary resolution to canonical absolute path and identity
+    const workspaceRoot = path.resolve(context.workspaceRoot ?? process.cwd());
+    const scratchDir = path.resolve(
+      context.scratchDir ?? path.join(os.tmpdir(), "tool_evolver_scratch"),
+    );
+
+    let identity: CommandIdentity;
+    try {
+      identity = resolveCanonicalBinary(binary, {
+        workspaceRoot,
+        allowNonExistent: false,
+        computeDigest: true,
+      });
+    } catch (err) {
       throw new BrokerSecurityError(
-        "SHELL_EXECUTION_DENIED",
-        `Shell execution is prohibited by capability grant: ${binaryName}`,
-        { binary: binaryName },
+        "UNAUTHORIZED_BINARY",
+        `Binary '${binary}' could not be resolved or is invalid: ${(err as Error).message}`,
+        { binary },
       );
     }
 
-    const allowedBinaries = cmdCap.allowedBinaries ?? [];
+    if (cmdCap.allowShellExecution === false) {
+      if (isShellExecutable(identity.realPath) || isShellExecutable(identity.canonicalPath)) {
+        throw new BrokerSecurityError(
+          "SHELL_EXECUTION_DENIED",
+          `Resolved executable '${identity.realPath}' is a shell executable and shell execution is disabled`,
+          { binary, realPath: identity.realPath },
+        );
+      }
+    }
 
+    // 4. Validate against allowedBinaries - REJECT basename-only matching
+    const allowedBinaries = cmdCap.allowedBinaries ?? [];
     if (allowedBinaries.length > 0) {
-      const isAllowed = allowedBinaries.some((allowed) => {
-        if (allowed === binaryName) return true;
-        if (path.resolve(allowed) === path.resolve(binary)) return true;
+      const resolvedAllowed = allowedBinaries.map((allowed) => {
+        try {
+          return resolveCanonicalBinary(allowed, { workspaceRoot, allowNonExistent: true });
+        } catch {
+          return {
+            canonicalPath: path.resolve(allowed),
+            realPath: path.resolve(allowed),
+          };
+        }
+      });
+
+      const isAllowed = resolvedAllowed.some((allowedId) => {
+        if (allowedId.realPath === identity.realPath) return true;
+        if (allowedId.canonicalPath === identity.canonicalPath) return true;
         return false;
       });
 
       if (!isAllowed) {
         throw new BrokerSecurityError(
           "UNAUTHORIZED_BINARY",
-          `Binary '${binaryName}' is not permitted by capability grant (allowed: ${allowedBinaries.join(", ")})`,
-          { binary: binaryName, allowedBinaries },
+          `Binary '${binary}' (${identity.realPath}) is not permitted by capability grant (allowed: ${allowedBinaries.join(", ")})`,
+          { binary, realPath: identity.realPath, allowedBinaries },
         );
       }
+    } else if ((cmdCap.allowedCommands ?? []).length === 0) {
+      throw new BrokerSecurityError(
+        "UNAUTHORIZED_BINARY",
+        `Binary '${binary}' is not permitted (no allowedBinaries or allowedCommands configured)`,
+        { binary },
+      );
     }
 
-    // 3. Arguments resolution & shell metacharacter defense
-    let args: string[] = [];
-    if (params.args && Array.isArray(params.args)) {
-      args = [...params.args];
-    } else if (params.command && !params.executable) {
-      const parts = params.command.trim().split(/\s+/);
-      args = parts.slice(1);
-    }
-    // Check built-in forbidden shell metacharacters
-    if (cmdCap.allowShellExecution === false) {
-      for (let i = 0; i < args.length; i++) {
-        const arg = args[i];
-        for (const regex of FORBIDDEN_SHELL_PATTERNS) {
-          if (regex.test(arg)) {
-            throw new BrokerSecurityError(
-              "SHELL_EXECUTION_DENIED",
-              `Argument at index ${i} contains forbidden shell pattern: '${arg}'`,
-              { argumentIndex: i, pattern: regex.source },
-            );
-          }
+    // 5. Validate arguments
+    const rawArgs: string[] = params.args
+      ? [...params.args]
+      : params.command
+        ? params.command.trim().split(/\s+/).slice(1)
+        : [];
+
+    for (let i = 0; i < rawArgs.length; i++) {
+      const arg = rawArgs[i];
+      if (typeof arg !== "string") {
+        throw new BrokerSecurityError(
+          "FORBIDDEN_ARGUMENT_PATTERN",
+          "All command arguments must be strings",
+        );
+      }
+
+      if (containsForbiddenArgMetacharacters(arg)) {
+        throw new BrokerSecurityError(
+          "FORBIDDEN_ARGUMENT_PATTERN",
+          `Argument contains forbidden shell metacharacters or control bytes: '${arg}'`,
+          { arg },
+        );
+      }
+
+      if (isInterpreterEscapeArg(identity.realPath, arg, rawArgs[i + 1])) {
+        throw new BrokerSecurityError(
+          "FORBIDDEN_ARGUMENT_PATTERN",
+          `Interpreter escape flag '${arg}' is prohibited for binary '${path.basename(identity.realPath)}'`,
+          { binary: identity.realPath, arg },
+        );
+      }
+
+      if (isDangerousOption(identity.realPath, arg)) {
+        throw new BrokerSecurityError(
+          "FORBIDDEN_ARGUMENT_PATTERN",
+          `Dangerous option '${arg}' is prohibited for binary '${path.basename(identity.realPath)}'`,
+          { binary: identity.realPath, arg },
+        );
+      }
+
+      if (isResponseFileEscape(arg, workspaceRoot)) {
+        throw new BrokerSecurityError(
+          "FORBIDDEN_ARGUMENT_PATTERN",
+          `Response file argument '${arg}' escapes authorized workspace boundaries`,
+          { arg },
+        );
+      }
+
+      for (const pattern of cmdCap.forbiddenPatterns ?? []) {
+        if (matchesArgPattern(arg, pattern) || arg.includes(pattern)) {
+          throw new BrokerSecurityError(
+            "FORBIDDEN_PATTERN",
+            `Command argument '${arg}' matches forbidden pattern '${pattern}'`,
+            { arg, pattern },
+          );
         }
       }
     }
 
-    // Check capability grant forbidden patterns
-    if (cmdCap.forbiddenPatterns) {
-      for (let i = 0; i < args.length; i++) {
-        const arg = args[i];
-        for (const pat of cmdCap.forbiddenPatterns) {
-          const regex = new RegExp(pat);
-          if (regex.test(arg)) {
-            throw new BrokerSecurityError(
-              "FORBIDDEN_PATTERN",
-              `Argument at index ${i} matches forbidden pattern: '${arg}'`,
-              { argumentIndex: i, pattern: pat },
-            );
-          }
-        }
-      }
-    }
-    // 4. Working Directory Resolution & Sandbox Boundary
-    const workspaceRoot = context.workspaceRoot ?? process.cwd();
-    const scratchDir = context.scratchDir ?? os.tmpdir();
+    // 6. Validate working directory boundaries
+    const targetCwd = params.cwd ? path.resolve(workspaceRoot, params.cwd) : workspaceRoot;
+    const inWorkspace = isPathInsideRoot(targetCwd, workspaceRoot);
+    const inScratch = isPathInsideRoot(targetCwd, scratchDir);
+    const inTemp = isPathInsideRoot(targetCwd, os.tmpdir());
 
-    let resolvedCwd = workspaceRoot;
-    if (params.cwd) {
-      const targetCwd = path.resolve(workspaceRoot, params.cwd);
-      const inWorkspace = isPathInsideRoot(targetCwd, workspaceRoot);
-      const inScratch = isPathInsideRoot(targetCwd, scratchDir);
-
-      if (!inWorkspace && !inScratch) {
-        throw new BrokerSecurityError(
-          "WORKING_DIRECTORY_DENIED",
-          `Working directory '${normalizeSlashes(targetCwd)}' is outside allowed workspace/scratch roots`,
-          { cwd: targetCwd, workspaceRoot, scratchDir },
-        );
-      }
-
-      if (!fs.existsSync(targetCwd) || !fs.statSync(targetCwd).isDirectory()) {
-        throw new BrokerSecurityError(
-          "FILE_NOT_FOUND",
-          `Working directory does not exist or is not a directory: ${targetCwd}`,
-          { cwd: targetCwd },
-        );
-      }
-
-      resolvedCwd = targetCwd;
+    if (!inWorkspace && !inScratch && !inTemp) {
+      throw new BrokerSecurityError(
+        "WORKING_DIRECTORY_DENIED",
+        `Working directory '${params.cwd}' resolves outside allowed roots (${workspaceRoot}): ${targetCwd}`,
+        { cwd: params.cwd, resolvedCwd: targetCwd, workspaceRoot },
+      );
     }
 
-    // 5. Base Environment Isolation
+    if (!fs.existsSync(targetCwd) || !fs.statSync(targetCwd).isDirectory()) {
+      throw new BrokerSecurityError(
+        "FILE_NOT_FOUND",
+        `Working directory does not exist or is not a directory: ${targetCwd}`,
+        { cwd: targetCwd },
+      );
+    }
+
+    // 7. Construct minimal sanitized child environment
     const childEnv: NodeJS.ProcessEnv = {
-      PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-      LANG: "C.UTF-8",
-      LC_ALL: "C.UTF-8",
-      NODE_ENV: process.env.NODE_ENV ?? "production",
+      PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+      LANG: process.env.LANG ?? "C.UTF-8",
+      LC_ALL: process.env.LC_ALL ?? "C.UTF-8",
       TMPDIR: scratchDir,
+      HOME: workspaceRoot,
     };
 
-    // Pass through explicitly allowed environment variables from host
+    if (process.platform === "win32") {
+      if (process.env.SYSTEMROOT) childEnv.SYSTEMROOT = process.env.SYSTEMROOT;
+      if (process.env.WINDIR) childEnv.WINDIR = process.env.WINDIR;
+      if (process.env.COMSPEC) childEnv.COMSPEC = process.env.COMSPEC;
+      if (process.env.PATHEXT) childEnv.PATHEXT = process.env.PATHEXT;
+    }
+
     const passthroughKeys = cmdCap.allowEnvPassthrough ?? [];
     for (const key of passthroughKeys) {
-      if (process.env[key] !== undefined) {
+      if (!isDangerousEnvVar(key) && process.env[key] !== undefined) {
         childEnv[key] = process.env[key];
       }
     }
 
+    if (params.env) {
+      const secretsCap = context.grant?.capabilities?.secrets;
+      const allowedSecretNames = secretsCap?.allowedSecretNames ?? [];
+      const allowedPrefixes = secretsCap?.allowedPrefixes ?? [];
+      const hasSecretsCapability = allowedSecretNames.length > 0 || allowedPrefixes.length > 0;
+
+      for (const [key, val] of Object.entries(params.env)) {
+        if (isDangerousEnvVar(key)) {
+          throw new BrokerSecurityError(
+            "DANGEROUS_ENV_VAR",
+            `Dangerous environment variable '${key}' cannot be provided by caller`,
+            { envVar: key },
+          );
+        }
+
+        if (isSecretReference(val)) {
+          continue;
+        }
+
+        const isAllowedPassthrough = passthroughKeys.includes(key);
+        const isAllowedSecret =
+          allowedSecretNames.includes(key) || allowedPrefixes.some((p) => key.startsWith(p));
+        if (!isAllowedPassthrough && !isAllowedSecret) {
+          throw new BrokerSecurityError(
+            "UNAUTHORIZED_ENV_VAR",
+            `Environment variable '${key}' is not authorized in capability grant (allowed: ${passthroughKeys.join(", ")})`,
+            { envVar: key, allowEnvPassthrough: passthroughKeys },
+          );
+        }
+
+        if (typeof val === "string") {
+          childEnv[key] = val;
+        }
+      }
+    }
+
     return {
-      executable: binary,
-      args,
-      cwd: resolvedCwd,
+      identity,
+      executable: identity.realPath,
+      args: rawArgs,
+      cwd: targetCwd,
       childEnv,
     };
   }
@@ -271,7 +363,21 @@ export class CommandBroker extends BaseCapabilityBroker {
     const redactor = secretBroker?.getRedactor();
 
     try {
-      const { executable, args, cwd, childEnv } = this.authorizeExecution(params, context, cmdCap);
+      const { identity, executable, args, cwd, childEnv } = this.authorizeExecution(
+        params,
+        context,
+        cmdCap,
+      );
+
+      // Pre-spawn executable identity re-verification (detects symlink swaps / replacements)
+      const verifyResult = verifyExecutableIdentity(identity);
+      if (!verifyResult.valid) {
+        throw new BrokerSecurityError(
+          "COMMAND_IDENTITY_VIOLATION",
+          `Executable identity verification failed before spawn: ${verifyResult.reason}`,
+          { executable: identity.realPath, reason: verifyResult.reason },
+        );
+      }
 
       // 1. Host-side stdin secret mediation
       let resolvedStdin: string | undefined = undefined;
@@ -289,37 +395,16 @@ export class CommandBroker extends BaseCapabilityBroker {
         ...(params.secretEnv ?? {}),
       };
 
-      if (secretBroker) {
+      if (Object.keys(rawEnv).length > 0 && secretBroker) {
         const mediatedEnv = await secretBroker.mediateCommandEnv(rawEnv, context);
         for (const [key, val] of Object.entries(mediatedEnv)) {
-          // Exclude dangerous loader overrides
-          if (
-            key.startsWith("LD_") ||
-            key.startsWith("DYLD_") ||
-            key === "NODE_OPTIONS" ||
-            key === "PYTHONWARNINGS"
-          ) {
-            continue;
-          }
-          childEnv[key] = val;
-        }
-      } else {
-        for (const [key, val] of Object.entries(rawEnv)) {
-          if (
-            key.startsWith("LD_") ||
-            key.startsWith("DYLD_") ||
-            key === "NODE_OPTIONS" ||
-            key === "PYTHONWARNINGS"
-          ) {
-            continue;
-          }
-          if (typeof val === "string") {
+          if (!isDangerousEnvVar(key)) {
             childEnv[key] = val;
           }
         }
       }
 
-      // 3. Execute subprocess
+      // 3. Subprocess execution with process group termination and timeout protection
       const rawResult = await this.spawnSubprocess({
         executable,
         args,
@@ -330,23 +415,22 @@ export class CommandBroker extends BaseCapabilityBroker {
         maxOutputBytes,
       });
 
-      // 4. Output Redaction & Sanitization
+      // 4. Output Redaction
       const sanitizedStdout = redactor ? redactor.redact(rawResult.stdout) : rawResult.stdout;
       const sanitizedStderr = redactor ? redactor.redact(rawResult.stderr) : rawResult.stderr;
-      const totalBytes =
-        Buffer.byteLength(sanitizedStdout, "utf-8") + Buffer.byteLength(sanitizedStderr, "utf-8");
-      this.trackOutputBytes(context.invocationId, totalBytes, limits);
+
+      // 5. Emit Audit Event
       this.recordAudit(
         "execute",
         context,
-        rawResult.exitCode === 0 ? "allowed" : "error",
+        rawResult.exitCode === 0 ? "allowed" : "denied",
         {
-          executable: path.basename(executable),
-          argsCount: args.length,
+          command: executable,
+          args: redactor ? args.map((a) => redactor.redact(a)) : args,
+          cwd,
           exitCode: rawResult.exitCode,
-          outputBytes: totalBytes,
         },
-        { durationMs: Date.now() - startTime },
+        { durationMs: rawResult.durationMs },
       );
 
       return {
@@ -358,20 +442,28 @@ export class CommandBroker extends BaseCapabilityBroker {
     } catch (error) {
       const isSecErr = error instanceof BrokerSecurityError;
       const errCode = isSecErr ? error.code : "PROCESS_SPAWN_FAILED";
-      const rawErrMsg = (error as Error).message;
-      const errMsg = redactor ? redactor.redact(rawErrMsg) : rawErrMsg;
+      const errMsg = (error as Error).message;
 
       this.recordAudit(
         "execute",
         context,
         "denied",
         {
-          executable: params.executable ?? params.command,
-          reason: errMsg,
+          command: params.executable ?? params.command ?? "unknown",
+          params:
+            redactor && params.args
+              ? { ...params, args: params.args.map((a) => redactor.redact(a)) }
+              : params,
         },
         {
-          error: { code: errCode, message: errMsg },
-          durationMs: Date.now() - startTime,
+          error: {
+            code: errCode,
+            message: errMsg,
+            details:
+              redactor && isSecErr && error.details
+                ? redactor.redactObject(error.details)
+                : undefined,
+          },
         },
       );
 
@@ -416,49 +508,55 @@ export class CommandBroker extends BaseCapabilityBroker {
         new BrokerSecurityError(
           "PROCESS_SPAWN_FAILED",
           `Failed to spawn binary '${options.executable}': ${(err as Error).message}`,
-          { executable: options.executable },
+          { executable: options.executable, error: (err as Error).message },
         ),
       );
       return promise;
     }
 
-    let stdoutData = "";
-    let stderrData = "";
-
-    if (options.stdin !== undefined && child.stdin) {
-      child.stdin.write(options.stdin);
-      child.stdin.end();
-    }
-
-    let timedOut = false;
-    let killedForSize = false;
-    let totalBytes = 0;
-
     const killProcessGroup = (signal: NodeJS.Signals = "SIGKILL") => {
-      try {
-        if (isPosix && child.pid) {
+      if (child.killed) return;
+      if (isPosix && child.pid) {
+        try {
           process.kill(-child.pid, signal);
-        } else {
-          child.kill(signal);
+        } catch {
+          try {
+            child.kill(signal);
+          } catch {
+            // already exited
+          }
         }
-      } catch {
-        // Process might already be dead
+      } else {
+        try {
+          child.kill(signal);
+        } catch {
+          // already exited
+        }
       }
     };
+
+    let stdoutData = "";
+    let stderrData = "";
+    let totalBytes = 0;
+    let timedOut = false;
+    let killedForSize = false;
 
     const timer = setTimeout(() => {
       timedOut = true;
       killProcessGroup("SIGTERM");
       setTimeout(() => {
-        if (!child.killed) {
-          killProcessGroup("SIGKILL");
-        }
-      }, 2000).unref();
+        killProcessGroup("SIGKILL");
+      }, 50);
     }, options.timeoutMs);
 
+    if (options.stdin && child.stdin) {
+      child.stdin.write(options.stdin);
+      child.stdin.end();
+    }
+
     child.stdout?.on("data", (chunk: Buffer | string) => {
-      const str = chunk.toString("utf-8");
-      totalBytes += Buffer.byteLength(str, "utf-8");
+      const str = chunk.toString();
+      totalBytes += Buffer.byteLength(str);
       if (totalBytes > options.maxOutputBytes) {
         killedForSize = true;
         killProcessGroup("SIGKILL");
@@ -468,8 +566,8 @@ export class CommandBroker extends BaseCapabilityBroker {
     });
 
     child.stderr?.on("data", (chunk: Buffer | string) => {
-      const str = chunk.toString("utf-8");
-      totalBytes += Buffer.byteLength(str, "utf-8");
+      const str = chunk.toString();
+      totalBytes += Buffer.byteLength(str);
       if (totalBytes > options.maxOutputBytes) {
         killedForSize = true;
         killProcessGroup("SIGKILL");
@@ -484,7 +582,7 @@ export class CommandBroker extends BaseCapabilityBroker {
         new BrokerSecurityError(
           "PROCESS_SPAWN_FAILED",
           `Child process emitted error: ${err.message}`,
-          { executable: options.executable },
+          { error: err.message },
         ),
       );
     });
@@ -496,8 +594,8 @@ export class CommandBroker extends BaseCapabilityBroker {
         reject(
           new BrokerSecurityError(
             "COMMAND_TIMEOUT",
-            `Command execution exceeded timeout limit of ${options.timeoutMs}ms`,
-            { timeoutMs: options.timeoutMs, executable: options.executable },
+            `Command execution timed out after ${options.timeoutMs}ms`,
+            { timeoutMs: options.timeoutMs, signal },
           ),
         );
         return;
@@ -508,15 +606,14 @@ export class CommandBroker extends BaseCapabilityBroker {
           new BrokerSecurityError(
             "MAX_OUTPUT_EXCEEDED",
             `Subprocess output exceeded quota limit of ${options.maxOutputBytes} bytes`,
-            { maxOutputBytes: options.maxOutputBytes, bytesReceived: totalBytes },
+            { maxOutputBytes: options.maxOutputBytes },
           ),
         );
         return;
       }
 
-      const exitCode = code !== null ? code : signal ? 128 : 1;
       resolve({
-        exitCode,
+        exitCode: code ?? (signal ? 1 : 0),
         stdout: stdoutData,
         stderr: stderrData,
         durationMs: Date.now() - startTime,
@@ -527,7 +624,7 @@ export class CommandBroker extends BaseCapabilityBroker {
   }
 
   /**
-   * Convenience execution method matching typical shell exec signatures.
+   * Convenience alias for executing commands.
    */
   async exec(
     command: string,

@@ -216,5 +216,38 @@ describe("Safety Gate Runtime Engine & Attestation Verification", () => {
       expect(boundaryCheck.valid).toBe(false);
       expect(boundaryCheck.error).toBeDefined();
     });
+
+    it("verifies command broker boundary invariant against production attestation", () => {
+      const validAttestation = createSafetyAttestation();
+      const evaluator = new SafetyGateEvaluator({ attestation: validAttestation });
+      const boundaryCheck = evaluator.verifyCommandBrokerBoundary();
+
+      expect(boundaryCheck.valid).toBe(true);
+      expect(boundaryCheck.error).toBeUndefined();
+
+      const invalidEvaluator = new SafetyGateEvaluator({ attestation: null });
+      expect(invalidEvaluator.verifyCommandBrokerBoundary().valid).toBe(false);
+    });
+
+    it("verifies strict environment policy invariant against production attestation", () => {
+      const validAttestation = createSafetyAttestation();
+      const evaluator = new SafetyGateEvaluator({ attestation: validAttestation });
+      const envCheck = evaluator.verifyStrictEnvironmentPolicy();
+
+      expect(envCheck.valid).toBe(true);
+      expect(envCheck.error).toBeUndefined();
+
+      const invalidEvaluator = new SafetyGateEvaluator({ attestation: null });
+      expect(invalidEvaluator.verifyStrictEnvironmentPolicy().valid).toBe(false);
+    });
+
+    it("verifies comprehensive command execution invariants", () => {
+      const validAttestation = createSafetyAttestation();
+      const evaluator = new SafetyGateEvaluator({ attestation: validAttestation });
+      const invariantCheck = evaluator.verifyCommandExecutionInvariants();
+
+      expect(invariantCheck.valid).toBe(true);
+      expect(invariantCheck.error).toBeUndefined();
+    });
   });
 });

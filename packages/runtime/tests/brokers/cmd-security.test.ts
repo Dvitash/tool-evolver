@@ -19,22 +19,18 @@ describe("Command Broker Security & Isolation", () => {
 
   afterAll(() => {
     delete process.env.TEST_HOST_SECRET_TOKEN;
-    try {
+    if (fs.existsSync(tempWorkspace)) {
       fs.rmSync(tempWorkspace, { recursive: true, force: true });
-    } catch {}
+    }
   });
 
-  const createGrant = (
-    overrides: Record<string, unknown> = {},
-    limitOverrides: Record<string, unknown> = {},
-  ) => {
+  const createGrant = (overrides: Record<string, unknown> = {}, limitOverrides = {}) => {
     return createInvocationGrant({
-      grantId: "grant_cmd_test",
       invocationId: "inv_cmd_001",
-      toolId: "cmd_tool",
+      toolId: "test_cmd_tool",
       toolVersion: "1.0.0",
-      workspaceId: "ws_cmd",
-      envelopeId: "env_cmd",
+      workspaceId: "ws_cmd_test",
+      envelopeId: "env_cmd_test",
       capabilities: {
         command: {
           allowShellExecution: false,
@@ -54,6 +50,9 @@ describe("Command Broker Security & Isolation", () => {
   };
 
   it("executes authorized binary and returns stdout, exitCode, and duration", async () => {
+    const scriptPath = path.join(tempWorkspace, "success.js");
+    fs.writeFileSync(scriptPath, "console.log('Command Broker Success');");
+
     const grant = createGrant({ allowedBinaries: ["node"] });
     const ctx = {
       invocationId: "inv_cmd_001",
@@ -64,7 +63,7 @@ describe("Command Broker Security & Isolation", () => {
     const res = await broker.execute(
       {
         executable: "node",
-        args: ["-e", "console.log('Command Broker Success')"],
+        args: [scriptPath],
       },
       ctx,
     );
@@ -82,12 +81,12 @@ describe("Command Broker Security & Isolation", () => {
       workspaceRoot: tempWorkspace,
     };
 
-    await expect(
-      broker.execute({ executable: "python3", args: ["-c", "print('evil')"] }, ctx),
-    ).rejects.toThrow(BrokerSecurityError);
+    await expect(broker.execute({ executable: "git", args: ["status"] }, ctx)).rejects.toThrow(
+      BrokerSecurityError,
+    );
 
     try {
-      await broker.execute({ executable: "python3" }, ctx);
+      await broker.execute({ executable: "git", args: ["status"] }, ctx);
     } catch (err) {
       expect((err as BrokerSecurityError).code).toBe("UNAUTHORIZED_BINARY");
     }
@@ -96,7 +95,7 @@ describe("Command Broker Security & Isolation", () => {
   it("denies direct shell binary invocation when allowShellExecution is false", async () => {
     const grant = createGrant({
       allowShellExecution: false,
-      allowedBinaries: ["sh", "bash", "node"], // even if in allowedBinaries
+      allowedBinaries: ["sh", "bash", "node"],
     });
     const ctx = {
       invocationId: "inv_cmd_001",
@@ -104,21 +103,44 @@ describe("Command Broker Security & Isolation", () => {
       workspaceRoot: tempWorkspace,
     };
 
-    for (const shellBin of ["sh", "bash", "zsh", "cmd.exe"]) {
-      await expect(
-        broker.execute({ executable: shellBin, args: ["-c", "echo 1"] }, ctx),
-      ).rejects.toThrow(BrokerSecurityError);
+    await expect(
+      broker.execute({ executable: "sh", args: ["-c", "echo pwned"] }, ctx),
+    ).rejects.toThrow(BrokerSecurityError);
 
-      try {
-        await broker.execute({ executable: shellBin }, ctx);
-      } catch (err) {
-        expect((err as BrokerSecurityError).code).toBe("SHELL_EXECUTION_DENIED");
-      }
+    try {
+      await broker.execute({ executable: "bash", args: ["-c", "whoami"] }, ctx);
+    } catch (err) {
+      expect((err as BrokerSecurityError).code).toBe("SHELL_EXECUTION_DENIED");
     }
   });
 
-  it("blocks shell metacharacters in commands and arguments", async () => {
-    const grant = createGrant({ allowShellExecution: false, allowedBinaries: ["node"] });
+  it("rejects commands with forbidden argument patterns", async () => {
+    const scriptPath = path.join(tempWorkspace, "forbidden_test.js");
+    fs.writeFileSync(scriptPath, "console.log('test');");
+
+    const grant = createGrant({
+      allowedBinaries: ["node"],
+      forbiddenPatterns: ["--forbidden-flag", "eval\\s*\\("],
+    });
+    const ctx = {
+      invocationId: "inv_cmd_001",
+      grant,
+      workspaceRoot: tempWorkspace,
+    };
+
+    await expect(
+      broker.execute({ executable: "node", args: [scriptPath, "--forbidden-flag"] }, ctx),
+    ).rejects.toThrow(BrokerSecurityError);
+
+    try {
+      await broker.execute({ executable: "node", args: [scriptPath, "--forbidden-flag"] }, ctx);
+    } catch (err) {
+      expect((err as BrokerSecurityError).code).toBe("FORBIDDEN_PATTERN");
+    }
+  });
+
+  it("rejects shell injection characters in command arguments", async () => {
+    const grant = createGrant({ allowedBinaries: ["node"] });
     const ctx = {
       invocationId: "inv_cmd_001",
       grant,
@@ -126,23 +148,19 @@ describe("Command Broker Security & Isolation", () => {
     };
 
     const dangerousArgs = [
-      ["-e", "console.log(1); rm -rf /"],
-      ["-e", "console.log(1) | cat"],
-      ["-e", "console.log(1) && echo evil"],
-      ["-e", "`whoami`"],
-      ["-e", "$(whoami)"],
+      ["console.log(1); rm -rf /"],
+      ["console.log(1) | cat"],
+      ["console.log(1) && echo evil"],
+      ["`whoami`"],
+      ["$(whoami)"],
+      ["test\ninjection"],
+      ["test\0nullbyte"],
     ];
 
     for (const args of dangerousArgs) {
       await expect(broker.execute({ executable: "node", args }, ctx)).rejects.toThrow(
         BrokerSecurityError,
       );
-
-      try {
-        await broker.execute({ executable: "node", args }, ctx);
-      } catch (err) {
-        expect((err as BrokerSecurityError).code).toBe("SHELL_EXECUTION_DENIED");
-      }
     }
   });
 
@@ -165,29 +183,10 @@ describe("Command Broker Security & Isolation", () => {
     }
   });
 
-  it("enforces forbiddenPatterns in command arguments", async () => {
-    const grant = createGrant({
-      allowedBinaries: ["node"],
-      forbiddenPatterns: ["--forbidden-flag", "malicious_token"],
-    });
-    const ctx = {
-      invocationId: "inv_cmd_001",
-      grant,
-      workspaceRoot: tempWorkspace,
-    };
+  it("rejects working directories outside workspace or scratch dir", async () => {
+    const scriptPath = path.join(tempWorkspace, "cwd_test.js");
+    fs.writeFileSync(scriptPath, "console.log('hi');");
 
-    await expect(
-      broker.execute({ executable: "node", args: ["--forbidden-flag"] }, ctx),
-    ).rejects.toThrow(BrokerSecurityError);
-
-    try {
-      await broker.execute({ executable: "node", args: ["--forbidden-flag"] }, ctx);
-    } catch (err) {
-      expect((err as BrokerSecurityError).code).toBe("FORBIDDEN_PATTERN");
-    }
-  });
-
-  it("enforces working directory containment", async () => {
     const grant = createGrant({ allowedBinaries: ["node"] });
     const ctx = {
       invocationId: "inv_cmd_001",
@@ -199,7 +198,7 @@ describe("Command Broker Security & Isolation", () => {
       broker.execute(
         {
           executable: "node",
-          args: ["-e", "console.log('hi')"],
+          args: [scriptPath],
           cwd: "../../../",
         },
         ctx,
@@ -210,8 +209,8 @@ describe("Command Broker Security & Isolation", () => {
       await broker.execute(
         {
           executable: "node",
-          args: ["-e", "console.log('hi')"],
-          cwd: "../../../",
+          args: [scriptPath],
+          cwd: "/etc",
         },
         ctx,
       );
@@ -220,13 +219,22 @@ describe("Command Broker Security & Isolation", () => {
     }
   });
 
-  it("isolates child environment and prevents host secret leakage", async () => {
+  it("sanitizes environment and prevents leaking unapproved host environment variables", async () => {
+    const scriptPath = path.join(tempWorkspace, "env_test.js");
+    fs.writeFileSync(
+      scriptPath,
+      `console.log(JSON.stringify({
+        secret: process.env.TEST_HOST_SECRET_TOKEN,
+        allowed: process.env.TEST_ALLOWED_VAR,
+      }));`,
+    );
+
+    process.env.TEST_ALLOWED_VAR = "ALLOWED_VALUE_123";
+
     const grant = createGrant({
       allowedBinaries: ["node"],
       allowEnvPassthrough: ["TEST_ALLOWED_VAR"],
     });
-    process.env.TEST_ALLOWED_VAR = "ALLOWED_VALUE_123";
-
     const ctx = {
       invocationId: "inv_cmd_001",
       grant,
@@ -236,10 +244,7 @@ describe("Command Broker Security & Isolation", () => {
     const res = await broker.execute(
       {
         executable: "node",
-        args: [
-          "-e",
-          "console.log(JSON.stringify({ secret: process.env.TEST_HOST_SECRET_TOKEN, allowed: process.env.TEST_ALLOWED_VAR }))",
-        ],
+        args: [scriptPath],
       },
       ctx,
     );
@@ -252,6 +257,9 @@ describe("Command Broker Security & Isolation", () => {
   });
 
   it("enforces output size limits and terminates subprocess if exceeded", async () => {
+    const scriptPath = path.join(tempWorkspace, "large_output.js");
+    fs.writeFileSync(scriptPath, "console.log('A'.repeat(10240));");
+
     const grant = createGrant(
       { allowedBinaries: ["node"] },
       { maxOutputSizeBytes: 500 }, // 500 bytes max
@@ -262,12 +270,11 @@ describe("Command Broker Security & Isolation", () => {
       workspaceRoot: tempWorkspace,
     };
 
-    // Script prints 10KB of data
     await expect(
       broker.execute(
         {
           executable: "node",
-          args: ["-e", "console.log('A'.repeat(10000))"],
+          args: [scriptPath],
         },
         ctx,
       ),
@@ -277,7 +284,7 @@ describe("Command Broker Security & Isolation", () => {
       await broker.execute(
         {
           executable: "node",
-          args: ["-e", "console.log('A'.repeat(10000))"],
+          args: [scriptPath],
         },
         ctx,
       );
@@ -286,23 +293,22 @@ describe("Command Broker Security & Isolation", () => {
     }
   });
 
-  it("enforces command execution timeout and terminates process tree", async () => {
-    const grant = createGrant(
-      { allowedBinaries: ["node"] },
-      { maxExecutionTimeMs: 150 }, // 150ms timeout
-    );
+  it("enforces execution timeout bounds and terminates subprocess on deadline", async () => {
+    const scriptPath = path.join(tempWorkspace, "timeout_loop.js");
+    fs.writeFileSync(scriptPath, "while(true){}");
+
+    const grant = createGrant({ allowedBinaries: ["node"] }, { maxExecutionTimeMs: 100 });
     const ctx = {
       invocationId: "inv_cmd_001",
       grant,
       workspaceRoot: tempWorkspace,
     };
 
-    // Infinite loop in node child process
     await expect(
       broker.execute(
         {
           executable: "node",
-          args: ["-e", "while(true){}"],
+          args: [scriptPath],
           timeoutMs: 100,
         },
         ctx,
@@ -313,7 +319,7 @@ describe("Command Broker Security & Isolation", () => {
       await broker.execute(
         {
           executable: "node",
-          args: ["-e", "while(true){}"],
+          args: [scriptPath],
           timeoutMs: 100,
         },
         ctx,

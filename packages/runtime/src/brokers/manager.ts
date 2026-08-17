@@ -1,4 +1,4 @@
-import type { SecretCapability } from "@tool-evolver/contracts";
+import type { SecretCapability, SecretReference } from "@tool-evolver/contracts";
 import type { SecretManager } from "@tool-evolver/crypto";
 import type { BrokerRequestHandlerFn } from "../worker/sdk.js";
 import { type BrokerAuditEmitter, defaultBrokerAuditEmitter } from "./audit.js";
@@ -244,13 +244,15 @@ export class CapabilityBrokerManager {
     switch (action) {
       case "execute":
       case "exec": {
-        let env = payload.env as Record<string, string> | undefined;
+        let secretEnv: Record<string, string> | undefined;
         let stdin = payload.stdin as string | undefined;
-
-        if (env) {
-          env = await this.secret.mediateCommandEnv(env, context);
+        if (payload.env) {
+          secretEnv = await this.secret.mediateCommandEnv(
+            payload.env as Record<string, string>,
+            context,
+          );
         } else if (context.grant?.capabilities?.secrets?.injectAsEnv) {
-          env = await this.secret.mediateCommandEnv({}, context);
+          secretEnv = await this.secret.mediateCommandEnv({}, context);
         }
 
         if (stdin) {
@@ -263,7 +265,8 @@ export class CapabilityBrokerManager {
             executable: payload.executable as string | undefined,
             args: payload.args as string[] | undefined,
             cwd: payload.cwd as string | undefined,
-            env,
+            env: payload.env as Record<string, string | SecretReference> | undefined,
+            secretEnv,
             stdin,
             timeoutMs: payload.timeoutMs as number | undefined,
             maxOutputSizeBytes: payload.maxOutputSizeBytes as number | undefined,

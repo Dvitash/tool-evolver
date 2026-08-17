@@ -124,8 +124,10 @@ describe("Broker SDK Clients & ToolRuntime Integration", () => {
     });
 
     const clients = createBrokerClients(handler);
+    const scriptPath = path.join(tempWorkspace, "sdk_test.js");
+    fs.writeFileSync(scriptPath, "console.log('SDK Command Output');");
 
-    const result = await clients.cmd.execute("node", ["-e", "console.log('SDK Command Output')"]);
+    const result = await clients.cmd.execute("node", [scriptPath]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout.trim()).toBe("SDK Command Output");
   });
@@ -173,10 +175,8 @@ describe("Broker SDK Clients & ToolRuntime Integration", () => {
       const content = await ctx.broker.fs.readFile("runtime_demo.txt");
       const stat = await ctx.broker.fs.stat("runtime_demo.txt");
 
-      const cmdRes = await ctx.broker.cmd.exec("node", [
-        "-e",
-        "console.log('Running inside tool')",
-      ]);
+      await ctx.broker.fs.writeFile("script.js", "console.log('Running inside tool');");
+      const cmdRes = await ctx.broker.cmd.exec("node", ["script.js"]);
 
       return {
         savedContent: content,

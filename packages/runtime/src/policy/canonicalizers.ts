@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type {
@@ -22,9 +24,16 @@ export type CanonicalizationErrorCode =
   | "SHELL_EXECUTION_DENIED"
   | "SHELL_METACHARACTERS_DETECTED"
   | "DANGEROUS_ENV_VAR"
+  | "UNAUTHORIZED_ENV_VAR"
   | "INVALID_SECRET_NAME"
   | "INVALID_SECRET_PREFIX"
-  | "WORKING_DIR_OUTSIDE_ROOT";
+  | "WORKING_DIR_OUTSIDE_ROOT"
+  | "COMMAND_NOT_FOUND"
+  | "COMMAND_IDENTITY_VIOLATION"
+  | "UNAUTHORIZED_BINARY"
+  | "FORBIDDEN_ARGUMENT_PATTERN"
+  | "INTERPRETER_ESCAPE_DENIED"
+  | "RESPONSE_FILE_DENIED";
 
 export class PolicyCanonicalizationError extends Error {
   readonly code: CanonicalizationErrorCode;
@@ -927,38 +936,253 @@ export function isShellExecutable(cmd: string): boolean {
  */
 export function containsShellMetacharacters(commandStr: string): boolean {
   // eslint-disable-next-line no-control-regex
-  return /[;&|`$><\n\r\t]|\$\(|\$\{/.test(commandStr);
+  const shellMetaPattern = /[;&|`$><\\!~*?[\]{}()'\"]|[\x00-\x1f\x7f]/;
+  return shellMetaPattern.test(commandStr);
 }
 
 /**
- * Dangerous environment variables that can hijack process execution or shared library loading.
+ * Detects forbidden characters or control characters in argument strings.
+ */
+export function containsForbiddenArgMetacharacters(arg: string): boolean {
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00\r\n`$|;&<>]/.test(arg)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Known interpreter escape flags that allow inline execution, code evaluation, or unapproved script loading.
+ */
+export const INTERPRETER_ESCAPE_FLAGS: Record<string, string[]> = {
+  node: [
+    "-e",
+    "--eval",
+    "-p",
+    "--print",
+    "--input-type",
+    "--inspect",
+    "--inspect-brk",
+    "--inspect-port",
+    "--experimental-loader",
+    "--import",
+    "--require",
+    "-r",
+  ],
+  nodejs: [
+    "-e",
+    "--eval",
+    "-p",
+    "--print",
+    "--input-type",
+    "--inspect",
+    "--inspect-brk",
+    "--inspect-port",
+    "--experimental-loader",
+    "--import",
+    "--require",
+    "-r",
+  ],
+  python: ["-c", "-m", "--command"],
+  python3: ["-c", "-m", "--command"],
+  python2: ["-c", "-m", "--command"],
+  ruby: ["-e", "-r", "--eval"],
+  perl: ["-e", "-E"],
+  php: ["-r", "-B", "-R", "-F"],
+  sh: ["-c", "-s"],
+  bash: ["-c", "-s"],
+  zsh: ["-c", "-s"],
+  dash: ["-c", "-s"],
+  ksh: ["-c", "-s"],
+  pwsh: ["-c", "-Command", "-EncodedCommand", "-e", "-ec", "-File"],
+  powershell: ["-c", "-Command", "-EncodedCommand", "-e", "-ec", "-File"],
+  cmd: ["/c", "/k"],
+  "cmd.exe": ["/c", "/k"],
+};
+
+/**
+ * Checks whether an argument represents an interpreter escape vector for the given executable.
+ */
+export function isInterpreterEscapeArg(
+  binaryNameOrPath: string,
+  arg: string,
+  _nextArg?: string,
+): boolean {
+  const baseName = path
+    .basename(binaryNameOrPath)
+    .toLowerCase()
+    .replace(/\.exe$/i, "");
+  const flags = INTERPRETER_ESCAPE_FLAGS[baseName] ?? [];
+  const cleanArg = arg.trim();
+
+  for (const flag of flags) {
+    if (cleanArg === flag || cleanArg.startsWith(`${flag}=`)) {
+      return true;
+    }
+  }
+
+  // Generic interpreter evaluation flags check
+  if (
+    cleanArg === "-e" ||
+    cleanArg === "-c" ||
+    cleanArg === "--eval" ||
+    cleanArg.startsWith("-e=") ||
+    cleanArg.startsWith("-c=") ||
+    cleanArg.startsWith("--eval=")
+  ) {
+    const isInterpreter =
+      baseName.includes("node") ||
+      baseName.includes("python") ||
+      baseName.includes("ruby") ||
+      baseName.includes("perl") ||
+      baseName.includes("php") ||
+      baseName.includes("deno") ||
+      baseName.includes("bun");
+    if (isInterpreter) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Checks for dangerous command-specific options (e.g. git command injection options).
+ */
+export function isDangerousOption(binaryNameOrPath: string, arg: string): boolean {
+  const baseName = path
+    .basename(binaryNameOrPath)
+    .toLowerCase()
+    .replace(/\.exe$/i, "");
+  const cleanArg = arg.trim();
+
+  if (baseName === "git") {
+    if (
+      cleanArg.startsWith("--upload-pack") ||
+      cleanArg.startsWith("--receive-pack") ||
+      cleanArg.startsWith("--exec=") ||
+      cleanArg === "--exec" ||
+      cleanArg.includes("core.fsmonitor") ||
+      cleanArg.includes("core.sshCommand") ||
+      cleanArg.includes("protocol.ext.allow") ||
+      cleanArg.includes("diff.external") ||
+      cleanArg.includes("sequence.editor")
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Checks if an argument is a dangerous response file reference escaping workspace boundaries.
+ */
+export function isResponseFileEscape(
+  arg: string,
+  workspaceRoot: string,
+  allowTemp = true,
+): boolean {
+  if (!arg.startsWith("@")) return false;
+  const filePath = arg.slice(1).trim();
+  if (filePath.length === 0) return false;
+
+  if (filePath.includes("..")) return true;
+
+  const targetPath = path.isAbsolute(filePath)
+    ? path.resolve(filePath)
+    : path.resolve(workspaceRoot, filePath);
+
+  const inWorkspace = isPathInsideRoot(targetPath, workspaceRoot);
+  const inTemp = allowTemp && isPathInsideRoot(targetPath, os.tmpdir());
+
+  return !inWorkspace && !inTemp;
+}
+/**
+ * Dangerous environment variables known to facilitate dynamic library injection,
+ * interpreter code hijacking, or unsafe process environment overrides.
  */
 export const DANGEROUS_ENV_VARS: Record<string, true> = {
   LD_PRELOAD: true,
   LD_LIBRARY_PATH: true,
+  LD_AUDIT: true,
+  LD_ORIGIN_PATH: true,
+  LD_DEBUG: true,
+  LD_PROFILE: true,
+  LD_SHOW_AUXV: true,
+  LD_USE_LOAD_BIAS: true,
   DYLD_INSERT_LIBRARIES: true,
   DYLD_LIBRARY_PATH: true,
   DYLD_FRAMEWORK_PATH: true,
+  DYLD_FALLBACK_LIBRARY_PATH: true,
+  DYLD_IMAGE_SUFFIX: true,
+  DYLD_PRINT_LIBRARIES: true,
   NODE_OPTIONS: true,
+  NODE_PATH: true,
   PYTHONPATH: true,
   PYTHONHOME: true,
+  PYTHONSTARTUP: true,
+  PYTHONOPTIMIZE: true,
+  PYTHONDEBUG: true,
+  PYTHONINSPECT: true,
+  PYTHONUNBUFFERED: true,
+  PYTHONDONTWRITEBYTECODE: true,
+  PYTHONHASHSEED: true,
+  PYTHONNOUSERSITE: true,
+  PYTHONUSERBASE: true,
   RUBYOPT: true,
+  RUBYLIB: true,
   PERL5OPT: true,
   PERL5LIB: true,
+  PERLLIB: true,
+  PHP_INI_SCAN_DIR: true,
+  JAVA_TOOL_OPTIONS: true,
+  _JAVA_OPTIONS: true,
+  JDK_JAVA_OPTIONS: true,
   BASH_ENV: true,
   ENV: true,
   PROMPT_COMMAND: true,
   SHELLOPTS: true,
   BASHOPTS: true,
   GLIBC_TUNABLES: true,
+  IFS: true,
+  PS4: true,
+  GLOBIGNORE: true,
 };
+
+export const DANGEROUS_ENV_PREFIXES: string[] = [
+  "LD_",
+  "DYLD_",
+  "PYTHON",
+  "NODE_OPTIONS",
+  "RUBY",
+  "PERL5",
+  "PERL_",
+  "JAVA_",
+  "_JAVA_",
+  "JDK_",
+  "BASH_",
+  "SHELLOPTS",
+  "BASHOPTS",
+];
 
 /**
  * Checks whether an environment variable name is dangerous.
  */
 export function isDangerousEnvVar(envName: string): boolean {
-  return DANGEROUS_ENV_VARS[envName.toUpperCase()] === true;
+  if (!envName || typeof envName !== "string") return true;
+  const upper = envName.toUpperCase().trim();
+  if (DANGEROUS_ENV_VARS[upper] === true) {
+    return true;
+  }
+  for (const prefix of DANGEROUS_ENV_PREFIXES) {
+    if (upper.startsWith(prefix)) {
+      return true;
+    }
+  }
+  return false;
 }
+
 /**
  * Validates whether an environment variable name is safe and valid.
  */
@@ -977,6 +1201,250 @@ export function canonicalizeEnvName(rawName: string): string {
   }
 
   return name;
+}
+
+/**
+ * Immutable command identity evidence captured at resolution time.
+ */
+export interface CommandIdentity {
+  canonicalPath: string;
+  realPath: string;
+  inode?: number;
+  device?: number;
+  size?: number;
+  mtimeMs?: number;
+  uid?: number;
+  gid?: number;
+  sha256?: string;
+}
+
+export interface ResolveBinaryOptions {
+  searchPaths?: string[];
+  allowNonExistent?: boolean;
+  computeDigest?: boolean;
+  workspaceRoot?: string;
+}
+
+/**
+ * Resolves an executable binary to its canonical absolute path and captures identity metadata.
+ */
+export function resolveCanonicalBinary(
+  binary: string,
+  options: ResolveBinaryOptions = {},
+): CommandIdentity {
+  if (typeof binary !== "string" || binary.trim().length === 0) {
+    throw new PolicyCanonicalizationError("EMPTY_PATH", "Binary path must be a non-empty string");
+  }
+
+  const clean = binary.trim();
+
+  if (clean.includes("..")) {
+    throw new PolicyCanonicalizationError(
+      "PATH_TRAVERSAL",
+      `Binary path cannot contain path traversal: ${clean}`,
+      { binary },
+    );
+  }
+
+  if (containsShellMetacharacters(clean)) {
+    throw new PolicyCanonicalizationError(
+      "SHELL_METACHARACTERS_DETECTED",
+      `Binary path contains forbidden shell metacharacters: ${clean}`,
+      { binary },
+    );
+  }
+
+  let candidatePath: string | null = null;
+  if (path.isAbsolute(clean)) {
+    candidatePath = path.resolve(clean);
+  } else if (clean.includes("/") || clean.includes("\\")) {
+    candidatePath = options.workspaceRoot
+      ? path.resolve(options.workspaceRoot, clean)
+      : path.resolve(clean);
+  } else {
+    // Bare binary name like "git", "node"
+    if (clean === "node") {
+      candidatePath = process.execPath;
+    } else {
+      const safePaths = options.searchPaths ?? [
+        "/usr/bin",
+        "/bin",
+        "/usr/local/bin",
+        "/opt/homebrew/bin",
+        "/usr/sbin",
+        "/sbin",
+      ];
+      if (process.env.PATH) {
+        const pathDirs = process.env.PATH.split(path.delimiter);
+        for (const dir of pathDirs) {
+          if (!dir || dir === "." || dir.startsWith("./") || dir.startsWith("../")) continue;
+          if (dir === "/tmp" || dir.startsWith("/tmp/") || dir.startsWith("/var/tmp/")) continue;
+          if (!safePaths.includes(dir)) {
+            safePaths.push(dir);
+          }
+        }
+      }
+
+      for (const dir of safePaths) {
+        const full = path.join(dir, clean);
+        if (fs.existsSync(full)) {
+          candidatePath = full;
+          break;
+        }
+        if (process.platform === "win32") {
+          for (const ext of [".exe", ".cmd", ".bat"]) {
+            const fullWithExt = path.join(dir, `${clean}${ext}`);
+            if (fs.existsSync(fullWithExt)) {
+              candidatePath = fullWithExt;
+              break;
+            }
+          }
+          if (candidatePath) break;
+        }
+      }
+    }
+  }
+
+  if (!candidatePath || !fs.existsSync(candidatePath)) {
+    if (options.allowNonExistent) {
+      const fallback = candidatePath ? path.resolve(candidatePath) : `/usr/bin/${clean}`;
+      return {
+        canonicalPath: fallback,
+        realPath: fallback,
+      };
+    }
+    throw new PolicyCanonicalizationError(
+      "PATH_TRAVERSAL",
+      `Executable binary not found on host: ${clean}`,
+      { binary: clean },
+    );
+  }
+
+  let realPath: string;
+  try {
+    realPath = fs.realpathSync.native
+      ? fs.realpathSync.native(candidatePath)
+      : fs.realpathSync(candidatePath);
+  } catch {
+    realPath = fs.realpathSync(candidatePath);
+  }
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(realPath);
+  } catch (err) {
+    throw new PolicyCanonicalizationError(
+      "PATH_TRAVERSAL",
+      `Unable to stat executable binary '${realPath}': ${(err as Error).message}`,
+      { binary: clean, realPath },
+    );
+  }
+
+  if (!stat.isFile()) {
+    throw new PolicyCanonicalizationError(
+      "PATH_TRAVERSAL",
+      `Executable path is not a regular file: ${realPath}`,
+      { binary: clean, realPath },
+    );
+  }
+
+  let sha256Hash: string | undefined;
+  if (options.computeDigest) {
+    try {
+      const content = fs.readFileSync(realPath);
+      sha256Hash = crypto.createHash("sha256").update(content).digest("hex");
+    } catch {
+      // ignore
+    }
+  }
+
+  return {
+    canonicalPath: path.resolve(candidatePath),
+    realPath,
+    inode: stat.ino,
+    device: stat.dev,
+    size: stat.size,
+    mtimeMs: stat.mtimeMs,
+    uid: stat.uid,
+    gid: stat.gid,
+    sha256: sha256Hash,
+  };
+}
+
+/**
+ * Re-verifies executable identity against previously recorded identity evidence.
+ * Detects symlink swaps, binary replacements, inode modifications, and hash changes.
+ */
+export function verifyExecutableIdentity(
+  expected: CommandIdentity,
+  currentPath?: string,
+): { valid: boolean; reason?: string } {
+  const target = currentPath ?? expected.canonicalPath;
+  if (!fs.existsSync(target)) {
+    return { valid: false, reason: `Executable file does not exist: ${target}` };
+  }
+
+  let currentRealPath: string;
+  try {
+    currentRealPath = fs.realpathSync.native
+      ? fs.realpathSync.native(target)
+      : fs.realpathSync(target);
+  } catch (err) {
+    return {
+      valid: false,
+      reason: `Failed to resolve realpath for '${target}': ${(err as Error).message}`,
+    };
+  }
+
+  if (currentRealPath !== expected.realPath) {
+    return {
+      valid: false,
+      reason: `Executable realpath mismatch (possible symlink swap): expected ${expected.realPath}, got ${currentRealPath}`,
+    };
+  }
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(currentRealPath);
+  } catch (err) {
+    return {
+      valid: false,
+      reason: `Failed to stat executable '${currentRealPath}': ${(err as Error).message}`,
+    };
+  }
+
+  if (!stat.isFile()) {
+    return { valid: false, reason: `Target executable is not a regular file: ${currentRealPath}` };
+  }
+
+  if (expected.inode !== undefined && expected.device !== undefined) {
+    if (stat.ino !== expected.inode || stat.dev !== expected.device) {
+      return {
+        valid: false,
+        reason: `Executable inode/device mismatch: expected inode ${expected.inode} on dev ${expected.device}, got inode ${stat.ino} on dev ${stat.dev}`,
+      };
+    }
+  }
+
+  if (expected.sha256) {
+    try {
+      const content = fs.readFileSync(currentRealPath);
+      const hash = crypto.createHash("sha256").update(content).digest("hex");
+      if (hash !== expected.sha256) {
+        return {
+          valid: false,
+          reason: `Executable SHA256 digest mismatch: expected ${expected.sha256}, got ${hash}`,
+        };
+      }
+    } catch (err) {
+      return {
+        valid: false,
+        reason: `Failed to compute executable digest: ${(err as Error).message}`,
+      };
+    }
+  }
+
+  return { valid: true };
 }
 
 /**
