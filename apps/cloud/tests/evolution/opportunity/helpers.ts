@@ -1,3 +1,125 @@
+import { type DatabasePool, MemoryDatabasePool, OutboxPublisher } from "../../../src/db/index.js";
+import { runMigrations } from "../../../src/db/migrations.js";
+import {
+  type OpportunityDetectionService,
+  OpportunityRepository,
+  createOpportunityDetectionService,
+} from "../../../src/evolution/opportunity/index.js";
+import type { OpportunityDetection } from "../../../src/evolution/opportunity/types.js";
+import type { TenantContext } from "../../../src/tenant.js";
+
+export const TEST_WORKSPACE_ID = "ws_opp_test_001";
+export const TEST_ACCOUNT_ID = "acc_opp_test_001";
+
+export const TEST_TENANT: TenantContext = {
+  accountId: TEST_ACCOUNT_ID,
+  workspaceId: TEST_WORKSPACE_ID,
+};
+
+export interface TestOpportunityEnvironment {
+  pool: DatabasePool;
+  repository: OpportunityRepository;
+  service: OpportunityDetectionService;
+  outboxPublisher: OutboxPublisher;
+}
+
+/**
+ * Creates a fully initialized in-memory database and opportunity test environment.
+ */
+export async function createTestOpportunityEnvironment(): Promise<TestOpportunityEnvironment> {
+  const pool = new MemoryDatabasePool();
+  await runMigrations(pool);
+
+  // Create default account and workspace for foreign key integrity
+  await pool.query(
+    `INSERT INTO accounts (id, name, plan, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)`,
+    [
+      TEST_ACCOUNT_ID,
+      "Test Account",
+      "standard",
+      new Date().toISOString(),
+      new Date().toISOString(),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO workspaces (id, account_id, name, slug, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+    [
+      TEST_WORKSPACE_ID,
+      TEST_ACCOUNT_ID,
+      "Test Workspace",
+      "test-ws",
+      new Date().toISOString(),
+      new Date().toISOString(),
+    ],
+  );
+
+  const repository = new OpportunityRepository(pool);
+  const service = createOpportunityDetectionService({ pool, repository });
+  const outboxPublisher = new OutboxPublisher(pool);
+
+  return {
+    pool,
+    repository,
+    service,
+    outboxPublisher,
+  };
+}
+
+/**
+ * Creates a mock OpportunityDetection entity.
+ */
+export function createMockOpportunity(
+  overrides: Partial<OpportunityDetection> = {},
+): OpportunityDetection {
+  const id = overrides.id ?? "opp_mock_001";
+  const structuralHash = overrides.structuralHash ?? "sha256_mock_struct_hash_001";
+  const idempotencyKey = overrides.idempotencyKey ?? `opp_ik_${structuralHash}`;
+  const now = new Date().toISOString();
+
+  return {
+    id,
+    accountId: overrides.accountId ?? TEST_ACCOUNT_ID,
+    workspaceId: overrides.workspaceId ?? TEST_WORKSPACE_ID,
+    clusterId: overrides.clusterId ?? "cluster_test_001",
+    structuralHash,
+    idempotencyKey,
+    status: overrides.status ?? "eligible",
+    triggerType: overrides.triggerType ?? "normal_frequency",
+    triggerReason: overrides.triggerReason ?? "frequency_threshold_met",
+    occurrenceCount: overrides.occurrenceCount ?? 3,
+    distinctSessionCount: overrides.distinctSessionCount ?? 2,
+    evidenceEventIds: overrides.evidenceEventIds ?? ["evt_1", "evt_2", "evt_3"],
+    coverage: overrides.coverage ?? {
+      status: "eligible",
+      reason: "No covering tool detected",
+    },
+    suppression: overrides.suppression ?? {
+      suppressed: false,
+      reason: "none",
+      details: "",
+    },
+    classification: overrides.classification ?? {
+      title: "Batch CSV Converter",
+      description: "Converts multiple CSV files to JSON",
+      taskClass: "data_transform",
+      pattern: "file_read -> data_transform -> file_write",
+      confidenceScore: 0.95,
+      priority: "high",
+      suggestedToolName: "batch_csv_converter",
+      provenance: { model: "claude-3-7-sonnet" },
+    },
+    metrics: overrides.metrics ?? {
+      totalDurationMs: 4500,
+      avgDurationMs: 1500,
+      totalTokens: 1200,
+      totalRetries: 0,
+      totalCostUsd: 0.0036,
+    },
+    createdAt: overrides.createdAt ?? now,
+    updatedAt: overrides.updatedAt ?? now,
+  };
+}
+
 import {
   type NormalizedCommandExecEvent,
   type NormalizedErrorEvent,

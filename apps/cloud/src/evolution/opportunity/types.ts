@@ -6,6 +6,7 @@ import {
   type ToolManifest,
 } from "@tool-evolver/contracts";
 import { z } from "zod";
+import type { Queryable } from "../../db/client.js";
 
 /**
  * High-level functional category of a tool or command.
@@ -227,6 +228,7 @@ export interface OpportunityDetection {
   workspaceId: string;
   clusterId: string;
   structuralHash: string;
+  idempotencyKey?: string;
   status: OpportunityDetectionStatus;
   triggerType: "normal_frequency" | "exceptional_waste";
   triggerReason: CandidateTriggerReason;
@@ -282,6 +284,18 @@ export interface SuppressionOptions {
 }
 
 /**
+ * Filter criteria for querying opportunities.
+ */
+export interface OpportunityFilter {
+  status?: OpportunityDetectionStatus;
+  workspaceId?: string;
+  structuralHash?: string;
+  triggerType?: "normal_frequency" | "exceptional_waste";
+  limit?: number;
+  offset?: number;
+}
+
+/**
  * Parameters for OpportunityDetectionService.detectOpportunities.
  */
 export interface DetectOpportunitiesParams {
@@ -292,6 +306,7 @@ export interface DetectOpportunitiesParams {
   envelope?: CapabilityEnvelope;
   recentOpportunityHashes?: Set<string> | Map<string, number>;
   now?: number;
+  db?: Queryable;
 }
 
 /**

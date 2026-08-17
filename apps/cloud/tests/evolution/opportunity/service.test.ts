@@ -5,8 +5,12 @@ import {
   createOpportunityDetectionService,
 } from "../../../src/evolution/opportunity/index.js";
 import {
+  TEST_ACCOUNT_ID,
+  TEST_TENANT,
+  TEST_WORKSPACE_ID,
   createCommandExecEvent,
   createFileEditEvent,
+  createTestOpportunityEnvironment,
   createToolCallEvent,
   createToolResultEvent,
 } from "./helpers.js";
@@ -327,5 +331,164 @@ describe("OpportunityDetectionService (End-to-End)", () => {
     const otherTenant = { accountId: "acct-beta", workspaceId: "ws-beta" };
     const foreignGet = await service.getOpportunityById(otherTenant, detected[0].id);
     expect(foreignGet).toBeNull();
+  });
+
+  it("should recover opportunities and maintain cooldown across process restart without in-memory state", async () => {
+    const env = await createTestOpportunityEnvironment();
+    const service1 = createOpportunityDetectionService({
+      pool: env.pool,
+      triggers: { minOccurrencesNormal: 3 },
+      suppression: { cooldownMs: 60 * 1000 }, // 1 minute cooldown
+    });
+
+    const createOccurrence = (sessionId: string, prefix: string) => [
+      createToolCallEvent({
+        eventId: `${prefix}_1`,
+        sessionId,
+        toolName: "read_file",
+        parameters: { path: `src/${prefix}.ts` },
+      }),
+      createToolResultEvent({
+        eventId: `${prefix}_2`,
+        sessionId,
+        toolCallId: `${prefix}_1`,
+        result: "file content",
+      }),
+      createFileEditEvent({
+        eventId: `${prefix}_3`,
+        sessionId,
+        filePath: `src/${prefix}.ts`,
+      }),
+    ];
+
+    const events = [
+      ...createOccurrence("sess-10", "occ10"),
+      ...createOccurrence("sess-20", "occ20"),
+      ...createOccurrence("sess-30", "occ30"),
+    ];
+
+    // Process in first service instance
+    const t0 = 1000000;
+    const detected1 = await service1.detectOpportunities({
+      accountId: TEST_ACCOUNT_ID,
+      workspaceId: TEST_WORKSPACE_ID,
+      events,
+      now: t0,
+    });
+
+    expect(detected1.eligibleCount).toBe(1);
+    const originalOpp = detected1.opportunities[0];
+    expect(originalOpp.status).toBe("eligible");
+
+    // Simulate complete process crash/restart: create brand-new service instance with no in-memory state
+    const service2 = createOpportunityDetectionService({
+      pool: env.pool,
+      triggers: { minOccurrencesNormal: 3 },
+      suppression: { cooldownMs: 60 * 1000 },
+    });
+
+    // 1. Verify retrieval after restart
+    const recoveredOpp = await service2.getOpportunityById(TEST_TENANT, originalOpp.id);
+    expect(recoveredOpp).not.toBeNull();
+    expect(recoveredOpp?.id).toBe(originalOpp.id);
+    expect(recoveredOpp?.structuralHash).toBe(originalOpp.structuralHash);
+    expect(recoveredOpp?.idempotencyKey).toBe(originalOpp.idempotencyKey);
+
+    // 2. Process same structural pattern within cooldown window (t0 + 30s) -> should be SUPPRESSED by DB cooldown!
+    const detected2 = await service2.detectOpportunities({
+      accountId: TEST_ACCOUNT_ID,
+      workspaceId: TEST_WORKSPACE_ID,
+      events: [
+        ...createOccurrence("sess-40", "occ40"),
+        ...createOccurrence("sess-50", "occ50"),
+        ...createOccurrence("sess-60", "occ60"),
+      ],
+      now: t0 + 30000,
+    });
+
+    expect(detected2.opportunities).toHaveLength(1);
+    const suppressedOpp = detected2.opportunities[0];
+    expect(suppressedOpp.status).toBe("suppressed");
+    expect(suppressedOpp.suppression.suppressed).toBe(true);
+    expect(suppressedOpp.suppression.reason).toBe("in_cooldown");
+    expect(detected2.eligibleCount).toBe(0);
+    expect(detected2.suppressedCount).toBe(1);
+    const detected3 = await service2.detectOpportunities({
+      accountId: TEST_ACCOUNT_ID,
+      workspaceId: TEST_WORKSPACE_ID,
+      events: [
+        ...createOccurrence("sess-70", "occ70"),
+        ...createOccurrence("sess-80", "occ80"),
+        ...createOccurrence("sess-90", "occ90"),
+      ],
+      now: t0 + 100000,
+    });
+
+    expect(detected3.eligibleCount).toBe(1);
+    expect(detected3.opportunities[0].status).toBe("eligible");
+  });
+
+  it("should guarantee deterministic IDs and idempotent outbox publishing on duplicate event processing", async () => {
+    const env = await createTestOpportunityEnvironment();
+    const service = createOpportunityDetectionService({
+      pool: env.pool,
+      triggers: { minOccurrencesNormal: 3 },
+    });
+
+    const createOccurrence = (sessionId: string, prefix: string) => [
+      createToolCallEvent({
+        eventId: `${prefix}_1`,
+        sessionId,
+        toolName: "search_code",
+        parameters: { query: "export function" },
+      }),
+      createToolResultEvent({
+        eventId: `${prefix}_2`,
+        sessionId,
+        toolCallId: `${prefix}_1`,
+        result: "found matches",
+      }),
+      createFileEditEvent({
+        eventId: `${prefix}_3`,
+        sessionId,
+        filePath: `src/${prefix}.ts`,
+      }),
+    ];
+
+    const events = [
+      ...createOccurrence("s-1", "e1"),
+      ...createOccurrence("s-2", "e2"),
+      ...createOccurrence("s-3", "e3"),
+    ];
+
+    // Run 1: First detection
+    const res1 = await service.detectOpportunities({
+      accountId: TEST_ACCOUNT_ID,
+      workspaceId: TEST_WORKSPACE_ID,
+      events,
+    });
+
+    expect(res1.eligibleCount).toBe(1);
+    const opp1 = res1.opportunities[0];
+
+    // Run 2: Re-deliver identical batch (e.g. retry / at-least-once message redelivery)
+    const res2 = await service.detectOpportunities({
+      accountId: TEST_ACCOUNT_ID,
+      workspaceId: TEST_WORKSPACE_ID,
+      events,
+    });
+
+    const opp2 = res2.opportunities[0];
+    // Deterministic ID and Idempotency Key MUST match
+    expect(opp2.id).toBe(opp1.id);
+    expect(opp2.idempotencyKey).toBe(opp1.idempotencyKey);
+    expect(opp2.structuralHash).toBe(opp1.structuralHash);
+
+    // Verify outbox has EXACTLY ONE candidate.generate event for this opportunity
+    const outboxRes = await env.pool.query(
+      `SELECT * FROM outbox WHERE aggregate_id = $1 AND event_type = $2`,
+      [opp1.id, "candidate.generate"],
+    );
+    expect(outboxRes.rows).toHaveLength(1);
   });
 });

@@ -49,6 +49,10 @@ export class SuppressionEngine {
     this.disallowedCommands = options.disallowedCommands ?? [];
   }
 
+  getCooldownMs(): number {
+    return this.cooldownMs;
+  }
+
   /**
    * Evaluates if a workflow cluster or episode should be suppressed from opportunity creation.
    */

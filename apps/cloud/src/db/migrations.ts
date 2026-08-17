@@ -963,12 +963,65 @@ export const analyticsAndMetricsMigration: Migration = {
   },
 };
 
+/**
+ * Opportunity persistence & detection schema migration (v6).
+ */
+export const opportunitiesMigration: Migration = {
+  version: 6,
+  name: "006_opportunities",
+  up: async (db: Queryable) => {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS opportunities (
+        id VARCHAR(64) PRIMARY KEY,
+        account_id VARCHAR(64) NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        workspace_id VARCHAR(64) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        cluster_id VARCHAR(64) NOT NULL,
+        structural_hash VARCHAR(64) NOT NULL,
+        idempotency_key VARCHAR(128) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'eligible',
+        trigger_type VARCHAR(64) NOT NULL,
+        trigger_reason VARCHAR(64) NOT NULL,
+        occurrence_count INT NOT NULL DEFAULT 1,
+        distinct_session_count INT NOT NULL DEFAULT 1,
+        evidence_event_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+        metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+        classification JSONB,
+        suppression_reason TEXT,
+        coverage_decision TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_opportunities_workspace_idempotency UNIQUE (workspace_id, idempotency_key)
+      );
+    `);
+
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_opportunities_tenant ON opportunities(account_id, workspace_id);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_opportunities_hash ON opportunities(workspace_id, structural_hash);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_opportunities_status ON opportunities(workspace_id, status);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_opportunities_idempotency ON opportunities(workspace_id, idempotency_key);`,
+    );
+    await db.query(
+      `CREATE INDEX IF NOT EXISTS idx_opportunities_created_at ON opportunities(workspace_id, created_at);`,
+    );
+  },
+  down: async (db: Queryable) => {
+    await db.query(`DROP TABLE IF EXISTS opportunities;`);
+  },
+};
+
 export const DEFAULT_MIGRATIONS: Migration[] = [
   initialSchemaMigration,
   observationsAndEvidenceMigration,
   toolRegistryAndArtifactsMigration,
   rolloutAndCanaryMigration,
   analyticsAndMetricsMigration,
+  opportunitiesMigration,
 ];
 
 /**

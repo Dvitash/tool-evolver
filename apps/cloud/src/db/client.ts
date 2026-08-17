@@ -203,6 +203,26 @@ export class MemoryDatabasePool implements DatabasePool {
             ? String(record.version)
             : String(record[columns[0]] ?? Math.random()));
 
+        // Handle ON CONFLICT DO NOTHING
+        const conflictDoNothingMatch = trimmed.match(
+          /ON\s+CONFLICT(?:\s*\([^)]+\))?\s+DO\s+NOTHING/i,
+        );
+        if (conflictDoNothingMatch) {
+          if (table.has(pk)) {
+            return { rows: [], rowCount: 0 };
+          }
+          const colsMatch = trimmed.match(/ON\s+CONFLICT\s*\(([^)]+)\)\s+DO\s+NOTHING/i);
+          if (colsMatch) {
+            const conflictCols = colsMatch[1].split(",").map((c) => c.trim().replace(/["`]/g, ""));
+            for (const existingRow of table.values()) {
+              const allMatch = conflictCols.every((c) => existingRow[c] === record[c]);
+              if (allMatch) {
+                return { rows: [], rowCount: 0 };
+              }
+            }
+          }
+        }
+
         // Handle ON CONFLICT DO UPDATE
         const conflictUpdateMatch = trimmed.match(
           /ON\s+CONFLICT\s*\([^)]+\)\s*DO\s+UPDATE\s+SET\s+(.+)$/i,

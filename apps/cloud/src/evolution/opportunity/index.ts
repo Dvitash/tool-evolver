@@ -14,3 +14,4 @@ export * from "./coverage.js";
 export * from "./suppression.js";
 export * from "./classifier.js";
 export * from "./service.js";
+export * from "./repositories/index.js";

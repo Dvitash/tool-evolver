@@ -215,7 +215,7 @@ export class CloudService {
       evidenceRepo: this.evidenceRepo,
       retentionRepo: this.retentionRepo,
     });
-    this.opportunityService = createOpportunityDetectionService();
+    this.opportunityService = createOpportunityDetectionService({ pool: this.dbPool });
     this.candidateGenerationService = createCandidateGenerationService();
     this.candidateValidationService = createCandidateValidationService();
     this.historicalReplayService = createHistoricalReplayService({
