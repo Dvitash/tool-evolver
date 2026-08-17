@@ -1,3 +1,5 @@
+import { isSafetyGateBypassTool } from "@tool-evolver/contracts";
+import type { SafetyGateEvaluator } from "@tool-evolver/runtime";
 import type { CallToolResult } from "../protocol/types.js";
 import type { ToolRegistry } from "../registry/registry.js";
 import type { RegistryTool } from "../registry/types.js";
@@ -23,6 +25,7 @@ export interface InvokeToolParams {
 export function createInvokeToolHandler(
   registry: ToolRegistry,
   invocationRouter: ToolInvocationRouter,
+  safetyGateEvaluator?: SafetyGateEvaluator,
 ): ToolHandler {
   return async (
     context: WorkspaceContext,
@@ -132,6 +135,27 @@ export function createInvokeToolHandler(
     }
 
     // Validate parameters strictly against the manifest parameter schema
+
+    // Check production readiness safety gate for generated tools
+    if (
+      safetyGateEvaluator &&
+      !resolvedTool.isSystem &&
+      !isSafetyGateBypassTool(resolvedTool.name) &&
+      !isSafetyGateBypassTool(resolvedTool.toolId)
+    ) {
+      const gateCheck = safetyGateEvaluator.canExecuteTool(
+        resolvedTool.toolId,
+        resolvedTool.name,
+        Boolean(resolvedTool.isSystem),
+      );
+      if (!gateCheck.allowed && gateCheck.refusal) {
+        return {
+          isError: true,
+          content: gateCheck.refusal.content,
+          _meta: { refusal: gateCheck.refusal },
+        };
+      }
+    }
     const paramSchema = resolvedTool.parameters ?? resolvedTool.manifest?.parameters;
     const validation = validateParameters(paramSchema, targetParams);
     if (!validation.valid) {

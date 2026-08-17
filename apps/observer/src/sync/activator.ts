@@ -8,14 +8,16 @@ import {
   type DeploymentTransition,
   type DeploymentTransitionReason,
   type InstallationRecord,
+  type SafetyGateRefusal,
   type ToolManifest,
   type ToolVersion,
   canonicalJson,
   hashCanonicalContent,
+  isSafetyGateBypassTool,
 } from "@tool-evolver/contracts";
 import type { LocalDatabaseConnection, ToolRepository } from "@tool-evolver/db";
+import type { AuditTrailManager } from "../observability/audit-trail.js";
 import type { CatalogChangeEvent, LocalDeploymentState } from "./types.js";
-
 /**
  * Listener function for CatalogChangeEvents.
  */
@@ -130,6 +132,15 @@ export interface RetireDeploymentParams {
 /**
  * Options for DeploymentActivator.
  */
+export interface SafetyGateLike {
+  canExecuteTool(
+    toolId: string,
+    toolName: string,
+    isSystem?: boolean,
+  ): { allowed: boolean; refusal?: SafetyGateRefusal };
+  isUnsafeOverrideActive?(): boolean;
+}
+
 export interface DeploymentActivatorOptions {
   conn: LocalDatabaseConnection;
   toolRepo?: ToolRepository;
@@ -137,6 +148,8 @@ export interface DeploymentActivatorOptions {
     type: "daemon" | "user" | "policy_engine" | "gateway" | "system";
     id: string;
   };
+  safetyGate?: SafetyGateLike;
+  auditTrail?: AuditTrailManager;
 }
 
 /**
@@ -147,6 +160,8 @@ export class DeploymentActivator {
   private readonly conn: LocalDatabaseConnection;
   private readonly toolRepo?: ToolRepository;
   private readonly listeners = new Set<CatalogChangeListener>();
+  private safetyGate?: SafetyGateLike;
+  private auditTrail?: AuditTrailManager;
   private readonly defaultActor: {
     type: "daemon" | "user" | "policy_engine" | "gateway" | "system";
     id: string;
@@ -155,9 +170,20 @@ export class DeploymentActivator {
   constructor(options: DeploymentActivatorOptions) {
     this.conn = options.conn;
     this.toolRepo = options.toolRepo;
-    this.defaultActor = options.defaultActor ?? { type: "daemon", id: "deployment-activator" };
+    this.safetyGate = options.safetyGate;
+    this.auditTrail = options.auditTrail;
+    this.defaultActor = options.defaultActor ?? {
+      type: "daemon",
+      id: "observer-daemon",
+    };
+  }
+  setSafetyGate(safetyGate: SafetyGateLike): void {
+    this.safetyGate = safetyGate;
   }
 
+  setAuditTrail(auditTrail: AuditTrailManager): void {
+    this.auditTrail = auditTrail;
+  }
   /**
    * Register a listener for catalog change notifications.
    */
@@ -291,6 +317,69 @@ export class DeploymentActivator {
     const isCanary = Boolean(params.isCanary);
     const trafficPct = isCanary ? (params.targetTrafficPercentage ?? 10) : 100;
     const targetState: DeploymentState = isCanary ? "canary" : "promoted";
+
+    // Safety gate fail-closed enforcement on non-system tools
+    if (this.safetyGate && !isSafetyGateBypassTool(params.toolId)) {
+      const check = this.safetyGate.canExecuteTool(params.toolId, params.toolId, false);
+      if (!check.allowed && check.refusal) {
+        if (this.auditTrail) {
+          const auditActor = {
+            type: (actor.type === "gateway" ? "system" : actor.type) as
+              | "daemon"
+              | "user"
+              | "policy_engine"
+              | "system"
+              | "agent",
+            id: actor.id,
+          };
+          await this.auditTrail.append({
+            eventType: "safety_gate_refusal",
+            actor: auditActor,
+            resourceType: "deployment",
+            resourceId: params.toolId,
+            action: "activate",
+            status: "denied",
+            details: {
+              reason: check.refusal.refusalReason,
+              code: check.refusal.refusalCode,
+              remediation: check.refusal.remediation,
+              unmetGates: check.refusal.unmetGates,
+              toolId: params.toolId,
+              version: params.version,
+            },
+          });
+        }
+        throw new Error(
+          `Deployment activation blocked by fail-closed safety gate: ${check.refusal.refusalReason}`,
+        );
+      }
+
+      if (this.safetyGate.isUnsafeOverrideActive?.() && this.auditTrail) {
+        const auditActor = {
+          type: (actor.type === "gateway" ? "system" : actor.type) as
+            | "daemon"
+            | "user"
+            | "policy_engine"
+            | "system"
+            | "agent",
+          id: actor.id,
+        };
+        await this.auditTrail.append({
+          eventType: "safety_gate_unsafe_override",
+          actor: auditActor,
+          workspaceId: params.workspaceId,
+          resourceType: "deployment",
+          resourceId: params.toolId,
+          action: "activate",
+          status: "success",
+          details: {
+            warning: "Unsafe development override active during tool activation",
+            toolId: params.toolId,
+            version: params.version,
+          },
+        });
+      }
+    }
 
     let snapshotResult: CatalogSnapshot | null = null;
     let deploymentIdResult = params.deploymentId;

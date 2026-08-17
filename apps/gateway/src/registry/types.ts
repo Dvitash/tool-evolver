@@ -6,6 +6,7 @@ import type {
   ToolManifest,
   ToolScope,
 } from "@tool-evolver/contracts";
+import type { SafetyGateEvaluator } from "@tool-evolver/runtime";
 import type { ToolInvocationRouter } from "../meta/router-contract.js";
 import type { CallToolResult } from "../protocol/types.js";
 import type { ToolCallOptions, ToolHandler } from "../router.js";
@@ -157,4 +158,8 @@ export interface ToolRegistryOptions {
    * Optional invocation router for dispatching tool executions.
    */
   invocationRouter?: ToolInvocationRouter;
+  /**
+   * Optional Safety Gate evaluator for enforcing production readiness.
+   */
+  safetyGateEvaluator?: SafetyGateEvaluator;
 }

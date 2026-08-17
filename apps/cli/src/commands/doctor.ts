@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import type { SafetyAttestationRecord } from "@tool-evolver/contracts";
+import { SafetyGateEvaluator, createSafetyAttestation } from "@tool-evolver/runtime";
 const SYSTEM_META_TOOL_NAMES = [
   "search_tools",
   "get_tool_schema",
@@ -45,14 +47,14 @@ export interface DoctorDiagnosticItem {
     | "gateway"
     | "harness"
     | "auth"
-    | "runtime";
+    | "runtime"
+    | "security";
   status: "pass" | "warn" | "fail";
   message: string;
   remediation?: string;
   fixable: boolean;
   fixed?: boolean;
 }
-
 export interface DoctorReport {
   passed: boolean;
   healthy: boolean;
@@ -355,6 +357,61 @@ export async function runDiagnostics(options: {
     });
   }
 
+  // 6. Safety Gate Attestation Check
+  let attestationRecord: SafetyAttestationRecord | null = null;
+  const attestationPaths = [
+    path.join(customHome, ".tool-evolver", "safety-attestation.json"),
+    path.join(daemonPaths.configDir, "safety-attestation.json"),
+  ];
+  for (const attPath of attestationPaths) {
+    const raw = await fsBridge.readFile(attPath);
+    if (raw) {
+      try {
+        attestationRecord = JSON.parse(raw);
+        break;
+      } catch {
+        // Corrupted JSON - will be handled by evaluator
+      }
+    }
+  }
+
+  const safetyEvaluator = new SafetyGateEvaluator({
+    attestation: attestationRecord,
+  });
+  const gateStatus = safetyEvaluator.getStatus();
+
+  if (gateStatus.isOpen && gateStatus.status === "passed") {
+    items.push({
+      id: "safety_gate",
+      name: "Production Readiness Safety Gate",
+      category: "security",
+      status: "pass",
+      message: "Production safety attestation verified and valid",
+      fixable: true,
+    });
+  } else if (gateStatus.status === "unsafe_override") {
+    items.push({
+      id: "safety_gate",
+      name: "Production Readiness Safety Gate",
+      category: "security",
+      status: "warn",
+      message: "Unsafe development override active (TOOL_EVOLVER_UNSAFE_ALLOW_AUTONOMOUS)",
+      remediation: "Disable unsafe override in production environments.",
+      fixable: true,
+    });
+  } else {
+    items.push({
+      id: "safety_gate",
+      name: "Production Readiness Safety Gate",
+      category: "security",
+      status: "fail",
+      message: gateStatus.reasons.join("; "),
+      remediation:
+        gateStatus.unmetRequirements[0]?.remediation ??
+        "Run `tool-evolver repair` to generate a valid local attestation.",
+      fixable: true,
+    });
+  }
   return items;
 }
 
@@ -450,6 +507,28 @@ export async function repairState(options: {
     if (result.success) {
       actions.push(`Configured MCP entries for harnesses: ${harnessesToConfig.join(", ")}`);
     }
+  }
+
+  // 5. Repair / generate production safety attestation
+  let attestationNeedsRepair = true;
+  const targetAttPath = path.join(toolEvolverHome, "safety-attestation.json");
+  const existingRaw = await fsBridge.readFile(targetAttPath);
+  if (existingRaw) {
+    try {
+      const parsed = JSON.parse(existingRaw);
+      const testEvaluator = new SafetyGateEvaluator({ attestation: parsed });
+      if (testEvaluator.getStatus().isOpen && testEvaluator.getStatus().status === "passed") {
+        attestationNeedsRepair = false;
+      }
+    } catch {
+      attestationNeedsRepair = true;
+    }
+  }
+
+  if (attestationNeedsRepair) {
+    const newAttestation = createSafetyAttestation();
+    await fsBridge.writeFile(targetAttPath, JSON.stringify(newAttestation, null, 2));
+    actions.push(`Generated and wrote production safety attestation: ${targetAttPath}`);
   }
 
   return actions;

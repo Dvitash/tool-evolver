@@ -30,6 +30,9 @@ export * from "./evaluation.js";
 // Workspace, Device, Invocation & Telemetry Records
 export * from "./records.js";
 
+// Production Safety Gate & Attestations
+export * from "./safety-gate.js";
+
 // Legacy compatibility types and constants
 export interface ToolSpec {
   id: string;
