@@ -1,5 +1,5 @@
-import { z } from "zod";
 import { ISOTimestampSchema, IdentifierSchema } from "@tool-evolver/contracts";
+import { z } from "zod";
 
 /**
  * Standard protocol error code taxonomy.
@@ -112,14 +112,21 @@ export class ProtocolError extends Error {
  */
 
 export class RetryableError extends ProtocolError {
-  constructor(message: string, options: { retryAfterMs?: number; details?: Record<string, unknown>; cause?: unknown } = {}) {
+  constructor(
+    message: string,
+    options: { retryAfterMs?: number; details?: Record<string, unknown>; cause?: unknown } = {},
+  ) {
     super("retryable", message, { status: 503, ...options });
   }
 }
 
 export class UpgradeRequiredError extends ProtocolError {
   readonly minSupportedVersion: string;
-  constructor(message: string, minSupportedVersion: string, options: { details?: Record<string, unknown> } = {}) {
+  constructor(
+    message: string,
+    minSupportedVersion: string,
+    options: { details?: Record<string, unknown> } = {},
+  ) {
     super("upgrade_required", message, {
       status: 426,
       details: { minSupportedVersion, ...options.details },
@@ -141,7 +148,10 @@ export class ValidationError extends ProtocolError {
 }
 
 export class TerminalError extends ProtocolError {
-  constructor(message: string, options: { details?: Record<string, unknown>; cause?: unknown } = {}) {
+  constructor(
+    message: string,
+    options: { details?: Record<string, unknown>; cause?: unknown } = {},
+  ) {
     super("terminal", message, { status: 500, ...options });
   }
 }
@@ -169,7 +179,10 @@ export class ClockSkewError extends ProtocolError {
 }
 
 export class RateLimitedError extends ProtocolError {
-  constructor(message: string, options: { retryAfterMs?: number; details?: Record<string, unknown> } = {}) {
+  constructor(
+    message: string,
+    options: { retryAfterMs?: number; details?: Record<string, unknown> } = {},
+  ) {
     super("rate_limited", message, { status: 429, ...options });
   }
 }
@@ -183,7 +196,10 @@ export class DeviceRevokedError extends ProtocolError {
 }
 
 export class TokenExpiredError extends ProtocolError {
-  constructor(message = "Authentication token has expired", options: { details?: Record<string, unknown> } = {}) {
+  constructor(
+    message = "Authentication token has expired",
+    options: { details?: Record<string, unknown> } = {},
+  ) {
     super("token_expired", message, { status: 401, ...options });
   }
 }
@@ -206,7 +222,11 @@ export class SequenceError extends ProtocolError {
   readonly expectedSequence: number;
   readonly receivedSequence: number;
 
-  constructor(expectedSequence: number, receivedSequence: number, message = "Stream sequence out of order") {
+  constructor(
+    expectedSequence: number,
+    receivedSequence: number,
+    message = "Stream sequence out of order",
+  ) {
     super("out_of_order", message, {
       status: 409,
       details: { expectedSequence, receivedSequence },
@@ -220,7 +240,11 @@ export class DecompressionBombError extends ProtocolError {
   readonly declaredSize: number;
   readonly maxAllowedSize: number;
 
-  constructor(declaredSize: number, maxAllowedSize: number, message = "Decompressed artifact exceeds maximum allowable size limit") {
+  constructor(
+    declaredSize: number,
+    maxAllowedSize: number,
+    message = "Decompressed artifact exceeds maximum allowable size limit",
+  ) {
     super("decompression_bomb", message, {
       status: 413,
       details: { declaredSize, maxAllowedSize },
@@ -284,7 +308,12 @@ export function isProtocolError(error: unknown): error is ProtocolError {
  */
 export function isRetryableProtocolError(error: unknown): boolean {
   if (isProtocolError(error)) {
-    return error.code === "retryable" || error.code === "rate_limited" || error.status === 503 || error.status === 429;
+    return (
+      error.code === "retryable" ||
+      error.code === "rate_limited" ||
+      error.status === 503 ||
+      error.status === 429
+    );
   }
   return false;
 }

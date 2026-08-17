@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
 import {
   ISOTimestampSchema,
   IdentifierSchema,
@@ -8,12 +7,15 @@ import {
   hashCanonicalContent,
   normalizeSha256,
 } from "@tool-evolver/contracts";
+import { z } from "zod";
 import { ChecksumMismatchError, ClockSkewError } from "./errors.js";
 
 /**
  * Protocol compression algorithms.
  */
-export const ProtocolCompressionSchema = z.enum(["none", "gzip", "zstd", "deflate"]).default("none");
+export const ProtocolCompressionSchema = z
+  .enum(["none", "gzip", "zstd", "deflate"])
+  .default("none");
 export type ProtocolCompression = z.infer<typeof ProtocolCompressionSchema>;
 
 /**
@@ -165,7 +167,9 @@ export function assertEnvelopeClockSkew(
   envelope: ProtocolMessageEnvelope<unknown>,
   options: { serverTimestamp?: string; maxSkewMs?: number } = {},
 ): void {
-  const serverTime = options.serverTimestamp ? new Date(options.serverTimestamp).getTime() : Date.now();
+  const serverTime = options.serverTimestamp
+    ? new Date(options.serverTimestamp).getTime()
+    : Date.now();
   const clientTime = new Date(envelope.createdAt).getTime();
   const maxSkewMs = options.maxSkewMs ?? 300_000; // 5 minutes default
   const skew = Math.abs(serverTime - clientTime);

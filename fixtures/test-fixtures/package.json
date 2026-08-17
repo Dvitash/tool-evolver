@@ -1,16 +1,24 @@
 {
   "name": "@tool-evolver/test-fixtures",
   "version": "0.1.0",
-  "description": "Shared test fixtures and mock datasets for Tool Evolver.",
+  "description": "Shared test fixtures, conformance runner, schema diffing, and mock datasets for Tool Evolver.",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "tool-evolver-conformance": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./golden": {
+      "types": "./dist/golden/index.d.ts",
+      "import": "./dist/golden/index.js",
+      "default": "./dist/golden/index.js"
     }
   },
   "scripts": {
@@ -20,6 +28,9 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@tool-evolver/contracts": "workspace:*"
+    "@tool-evolver/contracts": "workspace:*",
+    "@tool-evolver/harness-contracts": "workspace:*",
+    "@tool-evolver/protocol": "workspace:*",
+    "zod": "^3.25.76"
   }
 }

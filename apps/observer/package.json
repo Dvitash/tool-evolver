@@ -6,6 +6,9 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "tool-evolver-daemon": "./dist/bin/daemon.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -21,6 +24,7 @@
   },
   "dependencies": {
     "@tool-evolver/contracts": "workspace:*",
-    "@tool-evolver/protocol": "workspace:*"
+    "@tool-evolver/protocol": "workspace:*",
+    "zod": "^3.25.76"
   }
 }

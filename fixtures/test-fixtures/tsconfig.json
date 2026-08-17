@@ -10,6 +10,12 @@
   "references": [
     {
       "path": "../../packages/contracts"
+    },
+    {
+      "path": "../../packages/protocol"
+    },
+    {
+      "path": "../../packages/harness-contracts"
     }
   ]
 }

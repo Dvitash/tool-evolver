@@ -4,12 +4,19 @@
     "rootDir": "src",
     "outDir": "dist",
     "composite": true,
-    "tsBuildInfoFile": "./dist/.tsbuildinfo"
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
+    "lib": ["ES2024"]
   },
   "include": ["src/**/*"],
   "references": [
     {
       "path": "../../packages/contracts"
+    },
+    {
+      "path": "../../packages/protocol"
+    },
+    {
+      "path": "../../packages/crypto"
     },
     {
       "path": "../../packages/db"

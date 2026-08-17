@@ -1,9 +1,5 @@
+import { ISOTimestampSchema, IdentifierSchema, SchemaVersionSchema } from "@tool-evolver/contracts";
 import { z } from "zod";
-import {
-  ISOTimestampSchema,
-  IdentifierSchema,
-  SchemaVersionSchema,
-} from "@tool-evolver/contracts";
 
 /**
  * Standard Tool Evolver authorization scopes.
@@ -51,7 +47,16 @@ export const DeviceAuthBootstrapRequestSchema = z.object({
   platform: z.enum(["darwin", "linux", "win32", "other"]),
   arch: z.enum(["arm64", "x64", "arm", "ia32", "other"]),
   clientVersion: SchemaVersionSchema,
-  scopes: z.array(AuthScopeSchema).default(["device:connect", "observations:write", "catalog:read", "artifacts:read", "deployments:read", "telemetry:write"]),
+  scopes: z
+    .array(AuthScopeSchema)
+    .default([
+      "device:connect",
+      "observations:write",
+      "catalog:read",
+      "artifacts:read",
+      "deployments:read",
+      "telemetry:write",
+    ]),
 });
 
 export type DeviceAuthBootstrapRequest = z.infer<typeof DeviceAuthBootstrapRequestSchema>;
@@ -72,7 +77,9 @@ export type DeviceAuthBootstrapResponse = z.infer<typeof DeviceAuthBootstrapResp
  * Endpoint: POST /v1/auth/device/token
  */
 export const DeviceTokenExchangeRequestSchema = z.object({
-  grantType: z.enum(["urn:ietf:params:oauth:grant-type:device_code", "device_code"]).default("urn:ietf:params:oauth:grant-type:device_code"),
+  grantType: z
+    .enum(["urn:ietf:params:oauth:grant-type:device_code", "device_code"])
+    .default("urn:ietf:params:oauth:grant-type:device_code"),
   deviceCode: z.string().min(1),
   deviceId: IdentifierSchema,
   installationId: IdentifierSchema,

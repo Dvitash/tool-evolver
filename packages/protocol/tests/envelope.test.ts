@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { hashCanonicalContent } from "@tool-evolver/contracts";
+import { describe, expect, it } from "vitest";
 import {
   ChecksumMismatchError,
   ClockSkewError,
@@ -137,9 +137,9 @@ describe("ProtocolMessageEnvelope", () => {
       createdAt: skewedPastTime,
     });
 
-    expect(() =>
-      assertEnvelopeClockSkew(skewedEnvelope, { maxSkewMs: 300_000 }),
-    ).toThrow(ClockSkewError);
+    expect(() => assertEnvelopeClockSkew(skewedEnvelope, { maxSkewMs: 300_000 })).toThrow(
+      ClockSkewError,
+    );
 
     // Should not throw within tolerance
     expect(() =>

@@ -89,7 +89,8 @@ export class MockProtocolServer {
   private receivedTelemetry: Map<string, TelemetryBatchRequest> = new Map();
   private catalogTools: Map<string, ToolManifest> = new Map();
   private activeDeployments: Map<string, DeploymentRecord> = new Map();
-  private artifactStore: Map<string, { bytes: Uint8Array; metadata: ArtifactDownloadMetadata }> = new Map();
+  private artifactStore: Map<string, { bytes: Uint8Array; metadata: ArtifactDownloadMetadata }> =
+    new Map();
   private serverSequence = 0;
   private clientSequence = 0;
 
@@ -149,11 +150,43 @@ export class MockProtocolServer {
         maxOutputSizeBytes: 1048576,
       },
       capabilities: {
-        fs: { readPaths: ["."], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: ["git"], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: ["PATH"] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 2, maxCpuUsagePercent: 80, maxMemoryMb: 256, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
+        fs: {
+          readPaths: ["."],
+          writePaths: [],
+          allowWorkspaceRoot: true,
+          allowTemp: true,
+          denyPaths: [],
+          maxFileSizeBytes: 10485760,
+        },
+        net: {
+          allowOutbound: false,
+          allowedDomains: [],
+          allowedHosts: [],
+          allowedPorts: [],
+          allowedProtocols: ["https"],
+          allowLocalhost: false,
+          denyPrivateRanges: true,
+        },
+        command: {
+          allowShellExecution: false,
+          allowedCommands: ["git"],
+          allowedBinaries: [],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: ["PATH"],
+        },
+        secrets: {
+          allowedSecretNames: [],
+          allowedPrefixes: [],
+          denyDirectRead: true,
+          injectAsEnv: true,
+        },
+        limits: {
+          maxConcurrentExecutions: 2,
+          maxCpuUsagePercent: 80,
+          maxMemoryMb: 256,
+          maxExecutionTimeMs: 30000,
+          maxOutputSizeBytes: 1048576,
+        },
       },
       limits: {
         timeoutMs: 30000,
@@ -216,7 +249,15 @@ export class MockProtocolServer {
       deviceId: request.deviceId,
       installationId: request.installationId,
       workspaceId: "ws-default",
-      scopes: ["device:connect", "observations:write", "catalog:read", "artifacts:read", "deployments:read", "deployments:write", "telemetry:write"],
+      scopes: [
+        "device:connect",
+        "observations:write",
+        "catalog:read",
+        "artifacts:read",
+        "deployments:read",
+        "deployments:write",
+        "telemetry:write",
+      ],
       rawUploadConsent: true,
       issuedAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 3600_000).toISOString(),
@@ -256,7 +297,15 @@ export class MockProtocolServer {
       deviceId: request.deviceId,
       installationId: request.installationId,
       workspaceId: "ws-default",
-      scopes: ["device:connect", "observations:write", "catalog:read", "artifacts:read", "deployments:read", "deployments:write", "telemetry:write"],
+      scopes: [
+        "device:connect",
+        "observations:write",
+        "catalog:read",
+        "artifacts:read",
+        "deployments:read",
+        "deployments:write",
+        "telemetry:write",
+      ],
       rawUploadConsent: true,
       issuedAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 3600_000).toISOString(),
@@ -385,7 +434,10 @@ export class MockProtocolServer {
     };
   }
 
-  handleArtifactDownload(request: ArtifactDownloadRequest): { bytes: Uint8Array; metadata: ArtifactDownloadMetadata } {
+  handleArtifactDownload(request: ArtifactDownloadRequest): {
+    bytes: Uint8Array;
+    metadata: ArtifactDownloadMetadata;
+  } {
     this.checkScenarioExceptions();
 
     if (this.scenario === "corrupt_artifact") {
@@ -424,7 +476,9 @@ export class MockProtocolServer {
 
   // --- Deployment & Telemetry Handlers ---
 
-  handleDeploymentStatusReport(request: DeploymentStatusReportRequest): DeploymentStatusReportResponse {
+  handleDeploymentStatusReport(
+    request: DeploymentStatusReportRequest,
+  ): DeploymentStatusReportResponse {
     this.checkScenarioExceptions(request.deviceId);
     return {
       acknowledged: true,

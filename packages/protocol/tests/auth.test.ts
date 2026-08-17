@@ -173,7 +173,8 @@ describe("Device Authentication & Token Protocols", () => {
   it("validates TokenError taxonomy and response schemas", () => {
     const errorResponse = {
       error: "authorization_pending" as const,
-      error_description: "The authorization request is still pending as the user has not yet entered the code.",
+      error_description:
+        "The authorization request is still pending as the user has not yet entered the code.",
       interval: 5,
     };
 

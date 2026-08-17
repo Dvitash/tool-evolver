@@ -56,9 +56,18 @@ importers:
       '@tool-evolver/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@tool-evolver/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
       '@tool-evolver/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@tool-evolver/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
   apps/gateway:
     dependencies:
@@ -80,12 +89,24 @@ importers:
       '@tool-evolver/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
   fixtures/test-fixtures:
     dependencies:
       '@tool-evolver/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@tool-evolver/harness-contracts':
+        specifier: workspace:*
+        version: link:../../packages/harness-contracts
+      '@tool-evolver/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
 
   packages/contracts:
     dependencies:

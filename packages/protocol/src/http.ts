@@ -1,4 +1,3 @@
-import { z } from "zod";
 import {
   CapabilityEnvelopeSchema,
   DeploymentRecordSchema,
@@ -11,6 +10,7 @@ import {
   Sha256DigestSchema,
   ToolManifestSchema,
 } from "@tool-evolver/contracts";
+import { z } from "zod";
 import {
   AuthScopeSchema,
   DeviceAuthBootstrapRequestSchema,
@@ -278,7 +278,8 @@ export const OPENAPI_V1_SPEC = {
   info: {
     title: "Tool Evolver Cloud Control & Ingestion API",
     version: "1.0.0",
-    description: "Versioned local-to-cloud protocol for device authentication, observation ingestion, catalog synchronization, deployment lifecycle, and telemetry.",
+    description:
+      "Versioned local-to-cloud protocol for device authentication, observation ingestion, catalog synchronization, deployment lifecycle, and telemetry.",
   },
   servers: [
     {

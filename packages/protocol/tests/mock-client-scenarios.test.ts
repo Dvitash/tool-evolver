@@ -27,7 +27,11 @@ describe("ProtocolClient & MockProtocolServer Scenarios", () => {
     const client = createTestClient(mockServer);
 
     // 1. Device Auth Bootstrap
-    const bootstrap = client.bootstrapDeviceAuth({ hostname: "test-box", platform: "linux", arch: "arm64" });
+    const bootstrap = client.bootstrapDeviceAuth({
+      hostname: "test-box",
+      platform: "linux",
+      arch: "arm64",
+    });
     expect(bootstrap.deviceCode).toBeDefined();
     expect(bootstrap.userCode).toBeDefined();
 
@@ -41,22 +45,50 @@ describe("ProtocolClient & MockProtocolServer Scenarios", () => {
     const instRes = client.registerInstallation(["claude-code", "omp"]);
     expect(instRes.status).toBe("registered");
 
-    const wsRes = client.registerWorkspace(
-      "test-workspace",
-      "/path/to/ws",
-      {
-        envelopeId: "env-001",
-        workspaceId: "ws-test-001",
-        fs: { readPaths: ["."], writePaths: [], allowWorkspaceRoot: true, allowTemp: true, denyPaths: [], maxFileSizeBytes: 10485760 },
-        net: { allowOutbound: false, allowedDomains: [], allowedHosts: [], allowedPorts: [], allowedProtocols: ["https"], allowLocalhost: false, denyPrivateRanges: true },
-        command: { allowShellExecution: false, allowedCommands: ["git"], allowedBinaries: [], forbiddenPatterns: [], allowEnvPassthrough: ["PATH"] },
-        secrets: { allowedSecretNames: [], allowedPrefixes: [], denyDirectRead: true, injectAsEnv: true },
-        limits: { maxConcurrentExecutions: 2, maxCpuUsagePercent: 80, maxMemoryMb: 256, maxExecutionTimeMs: 30000, maxOutputSizeBytes: 1048576 },
-        status: "active",
-        version: "1.0.0",
-        createdAt: new Date().toISOString(),
+    const wsRes = client.registerWorkspace("test-workspace", "/path/to/ws", {
+      envelopeId: "env-001",
+      workspaceId: "ws-test-001",
+      fs: {
+        readPaths: ["."],
+        writePaths: [],
+        allowWorkspaceRoot: true,
+        allowTemp: true,
+        denyPaths: [],
+        maxFileSizeBytes: 10485760,
       },
-    );
+      net: {
+        allowOutbound: false,
+        allowedDomains: [],
+        allowedHosts: [],
+        allowedPorts: [],
+        allowedProtocols: ["https"],
+        allowLocalhost: false,
+        denyPrivateRanges: true,
+      },
+      command: {
+        allowShellExecution: false,
+        allowedCommands: ["git"],
+        allowedBinaries: [],
+        forbiddenPatterns: [],
+        allowEnvPassthrough: ["PATH"],
+      },
+      secrets: {
+        allowedSecretNames: [],
+        allowedPrefixes: [],
+        denyDirectRead: true,
+        injectAsEnv: true,
+      },
+      limits: {
+        maxConcurrentExecutions: 2,
+        maxCpuUsagePercent: 80,
+        maxMemoryMb: 256,
+        maxExecutionTimeMs: 30000,
+        maxOutputSizeBytes: 1048576,
+      },
+      status: "active",
+      version: "1.0.0",
+      createdAt: new Date().toISOString(),
+    });
     expect(wsRes.status).toBe("registered");
 
     // 4. Send Observation Batch
@@ -68,7 +100,12 @@ describe("ProtocolClient & MockProtocolServer Scenarios", () => {
           sessionId: "sess-001",
           timestamp: new Date().toISOString(),
           causalRef: { causalSequence: 1 },
-          redaction: { isRedacted: false, redactedFields: [], redactionStrategy: "none", scrubbedPatterns: [] },
+          redaction: {
+            isRedacted: false,
+            redactedFields: [],
+            redactionStrategy: "none",
+            scrubbedPatterns: [],
+          },
           type: "session_lifecycle",
           lifecycleType: "start",
           harnessName: "claude-code",
@@ -107,15 +144,18 @@ describe("ProtocolClient & MockProtocolServer Scenarios", () => {
     expect(depReport.acknowledged).toBe(true);
 
     // 8. Send Telemetry Batch
-    const teleRes = client.sendTelemetryBatch([], [
-      {
-        metricName: "worker.cpu",
-        value: 45.0,
-        unit: "percent",
-        tags: { env: "test" },
-        timestamp: new Date().toISOString(),
-      },
-    ]);
+    const teleRes = client.sendTelemetryBatch(
+      [],
+      [
+        {
+          metricName: "worker.cpu",
+          value: 45.0,
+          unit: "percent",
+          tags: { env: "test" },
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    );
     expect(teleRes.status).toBe("accepted");
     expect(teleRes.processedCount).toBe(1);
 
@@ -156,7 +196,12 @@ describe("ProtocolClient & MockProtocolServer Scenarios", () => {
         sessionId: "sess-001",
         timestamp: new Date().toISOString(),
         causalRef: { causalSequence: 1 },
-        redaction: { isRedacted: false, redactedFields: [], redactionStrategy: "none", scrubbedPatterns: [] },
+        redaction: {
+          isRedacted: false,
+          redactedFields: [],
+          redactionStrategy: "none",
+          scrubbedPatterns: [],
+        },
         type: "session_lifecycle" as const,
         lifecycleType: "start" as const,
         harnessName: "claude-code",
@@ -303,7 +348,12 @@ describe("ProtocolClient & MockProtocolServer Scenarios", () => {
       sessionId: "sess-001",
       timestamp: new Date().toISOString(),
       causalRef: { causalSequence: 1 },
-      redaction: { isRedacted: false, redactedFields: [], redactionStrategy: "none", scrubbedPatterns: [] },
+      redaction: {
+        isRedacted: false,
+        redactedFields: [],
+        redactionStrategy: "none",
+        scrubbedPatterns: [],
+      },
       type: "session_lifecycle" as const,
       lifecycleType: "start" as const,
       harnessName: "claude-code",
@@ -315,7 +365,12 @@ describe("ProtocolClient & MockProtocolServer Scenarios", () => {
       sessionId: "sess-001",
       timestamp: new Date().toISOString(),
       causalRef: { causalSequence: 2 },
-      redaction: { isRedacted: false, redactedFields: [], redactionStrategy: "none", scrubbedPatterns: [] },
+      redaction: {
+        isRedacted: false,
+        redactedFields: [],
+        redactionStrategy: "none",
+        scrubbedPatterns: [],
+      },
       type: "session_lifecycle" as const,
       lifecycleType: "end" as const,
       harnessName: "claude-code",

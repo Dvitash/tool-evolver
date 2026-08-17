@@ -49,13 +49,13 @@ import {
   ExponentialBackoff,
   ReplayBuffer,
   ServerStreamMessagePayload,
-  StreamAck,
-  StreamClientHeartbeat,
+  type StreamAck,
+  type StreamClientHeartbeat,
   StreamDeadLetterQueue,
-  StreamDeviceStatusReport,
-  StreamInvocationMetrics,
-  StreamMessage,
-  StreamResyncRequest,
+  type StreamDeviceStatusReport,
+  type StreamInvocationMetrics,
+  type StreamMessage,
+  type StreamResyncRequest,
   StreamSequencer,
   createStreamMessage,
 } from "./stream.js";
@@ -139,7 +139,14 @@ export class ProtocolClient {
 
   // --- 1. Authentication ---
 
-  bootstrapDeviceAuth(options: { hostname?: string; platform?: "darwin" | "linux" | "win32" | "other"; arch?: "arm64" | "x64" | "arm" | "ia32" | "other"; scopes?: AuthScope[] } = {}): DeviceAuthBootstrapResponse {
+  bootstrapDeviceAuth(
+    options: {
+      hostname?: string;
+      platform?: "darwin" | "linux" | "win32" | "other";
+      arch?: "arm64" | "x64" | "arm" | "ia32" | "other";
+      scopes?: AuthScope[];
+    } = {},
+  ): DeviceAuthBootstrapResponse {
     return this.mockServer.handleDeviceAuthBootstrap({
       deviceId: this.deviceId,
       installationId: this.installationId,
@@ -147,7 +154,15 @@ export class ProtocolClient {
       platform: options.platform ?? "linux",
       arch: options.arch ?? "arm64",
       clientVersion: this.clientVersion,
-      scopes: options.scopes ?? ["device:connect", "observations:write", "catalog:read", "artifacts:read", "deployments:read", "deployments:write", "telemetry:write"],
+      scopes: options.scopes ?? [
+        "device:connect",
+        "observations:write",
+        "catalog:read",
+        "artifacts:read",
+        "deployments:read",
+        "deployments:write",
+        "telemetry:write",
+      ],
     });
   }
 
@@ -196,7 +211,10 @@ export class ProtocolClient {
 
   // --- 2. Registration ---
 
-  registerInstallation(harnesses: string[] = [], metadata?: Record<string, unknown>): InstallationRegisterResponse {
+  registerInstallation(
+    harnesses: string[] = [],
+    metadata?: Record<string, unknown>,
+  ): InstallationRegisterResponse {
     return this.mockServer.handleInstallationRegister({
       installationId: this.installationId,
       deviceId: this.deviceId,
@@ -208,7 +226,12 @@ export class ProtocolClient {
     });
   }
 
-  registerWorkspace(name: string, rootPath: string, capabilityEnvelope: CapabilityEnvelope, activeTools: Record<string, string> = {}): WorkspaceRegisterResponse {
+  registerWorkspace(
+    name: string,
+    rootPath: string,
+    capabilityEnvelope: CapabilityEnvelope,
+    activeTools: Record<string, string> = {},
+  ): WorkspaceRegisterResponse {
     return this.mockServer.handleWorkspaceRegister({
       workspaceId: this.workspaceId,
       installationId: this.installationId,
@@ -324,7 +347,10 @@ export class ProtocolClient {
 
   // --- 7. Telemetry Ingestion ---
 
-  sendTelemetryBatch(invocations: InvocationRecord[] = [], metrics: TelemetryMetric[] = []): TelemetryBatchResponse {
+  sendTelemetryBatch(
+    invocations: InvocationRecord[] = [],
+    metrics: TelemetryMetric[] = [],
+  ): TelemetryBatchResponse {
     const batchId = randomUUID();
     return this.mockServer.handleTelemetryBatch({
       batchId,
@@ -367,7 +393,10 @@ export class ProtocolClient {
 
   // --- 9. Stream Simulation Helpers ---
 
-  createClientHeartbeat(uptimeMs: number, activeSessions = 0): StreamMessage<StreamClientHeartbeat> {
+  createClientHeartbeat(
+    uptimeMs: number,
+    activeSessions = 0,
+  ): StreamMessage<StreamClientHeartbeat> {
     const seq = this.sequencer.nextOutboundSequence();
     const msg = createStreamMessage(seq, {
       type: "client.heartbeat",
@@ -400,7 +429,12 @@ export class ProtocolClient {
     return msg;
   }
 
-  createStreamAck(ackSequence: number, messageId: string, status: "processed" | "failed", error?: string): StreamMessage<StreamAck> {
+  createStreamAck(
+    ackSequence: number,
+    messageId: string,
+    status: "processed" | "failed",
+    error?: string,
+  ): StreamMessage<StreamAck> {
     const seq = this.sequencer.nextOutboundSequence();
     const msg = createStreamMessage(seq, {
       type: "client.ack",
@@ -414,7 +448,10 @@ export class ProtocolClient {
     return msg;
   }
 
-  createResyncRequest(reason: "gap_detected" | "reconnect" | "server_requested" | "initial_sync", lastKnownServerSequence: number): StreamMessage<StreamResyncRequest> {
+  createResyncRequest(
+    reason: "gap_detected" | "reconnect" | "server_requested" | "initial_sync",
+    lastKnownServerSequence: number,
+  ): StreamMessage<StreamResyncRequest> {
     const seq = this.sequencer.nextOutboundSequence();
     const msg = createStreamMessage(seq, {
       type: "client.resync_request",
@@ -427,7 +464,13 @@ export class ProtocolClient {
     return msg;
   }
 
-  createInvocationMetrics(toolId: string, deploymentId: string, durationMs: number, success: boolean, errorCode?: string): StreamMessage<StreamInvocationMetrics> {
+  createInvocationMetrics(
+    toolId: string,
+    deploymentId: string,
+    durationMs: number,
+    success: boolean,
+    errorCode?: string,
+  ): StreamMessage<StreamInvocationMetrics> {
     const seq = this.sequencer.nextOutboundSequence();
     const msg = createStreamMessage(seq, {
       type: "client.invocation_metrics",

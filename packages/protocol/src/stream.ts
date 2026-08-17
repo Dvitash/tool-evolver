@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
 import {
   ISOTimestampSchema,
   IdentifierSchema,
   SchemaVersionSchema,
   ToolManifestSchema,
 } from "@tool-evolver/contracts";
+import { z } from "zod";
 
 /**
  * -------------------------------------------------------------------------
@@ -111,7 +111,12 @@ export const StreamCatalogInvalidationSchema = z.object({
   type: z.literal("server.catalog_invalidation"),
   workspaceId: IdentifierSchema,
   toolIds: z.array(IdentifierSchema),
-  reason: z.enum(["version_published", "tool_deprecated", "emergency_revocation", "config_changed"]),
+  reason: z.enum([
+    "version_published",
+    "tool_deprecated",
+    "emergency_revocation",
+    "config_changed",
+  ]),
   timestamp: ISOTimestampSchema,
 });
 
@@ -168,7 +173,9 @@ export type StreamMessage<T = ClientStreamMessagePayload | ServerStreamMessagePa
 /**
  * Creates a sequenced stream message.
  */
-export function createStreamMessage<T extends ClientStreamMessagePayload | ServerStreamMessagePayload>(
+export function createStreamMessage<
+  T extends ClientStreamMessagePayload | ServerStreamMessagePayload,
+>(
   sequence: number,
   payload: T,
   messageId = randomUUID(),
@@ -197,13 +204,23 @@ export interface SequencerProcessResult<T> {
   bufferedCount?: number;
 }
 
-export class StreamSequencer<T extends ClientStreamMessagePayload | ServerStreamMessagePayload = ClientStreamMessagePayload | ServerStreamMessagePayload> {
+export class StreamSequencer<
+  T extends ClientStreamMessagePayload | ServerStreamMessagePayload =
+    | ClientStreamMessagePayload
+    | ServerStreamMessagePayload,
+> {
   private expectedSequence: number;
   private outboundSequence: number;
   private readonly buffer: Map<number, StreamMessage<T>> = new Map();
   private readonly maxBufferSize: number;
 
-  constructor(options: { initialInboundSequence?: number; initialOutboundSequence?: number; maxBufferSize?: number } = {}) {
+  constructor(
+    options: {
+      initialInboundSequence?: number;
+      initialOutboundSequence?: number;
+      maxBufferSize?: number;
+    } = {},
+  ) {
     this.expectedSequence = options.initialInboundSequence ?? 0;
     this.outboundSequence = options.initialOutboundSequence ?? 0;
     this.maxBufferSize = options.maxBufferSize ?? 500;
@@ -293,7 +310,11 @@ export interface BufferedStreamItem<T> {
   enqueuedAt: number;
 }
 
-export class ReplayBuffer<T extends ClientStreamMessagePayload | ServerStreamMessagePayload = ClientStreamMessagePayload | ServerStreamMessagePayload> {
+export class ReplayBuffer<
+  T extends ClientStreamMessagePayload | ServerStreamMessagePayload =
+    | ClientStreamMessagePayload
+    | ServerStreamMessagePayload,
+> {
   private readonly items: Map<number, BufferedStreamItem<T>> = new Map();
   private readonly maxBufferSize: number;
   private readonly ttlMs: number;
@@ -420,7 +441,11 @@ export interface DeadLetterItem<T> {
   failedAt: string;
 }
 
-export class StreamDeadLetterQueue<T extends ClientStreamMessagePayload | ServerStreamMessagePayload = ClientStreamMessagePayload | ServerStreamMessagePayload> {
+export class StreamDeadLetterQueue<
+  T extends ClientStreamMessagePayload | ServerStreamMessagePayload =
+    | ClientStreamMessagePayload
+    | ServerStreamMessagePayload,
+> {
   private readonly items: DeadLetterItem<T>[] = [];
   private readonly maxSize: number;
 

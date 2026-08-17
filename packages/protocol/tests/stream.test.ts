@@ -122,7 +122,9 @@ describe("Control Stream Protocol & Sequencing", () => {
     };
     expect(StreamForceResyncSchema.parse(forceResync).targetSequence).toBe(10);
 
-    expect(ServerStreamMessagePayloadSchema.parse(deployCmd).type).toBe("server.deployment_command");
+    expect(ServerStreamMessagePayloadSchema.parse(deployCmd).type).toBe(
+      "server.deployment_command",
+    );
   });
 
   it("sequencer handles in-order processing, duplicate detection, and out-of-order gap reassembly", () => {
@@ -191,9 +193,24 @@ describe("Control Stream Protocol & Sequencing", () => {
   it("replay buffer stores unacknowledged messages and trims upon acknowledgment", () => {
     const replayBuffer = new ReplayBuffer();
 
-    const msg1 = createStreamMessage(1, { type: "client.heartbeat", timestamp: new Date().toISOString(), sequence: 1, uptimeMs: 100 });
-    const msg2 = createStreamMessage(2, { type: "client.heartbeat", timestamp: new Date().toISOString(), sequence: 2, uptimeMs: 200 });
-    const msg3 = createStreamMessage(3, { type: "client.heartbeat", timestamp: new Date().toISOString(), sequence: 3, uptimeMs: 300 });
+    const msg1 = createStreamMessage(1, {
+      type: "client.heartbeat",
+      timestamp: new Date().toISOString(),
+      sequence: 1,
+      uptimeMs: 100,
+    });
+    const msg2 = createStreamMessage(2, {
+      type: "client.heartbeat",
+      timestamp: new Date().toISOString(),
+      sequence: 2,
+      uptimeMs: 200,
+    });
+    const msg3 = createStreamMessage(3, {
+      type: "client.heartbeat",
+      timestamp: new Date().toISOString(),
+      sequence: 3,
+      uptimeMs: 300,
+    });
 
     replayBuffer.add(msg1);
     replayBuffer.add(msg2);
@@ -211,7 +228,12 @@ describe("Control Stream Protocol & Sequencing", () => {
   });
 
   it("exponential backoff scales with attempts and respects max delay", () => {
-    const backoff = new ExponentialBackoff({ baseDelayMs: 100, maxDelayMs: 1000, factor: 2, jitter: 0 });
+    const backoff = new ExponentialBackoff({
+      baseDelayMs: 100,
+      maxDelayMs: 1000,
+      factor: 2,
+      jitter: 0,
+    });
 
     expect(backoff.nextDelay()).toBe(100);
     expect(backoff.nextDelay()).toBe(200);
@@ -228,7 +250,12 @@ describe("Control Stream Protocol & Sequencing", () => {
 
   it("dead letter queue manages permanently failed stream messages", () => {
     const dlq = new StreamDeadLetterQueue({ maxSize: 2 });
-    const msg = createStreamMessage(1, { type: "client.heartbeat", timestamp: new Date().toISOString(), sequence: 1, uptimeMs: 100 });
+    const msg = createStreamMessage(1, {
+      type: "client.heartbeat",
+      timestamp: new Date().toISOString(),
+      sequence: 1,
+      uptimeMs: 100,
+    });
 
     dlq.enqueue(msg, "Max retries exceeded", 5);
     expect(dlq.size()).toBe(1);
