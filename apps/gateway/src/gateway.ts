@@ -71,9 +71,11 @@ export function redactSensitiveText(text: string, workspaceRoot?: string): strin
 
   let scrubbed = text;
 
-  // 1. Redact specific auth tokens and secrets
-  scrubbed = scrubbed.replace(SENSITIVE_PATTERN, "[REDACTED_SECRET]");
+  // 1. Redact basic auth in URLs
+  scrubbed = scrubbed.replace(/(https?:\/\/[^:\s\/]+:)([^@\s\/]+)(@)/gi, "$1[REDACTED_SECRET]$3");
 
+  // 2. Redact specific auth tokens and secrets
+  scrubbed = scrubbed.replace(SENSITIVE_PATTERN, "[REDACTED_SECRET]");
   // 2. Redact home directory
   const home = os.homedir();
   if (home && home.length > 1) {

@@ -485,6 +485,34 @@ export class StaticAnalyzer {
       } else if (call.service === "secret") {
         const secretCap = caps.secrets;
         if (
+          [
+            "getSecret",
+            "read",
+            "resolve",
+            "raw",
+            "getRawSecret",
+            "getValue",
+            "getSecretValue",
+            "add",
+            "addSecret",
+            "rotate",
+            "rotateSecret",
+            "delete",
+            "deleteSecret",
+            "purge",
+          ].includes(call.method)
+        ) {
+          findings.push({
+            severity: "error",
+            category: "forbidden_api",
+            message: `Direct secret read or administrative secret operation 'broker.secret.${call.method}' is strictly prohibited. Use opaque secret references ('broker.secret.createReference' or 'bearerToken').`,
+            location: pos,
+            fixHint:
+              "Replace direct secret reads with opaque references and trusted broker mediation.",
+          });
+        }
+
+        if (
           !secretCap ||
           ((!secretCap.allowedSecretNames || secretCap.allowedSecretNames.length === 0) &&
             (!secretCap.allowedPrefixes || secretCap.allowedPrefixes.length === 0))

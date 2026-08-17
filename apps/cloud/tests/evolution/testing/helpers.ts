@@ -201,27 +201,27 @@ export type ToolInput = z.infer<typeof InputSchema>;
 export const OutputSchema = z.object({
   success: z.boolean(),
   hasSecret: z.boolean(),
-  secretPrefix: z.string(),
+  referenceId: z.string(),
 });
 export type ToolOutput = z.infer<typeof OutputSchema>;
 
 export default defineTool<ToolInput, ToolOutput>(async (context: ToolContext<ToolInput>): Promise<ToolOutput> => {
   const { input, logger, broker, progress } = context;
 
-  await progress(30, "Retrieving secret", "secret");
-  const secretValue = await broker.secret.getSecret(input.secretName);
+  await progress(30, "Creating secret reference", "secret");
+  const secretRef = broker.secret.createReference(input.secretName);
 
-  if (!secretValue) {
-    throw new Error(\`Secret '\${input.secretName}' was not found or access denied.\`);
+  if (!secretRef || !secretRef.ref) {
+    throw new Error(\`Failed to create secret reference for '\${input.secretName}'.\`);
   }
 
-  await progress(100, "Secret verified", "done");
-  await logger.info("Secret loaded successfully", { secretName: input.secretName });
+  await progress(100, "Secret reference verified", "done");
+  await logger.info("Secret reference created successfully", { secretName: input.secretName });
 
   return {
     success: true,
     hasSecret: true,
-    secretPrefix: secretValue.slice(0, 4),
+    referenceId: secretRef.ref,
   };
 });
 `;

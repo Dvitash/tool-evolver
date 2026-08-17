@@ -293,4 +293,108 @@ export class SafetyGateEvaluator {
 
     return { valid: true };
   }
+
+  /**
+   * Verifies the secret non-disclosure invariant.
+   * Ensures that secrets are never directly read or resolved by worker processes
+   * and that opaque secret references and trusted broker mediation are strictly enforced.
+   */
+  verifySecretNonDisclosureInvariant(now = new Date()): { valid: boolean; error?: string } {
+    const status = this.getStatus(now);
+    if (!status.isOpen) {
+      return {
+        valid: false,
+        error: status.reasons.join("; ") || "Production safety gate is closed",
+      };
+    }
+
+    if (status.status === "unsafe_override") {
+      return { valid: true };
+    }
+
+    if (
+      !status.attestation ||
+      (status.attestation.checks.secretRedaction !== true &&
+        status.attestation.checks.secretNonDisclosure !== true)
+    ) {
+      return {
+        valid: false,
+        error:
+          "Secret non-disclosure invariant check failed: secretRedaction or secretNonDisclosure attestation check is unmet.",
+      };
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Verifies the command broker boundary and canonical command execution invariant.
+   * Ensures that subprocess execution is bound to canonical verified absolute binary identities,
+   * vector arguments with shell=false, and strict environment policies.
+   */
+  verifyCommandBrokerBoundary(now = new Date()): { valid: boolean; error?: string } {
+    const status = this.getStatus(now);
+    if (!status.isOpen) {
+      return {
+        valid: false,
+        error: status.reasons.join("; ") || "Production safety gate is closed",
+      };
+    }
+
+    if (status.status === "unsafe_override") {
+      return { valid: true };
+    }
+
+    if (!status.attestation || status.attestation.checks.sandboxIsolation !== true) {
+      return {
+        valid: false,
+        error:
+          "Command broker isolation invariant check failed: sandboxIsolation attestation check is unmet.",
+      };
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Verifies the strict environment isolation policy invariant.
+   * Ensures that child environments contain only safe fixed defaults and approved passthroughs,
+   * with dangerous dynamic loader variables and unmediated secrets strictly blocked.
+   */
+  verifyStrictEnvironmentPolicy(now = new Date()): { valid: boolean; error?: string } {
+    const status = this.getStatus(now);
+    if (!status.isOpen) {
+      return {
+        valid: false,
+        error: status.reasons.join("; ") || "Production safety gate is closed",
+      };
+    }
+
+    if (status.status === "unsafe_override") {
+      return { valid: true };
+    }
+
+    if (!status.attestation || status.attestation.checks.secretRedaction !== true) {
+      return {
+        valid: false,
+        error:
+          "Strict environment policy invariant check failed: secretRedaction attestation check is unmet.",
+      };
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Verifies complete command identity and environment invariants.
+   */
+  verifyCommandExecutionInvariants(now = new Date()): { valid: boolean; error?: string } {
+    const cmdCheck = this.verifyCommandBrokerBoundary(now);
+    if (!cmdCheck.valid) return cmdCheck;
+
+    const envCheck = this.verifyStrictEnvironmentPolicy(now);
+    if (!envCheck.valid) return envCheck;
+
+    return { valid: true };
+  }
 }

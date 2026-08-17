@@ -11,7 +11,13 @@ import type {
   SecretReference,
   ToolBrokerClient,
 } from "@tool-evolver/runtime";
-import { bearerToken, createSecretReference, formatSecretTemplate } from "@tool-evolver/runtime";
+import {
+  bearerToken,
+  createSecretReference,
+  envSecret,
+  formatSecretTemplate,
+  stdinSecret,
+} from "@tool-evolver/runtime";
 import type { ResolvedEvidenceSet } from "../../storage/models/evidence.js";
 import type { Episode } from "../opportunity/types.js";
 import type { EvidenceSource, ExecutedBrokerOperation, VirtualBrokerState } from "./types.js";
@@ -584,15 +590,14 @@ export class VirtualSecretBroker implements SecretBrokerClient {
     return formatSecretTemplate(nameOrRef);
   }
 
-  async getSecret(name: string): Promise<string | null> {
-    const start = Date.now();
-    if (this.denyAccess) {
-      this.recordOp("getSecret", [name], null, undefined, Date.now() - start);
-      return null;
-    }
-    const val = this.secrets[name] ?? `mock_secret_${name}`;
-    this.recordOp("getSecret", [name], val ? "[REDACTED]" : null, undefined, Date.now() - start);
-    return val;
+  envSecret(nameOrRef: string | SecretReference): SecretReference {
+    this.recordOp("envSecret", [nameOrRef], `sec_ref_env`);
+    return envSecret(nameOrRef);
+  }
+
+  stdinSecret(nameOrRef: string | SecretReference): SecretReference {
+    this.recordOp("stdinSecret", [nameOrRef], `sec_ref_stdin`);
+    return stdinSecret(nameOrRef);
   }
 }
 
@@ -660,8 +665,31 @@ export class VirtualToolBrokerClient implements ToolBrokerClient {
         throw new Error(`Unsupported cmd operation '${operation}' in virtual broker`);
       }
       case "secret": {
-        if (operation === "getSecret") {
-          return (await this.secret.getSecret(String(params.name))) as T;
+        if (
+          [
+            "getSecret",
+            "read",
+            "resolve",
+            "raw",
+            "getRawSecret",
+            "add",
+            "addSecret",
+            "rotate",
+            "rotateSecret",
+            "delete",
+            "deleteSecret",
+            "purge",
+          ].includes(operation)
+        ) {
+          throw new Error(
+            `Direct secret read or administrative secret operation '${operation}' is not permitted from worker contexts.`,
+          );
+        }
+        if (operation === "createReference" || operation === "createSecretReference") {
+          return this.secret.createReference(
+            String(params.name ?? params.alias ?? ""),
+            params.options as Parameters<typeof this.secret.createReference>[1],
+          ) as T;
         }
         throw new Error(`Unsupported secret operation '${operation}' in virtual broker`);
       }

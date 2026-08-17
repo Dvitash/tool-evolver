@@ -454,6 +454,19 @@ export class LocalPreactivationChecker {
         const envSec = envelope.secrets;
         const toolSec = caps.secrets;
 
+        if (
+          toolSec.denyDirectRead === false ||
+          (toolSec as Record<string, unknown>).allowDirectRead === true
+        ) {
+          violations.push({
+            code: "DIRECT_READ_DISALLOWED",
+            subsystem: "secrets",
+            message: `Tool '${manifest.id}' requests direct secret reads (denyDirectRead: false), which is prohibited by protocol v1.0.0. Migrate tool to use opaque secret references and trusted broker mediation.`,
+            field: "capabilities.secrets.denyDirectRead",
+            requestedValue: false,
+          });
+        }
+
         const secretNames =
           toolSec.allowedSecretNames ??
           ((toolSec as Record<string, unknown>).requiredSecrets as string[] | undefined);

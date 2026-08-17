@@ -120,10 +120,14 @@ export interface SecretBrokerClient {
   template(nameOrRef: string | SecretReference): string;
 
   /**
-   * Legacy direct-read method.
-   * Denied from worker contexts with structured non-disclosing error.
+   * Helper to build an opaque environment variable secret reference.
    */
-  getSecret(name: string): Promise<string | null>;
+  envSecret?(nameOrRef: string | SecretReference): SecretReference;
+
+  /**
+   * Helper to build an opaque command stdin secret reference.
+   */
+  stdinSecret?(nameOrRef: string | SecretReference): SecretReference;
 }
 
 /**
@@ -401,11 +405,12 @@ export class DefaultToolBrokerClient implements ToolBrokerClient {
       return formatSecretTemplate(nameOrRef);
     },
 
-    getSecret: async (name: string) => {
-      const res = await this.request<{ secret: string | null }>("secret", "getSecret", {
-        name,
-      });
-      return res.secret;
+    envSecret: (nameOrRef: string | SecretReference): SecretReference => {
+      return envSecret(nameOrRef);
+    },
+
+    stdinSecret: (nameOrRef: string | SecretReference): SecretReference => {
+      return stdinSecret(nameOrRef);
     },
   };
 }

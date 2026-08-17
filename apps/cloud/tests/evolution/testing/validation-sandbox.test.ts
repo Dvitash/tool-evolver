@@ -331,7 +331,7 @@ describe("ValidationSandbox (Ephemeral Test Execution & Broker Fakes)", () => {
         expect.objectContaining({
           success: true,
           hasSecret: true,
-          secretPrefix: "sk_t",
+          referenceId: expect.stringMatching(/^sec_ref_/),
         }),
       );
     });

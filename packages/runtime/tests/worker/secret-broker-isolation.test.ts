@@ -1,5 +1,7 @@
+import fs from "node:fs";
 import http from "node:http";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import os from "node:os";
+import path from "node:path";
 import {
   BrokerAuditEmitter,
   BrokerSecurityError,
@@ -149,8 +151,9 @@ describe("Worker Secret Broker Isolation & Trusted Mediation Integration", () =>
     const grant = createGrant({ toolId: "malicious_tool" });
 
     const maliciousTool = defineTool(async (ctx: ToolContext) => {
-      // 1. Direct read attempt via SDK secret client
-      await ctx.broker.secret.getSecret("API_AUTH_TOKEN");
+      // 1. Direct read attempt via SDK secret client is absent, raw RPC is denied
+      expect("getSecret" in ctx.broker.secret).toBe(false);
+      await ctx.broker.request("secret", "getSecret", { name: "API_AUTH_TOKEN" });
       return { success: true };
     });
 
@@ -275,6 +278,13 @@ describe("Worker Secret Broker Isolation & Trusted Mediation Integration", () =>
   });
 
   it("executes command with mediated secret environment without disclosing secret to worker", async () => {
+    const tempWs = fs.mkdtempSync(path.join(os.tmpdir(), "worker_iso_ws_"));
+    const scriptPath = path.join(tempWs, "inspect_env.js");
+    fs.writeFileSync(
+      scriptPath,
+      "console.log('ENV_LEN:' + (process.env.DB_PASS ? process.env.DB_PASS.length : 0));",
+    );
+
     const grant = createGrant({ toolId: "authenticated_cmd_runner" });
     const cmdTool = defineTool(async (ctx: ToolContext) => {
       const dbRef = ctx.broker.secret.createReference("DB_SECRET", {
@@ -282,22 +292,17 @@ describe("Worker Secret Broker Isolation & Trusted Mediation Integration", () =>
       });
 
       // Execute command that inspects environment length
-      const cmdResult = await ctx.broker.cmd.exec(
-        "node",
-        ["-e", "console.log('ENV_LEN:' + (process.env.DB_PASS ? process.env.DB_PASS.length : 0))"],
-        {
-          env: {
-            DB_PASS: dbRef,
-          },
+      const cmdResult = await ctx.broker.cmd.exec("node", [scriptPath], {
+        env: {
+          DB_PASS: dbRef,
         },
-      );
+      });
 
       return {
         exitCode: cmdResult.exitCode,
         stdout: cmdResult.stdout.trim(),
       };
     });
-
     const manifest = {
       id: "authenticated_cmd_runner",
       name: "authenticated_cmd_runner",
@@ -312,8 +317,13 @@ describe("Worker Secret Broker Isolation & Trusted Mediation Integration", () =>
         invocationId: "inv_worker_iso_001",
         grant,
         workspaceId: "ws_worker_test",
+        workspaceRoot: tempWs,
       },
     );
+
+    if (result.status === "error") {
+      console.error("DEBUG result error:", result.error);
+    }
 
     expect(result.status).toBe("success");
     const output = result.output as { exitCode: number; stdout: string };

@@ -246,6 +246,12 @@ export class ToolBundleLoader {
         throw new BundleValidationError(`Invalid tool manifest schema: ${String(manifestErr)}`);
       }
 
+      if (manifest.capabilities?.secrets?.denyDirectRead === false) {
+        throw new BundleValidationError(
+          `Bundle '${manifest.id}' requires direct secret reads (denyDirectRead: false), which is incompatible with protocol v1.0.0. Migrate tool to use opaque secret references (broker.secret.createReference / bearerToken) and trusted broker mediation.`,
+        );
+      }
+
       const hasEntrypointTs = fs.existsSync(path.join(stagingPath, BUNDLE_FILE_ENTRYPOINT_TS));
       const hasEntrypointJs = fs.existsSync(path.join(stagingPath, BUNDLE_FILE_ENTRYPOINT_JS));
 
@@ -347,6 +353,12 @@ export class ToolBundleLoader {
 
     const manifestContent = await fs.promises.readFile(manifestPath, "utf8");
     const manifest = ToolManifestSchema.parse(JSON.parse(manifestContent));
+
+    if (manifest.capabilities?.secrets?.denyDirectRead === false) {
+      throw new BundleValidationError(
+        `Bundle '${manifest.id}' requires direct secret reads (denyDirectRead: false), which is incompatible with protocol v1.0.0. Migrate tool to use opaque secret references (broker.secret.createReference / bearerToken) and trusted broker mediation.`,
+      );
+    }
 
     const inspection = await inspectBundleDirectory(resolvedDir, {
       keyStore: this.keyStore,

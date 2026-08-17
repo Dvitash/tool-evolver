@@ -183,16 +183,28 @@ describe("VirtualBroker Subsystem", () => {
   });
 
   describe("VirtualSecretBroker", () => {
-    it("returns mock secrets and handles access denial", async () => {
-      const secret = new VirtualSecretBroker({
-        values: { API_KEY: "secret_12345" },
-      });
+    it("creates opaque secret references without exposing raw secret bytes", () => {
+      const secret = new VirtualSecretBroker();
 
-      const val = await secret.getSecret("API_KEY");
-      expect(val).toBe("secret_12345");
+      const ref = secret.createReference("API_KEY");
+      expect(ref.kind).toBe("secret_reference");
+      expect(ref.name).toBe("API_KEY");
+      expect("secret" in ref).toBe(false);
+      expect("value" in ref).toBe(false);
 
-      const denied = new VirtualSecretBroker({ denyAccess: true });
-      expect(await denied.getSecret("API_KEY")).toBeNull();
+      const bearer = secret.bearerToken("API_KEY");
+      expect(bearer.kind).toBe("secret_reference");
+      expect(bearer.permittedModes).toContain("bearer_token");
+
+      const templ = secret.template("API_KEY");
+      expect(templ).toContain("API_KEY");
+    });
+
+    it("rejects direct secret read requests via virtual client dispatch", async () => {
+      const client = new VirtualToolBrokerClient();
+      await expect(client.request("secret", "getSecret", { name: "API_KEY" })).rejects.toThrow(
+        "Direct secret read or administrative secret operation",
+      );
     });
   });
 

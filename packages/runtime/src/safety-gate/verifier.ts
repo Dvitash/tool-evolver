@@ -271,6 +271,7 @@ export function createSafetyAttestation(
       networkIsolation: true,
       filesystemMediation: true,
       secretRedaction: true,
+      secretNonDisclosure: true,
       signatureVerification: true,
       ...overrides.checks,
     },

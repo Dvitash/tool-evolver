@@ -206,23 +206,19 @@ describe("ToolRuntime and DeterministicWorkerSandbox", () => {
         if (!fakeDb.has(p)) throw new Error("File not found");
         return { content: fakeDb.get(p), encoding: "utf-8" };
       }
-      if (service === "secret" && action === "getSecret") {
-        if (payload.name === "AUTH_TOKEN") return { secret: "tok_secure_123" };
-        return { secret: null };
-      }
       throw new Error(`Unhandled ${service}.${action}`);
     };
 
     const handler = defineTool(async (ctx: ToolContext) => {
       const configStr = await ctx.broker.fs.readFile("config.json");
       const config = JSON.parse(configStr as string);
-      const token = await ctx.broker.secret.getSecret("AUTH_TOKEN");
-      return { mode: config.mode, token };
+      const tokenRef = ctx.broker.secret.createReference("AUTH_TOKEN");
+      return { mode: config.mode, tokenRef: tokenRef.name };
     });
 
     const res = await runtime.executeTool(manifest, handler, {}, { brokerHandler });
     expect(res.status).toBe("success");
-    expect(res.output).toEqual({ mode: "production", token: "tok_secure_123" });
+    expect(res.output).toEqual({ mode: "production", tokenRef: "AUTH_TOKEN" });
   });
 
   it("executes inline JavaScript source code bundle in sandbox", async () => {

@@ -433,7 +433,7 @@ export class CandidatePlanner {
       toolClass = "network";
       inputs.url = "$input.url";
     } else if (pattern.includes("secret") || taskClass === "secrets") {
-      action = "secret.getSecret";
+      action = "secret.createReference";
       toolClass = "secrets";
       inputs.name = "$input.name";
     }

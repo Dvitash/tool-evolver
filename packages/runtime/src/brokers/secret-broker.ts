@@ -664,15 +664,23 @@ export class SecretBroker extends BaseCapabilityBroker {
       case "getSecret":
       case "read":
       case "resolve":
+      case "resolveSecret":
+      case "resolveReference":
+      case "resolveSecretReference":
       case "raw":
-      case "getRawSecret": {
+      case "getRawSecret":
+      case "getValue":
+      case "getSecretValue": {
+        const secretName = String(
+          payload.name ?? payload.alias ?? payload.key ?? payload.ref ?? "",
+        );
         this.recordAudit(
           "getSecret",
           workerContext,
           "denied",
           {
             action,
-            secretName: String(payload.name ?? payload.alias ?? ""),
+            secretName,
             reason: "DIRECT_READ_DENIED_FOR_WORKER",
           },
           {
@@ -686,6 +694,37 @@ export class SecretBroker extends BaseCapabilityBroker {
         throw new BrokerSecurityError(
           "DIRECT_READ_DENIED",
           "Direct reading of secrets is strictly prohibited from worker contexts. Use trusted broker mediation.",
+        );
+      }
+
+      case "add":
+      case "addSecret":
+      case "setSecret":
+      case "rotate":
+      case "rotateSecret":
+      case "delete":
+      case "deleteSecret":
+      case "purge":
+      case "purgeSecrets": {
+        this.recordAudit(
+          "adminSecretOperation",
+          workerContext,
+          "denied",
+          {
+            action,
+            secretName: String(payload.name ?? payload.alias ?? payload.key ?? ""),
+            reason: "ADMIN_SECRET_OPERATION_DENIED_FROM_WORKER",
+          },
+          {
+            error: {
+              code: "OPERATION_NOT_PERMITTED",
+              message: `Administrative secret operation '${action}' is not permitted from worker RPC/IPC. Administrative secret management is isolated to authenticated host CLI/daemon control.`,
+            },
+          },
+        );
+        throw new BrokerSecurityError(
+          "OPERATION_NOT_PERMITTED",
+          `Administrative secret operation '${action}' is not permitted from worker RPC/IPC. Administrative secret management is isolated to authenticated host CLI/daemon control.`,
         );
       }
 
@@ -737,14 +776,6 @@ export class SecretBroker extends BaseCapabilityBroker {
           (payload.env as Record<string, string | SecretReference>) ?? {},
           context,
         );
-
-      case "setSecret":
-      case "deleteSecret": {
-        throw new BrokerSecurityError(
-          "OPERATION_NOT_PERMITTED",
-          `Administrative action '${action}' is not permitted from worker RPC`,
-        );
-      }
       default:
         throw new BrokerSecurityError(
           "OPERATION_NOT_PERMITTED",

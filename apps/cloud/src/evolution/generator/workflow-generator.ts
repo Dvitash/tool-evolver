@@ -128,11 +128,11 @@ export class WorkflowGenerator {
       } else if (step.action === "net.fetch") {
         const urlExpr = this.resolveInputExpression(step.inputs.url ?? "url");
         actionCall = `const res = await broker.net.fetch(${urlExpr});\n      const ${outVar} = await res.json();`;
-      } else if (step.action === "secret.getSecret") {
+      } else if (step.action === "secret.createReference" || step.action === "secret.getSecret") {
         const keyExpr = this.resolveInputExpression(
           step.inputs.name ?? step.inputs.key ?? "secretName",
         );
-        actionCall = `const ${outVar} = await broker.secret.getSecret(${keyExpr});`;
+        actionCall = `const ${outVar} = broker.secret.createReference(${keyExpr});`;
       } else {
         // Generic / compute action
         actionCall = `const ${outVar} = { executed: true, step: ${JSON.stringify(step.name)}, inputs: input };`;

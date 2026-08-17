@@ -144,10 +144,6 @@ describe("Tool SDK", () => {
               stderr: "",
             };
           }
-          if (service === "secret" && action === "getSecret") {
-            if (payload.name === "API_KEY") return { secret: "secret_value_123" };
-            return { secret: null };
-          }
           throw new Error(`Unhandled ${service}.${action}`);
         },
       );
@@ -165,12 +161,20 @@ describe("Tool SDK", () => {
       expect(cmdRes.exitCode).toBe(0);
       expect(cmdRes.stdout).toBe("executed: echo");
 
-      // Secret
-      const secret = await client.secret.getSecret("API_KEY");
-      expect(secret).toBe("secret_value_123");
+      // Secret - opaque references only
+      const ref = client.secret.createReference("API_KEY");
+      expect(ref.kind).toBe("secret_reference");
+      expect(ref.name).toBe("API_KEY");
+      expect("secret" in ref).toBe(false);
+      expect("value" in ref).toBe(false);
 
-      const missing = await client.secret.getSecret("UNKNOWN");
-      expect(missing).toBeNull();
+      const bearer = client.secret.bearerToken("API_KEY");
+      expect(bearer.permittedModes).toContain("bearer_token");
+
+      const templateStr = client.secret.template("API_KEY");
+      expect(templateStr).toBe("{{secret:API_KEY}}");
+
+      expect("getSecret" in client.secret).toBe(false);
     });
   });
 });
