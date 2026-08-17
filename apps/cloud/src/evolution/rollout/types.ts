@@ -3,6 +3,8 @@ import {
   IdentifierSchema,
   SchemaVersionSchema,
   Sha256DigestSchema,
+  type SignatureMetadata,
+  type ToolManifest,
 } from "@tool-evolver/contracts";
 import { z } from "zod";
 
@@ -594,4 +596,35 @@ export class RolloutEvaluationError extends RolloutError {
   constructor(message: string) {
     super(message, "ROLLOUT_EVALUATION_ERROR");
   }
+}
+
+/**
+ * Evidence verification bundle for rollout validation.
+ */
+export interface EvidenceVerificationBundle {
+  candidateId?: string;
+  toolId: string;
+  version: string;
+  artifactDigest: string;
+  manifestDigest: string;
+  manifest: ToolManifest;
+  signature?: SignatureMetadata | null;
+  evaluatedAt?: string;
+  replaySuccessRate?: number;
+  validationPassed?: boolean;
+  hardGatesPassed?: boolean;
+  evidenceFreshnessTimestamp?: string;
+}
+
+/**
+ * Result of verifying candidate evidence bundle during rollout.
+ */
+export interface EvidenceVerificationResult {
+  valid: boolean;
+  reasons: string[];
+  verifiedAt: string;
+  signatureValid: boolean;
+  digestsMatch: boolean;
+  freshnessValid: boolean;
+  hardGatesValid: boolean;
 }

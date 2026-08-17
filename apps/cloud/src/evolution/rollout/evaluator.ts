@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { hashCanonicalContent } from "@tool-evolver/contracts";
 import type {
   CanaryMetricsWindow,
+  EvidenceVerificationBundle,
+  EvidenceVerificationResult,
   RolloutDecision,
   RolloutEntity,
   RolloutOverrideRecord,
@@ -15,6 +18,7 @@ export interface EvaluateCanaryMetricsParams {
   rollout: RolloutEntity;
   policy: RolloutPolicy;
   metrics: CanaryMetricsWindow;
+  evidenceBundle?: EvidenceVerificationBundle | null;
   userOverride?: RolloutOverrideRecord | null;
   now?: string;
 }
@@ -46,6 +50,72 @@ export function computeLatencyPercentiles(latencies: number[]): {
     p50: Math.round(getPercentile(50)),
     p95: Math.round(getPercentile(95)),
     p99: Math.round(getPercentile(99)),
+  };
+}
+/**
+ * Deterministically verifies the integrity, freshness, and hard evaluation gates of an evidence bundle.
+ */
+export function verifyRolloutEvidence(
+  bundle: EvidenceVerificationBundle,
+  options: { maxEvidenceAgeMs?: number } = {},
+): EvidenceVerificationResult {
+  const maxAgeMs = options.maxEvidenceAgeMs ?? 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const reasons: string[] = [];
+
+  // 1. Signature validity
+  const signatureValid = Boolean(
+    bundle.signature &&
+      typeof bundle.signature.signature === "string" &&
+      bundle.signature.signature.length > 0 &&
+      bundle.signature.keyId,
+  );
+  if (!signatureValid) {
+    reasons.push("Missing or invalid cryptographic signature metadata");
+  }
+
+  // 2. Digest matching
+  let digestsMatch = true;
+  if (bundle.manifest) {
+    const computedManifestDigest = hashCanonicalContent(bundle.manifest);
+    if (bundle.manifestDigest && bundle.manifestDigest !== computedManifestDigest) {
+      digestsMatch = false;
+      reasons.push(
+        `Manifest digest mismatch: recorded '${bundle.manifestDigest}', computed '${computedManifestDigest}'`,
+      );
+    }
+  }
+
+  // 3. Evidence Freshness
+  let freshnessValid = true;
+  const timestampStr = bundle.evidenceFreshnessTimestamp ?? bundle.evaluatedAt;
+  if (timestampStr) {
+    const evidenceAgeMs = now - new Date(timestampStr).getTime();
+    if (evidenceAgeMs > maxAgeMs) {
+      freshnessValid = false;
+      reasons.push(`Evidence is stale: age ${evidenceAgeMs}ms exceeds threshold ${maxAgeMs}ms`);
+    }
+  }
+
+  // 4. Hard Evaluation Gates & Validation
+  const hardGatesValid =
+    bundle.hardGatesPassed !== false &&
+    bundle.validationPassed !== false &&
+    (bundle.replaySuccessRate === undefined || bundle.replaySuccessRate >= 0.99);
+  if (!hardGatesValid) {
+    reasons.push("Candidate did not satisfy hard evaluation gates or validation checks");
+  }
+
+  const valid = signatureValid && digestsMatch && freshnessValid && hardGatesValid;
+
+  return {
+    valid,
+    reasons,
+    verifiedAt: new Date().toISOString(),
+    signatureValid,
+    digestsMatch,
+    freshnessValid,
+    hardGatesValid,
   };
 }
 
@@ -173,12 +243,70 @@ export class RolloutEvaluator {
    * Evaluates a canary metrics window against a versioned rollout policy.
    */
   evaluateCanaryMetrics(params: EvaluateCanaryMetricsParams): RolloutDecision {
-    const { rollout, policy, metrics, userOverride } = params;
+    const { rollout, policy, metrics, userOverride, evidenceBundle } = params;
     const now = params.now ?? new Date().toISOString();
     const targetRollbackVersion = rollout.previousVersion ?? "1.0.0";
 
     // -----------------------------------------------------------------------
-    // 1. User Override Enforcement
+    // 1. Evidence Verification & Hard Triggers Enforcement (Cannot be bypassed)
+    // -----------------------------------------------------------------------
+    const hardTriggers: string[] = [];
+    const hardTriggerReasons: string[] = [];
+
+    if (evidenceBundle) {
+      const verification = verifyRolloutEvidence(evidenceBundle);
+      if (!verification.valid) {
+        hardTriggers.push("signature_tamper");
+        hardTriggerReasons.push(`Evidence verification failed: ${verification.reasons.join("; ")}`);
+      }
+    }
+
+    if (metrics.securityViolations > 0) {
+      hardTriggers.push("security_violation");
+      hardTriggerReasons.push(`${metrics.securityViolations} security violation(s)`);
+    }
+
+    if (metrics.quarantineSignals > 0) {
+      hardTriggers.push("quarantine_signal");
+      hardTriggerReasons.push(
+        `${metrics.quarantineSignals} local quarantine signal(s) [${metrics.quarantineReasons.join(", ") || "quarantined"}]`,
+      );
+    }
+
+    if (metrics.capabilityBreaches > 0) {
+      hardTriggers.push("capability_breach");
+      hardTriggerReasons.push(`${metrics.capabilityBreaches} capability breach(es)`);
+    }
+
+    if (!metrics.signatureValid) {
+      if (!hardTriggers.includes("signature_tamper")) {
+        hardTriggers.push("signature_tamper");
+      }
+      hardTriggerReasons.push("invalid or untrusted signature");
+    }
+
+    if (hardTriggers.length > 0) {
+      const details = hardTriggerReasons.filter(Boolean).join("; ");
+      return {
+        decisionId: randomUUID(),
+        rolloutId: rollout.id,
+        workspaceId: rollout.workspaceId,
+        toolId: rollout.toolId,
+        targetVersion: rollout.targetVersion,
+        fromState: rollout.state,
+        toState: "rollback_pending",
+        action: "trigger_rollback",
+        reason: `Hard safety violation triggered rollback: ${details}`,
+        confidence: 1.0,
+        triggers: hardTriggers,
+        targetRollbackVersion,
+        metrics,
+        evaluatedAt: now,
+      };
+    }
+
+    // -----------------------------------------------------------------------
+    // 2. User Override Enforcement (Only when zero hard safety violations exist)
     // -----------------------------------------------------------------------
     if (userOverride) {
       if (userOverride.overrideType === "disabled") {
@@ -211,72 +339,17 @@ export class RolloutEvaluator {
           toolId: rollout.toolId,
           targetVersion: rollout.targetVersion,
           fromState: rollout.state,
-          toState: "suspended",
-          action: "suspend",
-          reason: `Rollout suspended: tool is pinned to version ${userOverride.pinnedVersion}`,
+          toState: "rollback_pending",
+          action: "trigger_rollback",
+          reason: `Rollout overridden by version pin to ${userOverride.pinnedVersion} (${userOverride.reason})`,
           confidence: 1.0,
-          triggers: ["user_pin_override"],
+          triggers: ["version_pinned"],
+          targetRollbackVersion: userOverride.pinnedVersion,
           metrics,
           evaluatedAt: now,
         };
       }
     }
-
-    // -----------------------------------------------------------------------
-    // 2. Hard Rollback Signals (Instant Automatic Rollback)
-    // -----------------------------------------------------------------------
-    const hardTriggers: string[] = [];
-
-    if (metrics.securityViolations > 0) {
-      hardTriggers.push("security_violation");
-    }
-
-    if (metrics.quarantineSignals > 0) {
-      hardTriggers.push("quarantine_signal");
-    }
-
-    if (metrics.capabilityBreaches > 0) {
-      hardTriggers.push("capability_breach");
-    }
-
-    if (metrics.signatureValid === false) {
-      hardTriggers.push("signature_tamper");
-    }
-
-    if (hardTriggers.length > 0) {
-      const details = [
-        metrics.securityViolations > 0
-          ? `${metrics.securityViolations} security violation(s)`
-          : null,
-        metrics.quarantineSignals > 0
-          ? `${metrics.quarantineSignals} local quarantine signal(s) [${metrics.quarantineReasons.join(", ") || "quarantined"}]`
-          : null,
-        metrics.capabilityBreaches > 0
-          ? `${metrics.capabilityBreaches} capability breach(es)`
-          : null,
-        !metrics.signatureValid ? "invalid or untrusted signature" : null,
-      ]
-        .filter(Boolean)
-        .join("; ");
-
-      return {
-        decisionId: randomUUID(),
-        rolloutId: rollout.id,
-        workspaceId: rollout.workspaceId,
-        toolId: rollout.toolId,
-        targetVersion: rollout.targetVersion,
-        fromState: rollout.state,
-        toState: "rollback_pending",
-        action: "trigger_rollback",
-        reason: `Immediate automatic rollback triggered by hard signal: ${details}`,
-        confidence: 1.0,
-        triggers: hardTriggers,
-        targetRollbackVersion,
-        metrics,
-        evaluatedAt: now,
-      };
-    }
-
     // -----------------------------------------------------------------------
     // 3. Soft Rollback Triggers (Statistical / Telemetry Thresholds)
     // -----------------------------------------------------------------------

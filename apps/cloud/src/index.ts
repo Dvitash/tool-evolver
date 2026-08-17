@@ -138,6 +138,7 @@ export * from "./mcp/index.js";
 export * from "./evolution/evaluation/index.js";
 export * from "./evolution/artifacts/index.js";
 export * from "./evolution/rollout/index.js";
+export * from "./evolution/lifecycle/index.js";
 export * from "./analytics/index.js";
 export * from "./models/index.js";
 
