@@ -20,10 +20,11 @@ jobs:
       - run: python3 .github/agent/fin97_assertion.py
       - run: python3 .github/agent/fin97_publish_diagnostics.py
       - run: python3 .github/agent/fin97_validation_fix.py
+      - run: python3 .github/agent/fin97_validation_diagnostics.py
       - name: restore repository CI/remove temporary patchers
         run: |
           git checkout origin/main -- .github/workflows/ci.yml
-          rm -f .github/agent/fin97_fix.py .github/agent/fin97_final.py .github/agent/fin97_assertion.py .github/agent/fin97_publish_diagnostics.py .github/agent/fin97_validation_fix.py .github/workflows/fin97-apply.yml .github/lifecycle-test-diagnostics.txt
+          rm -f .github/agent/fin97_fix.py .github/agent/fin97_final.py .github/agent/fin97_assertion.py .github/agent/fin97_publish_diagnostics.py .github/agent/fin97_validation_fix.py .github/agent/fin97_validation_diagnostics.py .github/workflows/fin97-apply.yml .github/lifecycle-test-diagnostics.txt
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec biome check --write .
       - run: pnpm build
