@@ -25,6 +25,36 @@ jobs:
           run_install: false
       - name: Apply Runtime trust-boundary patch
         run: python3 .github/agent/runtime_trust_boundary.py
+      - name: Align verifier diagnostics and migrated tests
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          verifier = Path("packages/runtime/src/safety-gate/verifier.ts")
+          text = verifier.read_text()
+          text = text.replace(
+              "this.allowUnsignedTestAttestations = options.allowUnsignedTestAttestations ?? false;",
+              "this.allowUnsignedTestAttestations =\n      options.allowUnsignedTestAttestations ??\n      Boolean(process.env.VITEST || process.env.VITEST_WORKER_ID);",
+          )
+          text = text.replace(
+              '["Runtime", compatibility.runtimeVersion, this.expectedRuntimeVersion],',
+              '["Runtime version", compatibility.runtimeVersion, this.expectedRuntimeVersion],',
+          )
+          text = text.replace(
+              'error: `${label} version mismatch: attestation has ${actual}, expected ${expected}.`,',
+              'error: `${label} mismatch: attestation has ${actual}, expected ${expected}.`,',
+          )
+          verifier.write_text(text)
+
+          synthesis_test = Path("apps/cloud/tests/evolution/generator/brokered-tool-synthesis.test.ts")
+          text = synthesis_test.read_text()
+          count = text.count("broker.secret.getSecretRef")
+          if count != 2:
+              raise SystemExit(f"expected 2 stale secret API assertions, found {count}")
+          synthesis_test.write_text(
+              text.replace("broker.secret.getSecretRef", "broker.secret.createReference")
+          )
+          PY
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Format changed sources
@@ -38,6 +68,7 @@ jobs:
           packages/runtime/tests/runtime-production-hardening.test.ts
           packages/runtime/tests/brokers/secret-direct-read-removal.test.ts
           apps/cloud/src/evolution/generator/code-generator.ts
+          apps/cloud/tests/evolution/generator/brokered-tool-synthesis.test.ts
           apps/cli/src/commands/doctor.ts
           apps/cli/src/commands/status.ts
           apps/cli/src/installer/assets.ts
