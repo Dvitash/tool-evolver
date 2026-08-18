@@ -20,6 +20,7 @@ import { TIER2_MEDIUM_FIDELITY, defaultFsBridge } from "@tool-evolver/harness-co
 import {
   applyClaudeMcpConfig,
   planClaudeMcpConfig,
+  rollbackClaudeMcpConfig,
   verifyClaudeMcpConfig,
 } from "./config-planner.js";
 import {
@@ -72,14 +73,11 @@ export class ClaudeHarnessAdapter implements StrictHarnessAdapter {
 
   async listSessions(workspace: HarnessWorkspace): Promise<HarnessSession[]> {
     const sessions: HarnessSession[] = [];
+    const claudeDir = path.normalize(path.join(workspace.rootPath, ".claude"));
 
     // 1. If active session is specified
     if (workspace.activeSessionId) {
-      const defaultTranscriptPath = path.join(
-        workspace.rootPath,
-        ".claude",
-        `${workspace.activeSessionId}.jsonl`,
-      );
+      const defaultTranscriptPath = path.join(claudeDir, `${workspace.activeSessionId}.jsonl`);
       sessions.push({
         sessionId: workspace.activeSessionId,
         workspaceId: workspace.workspaceId,
@@ -92,8 +90,31 @@ export class ClaudeHarnessAdapter implements StrictHarnessAdapter {
       });
     }
 
-    // 2. Scan workspace .claude directory
-    const claudeDir = path.join(workspace.rootPath, ".claude");
+    // 2. Check in-memory fs bridge if applicable
+    if (typeof (this.fsBridge as any).dump === "function") {
+      const dump = (this.fsBridge as any).dump() as Record<string, string>;
+      for (const filePath of Object.keys(dump)) {
+        const normalized = path.normalize(filePath);
+        if (normalized.startsWith(claudeDir) && normalized.endsWith(".jsonl")) {
+          const fileName = path.basename(normalized);
+          const sessionId = path.basename(normalized, ".jsonl");
+          if (!sessions.some((s) => s.sessionId === sessionId)) {
+            sessions.push({
+              sessionId,
+              workspaceId: workspace.workspaceId,
+              harnessId: this.id,
+              transcriptPath: normalized,
+              status: sessionId === workspace.activeSessionId ? "active" : "completed",
+              createdAt: nowIso(),
+              updatedAt: nowIso(),
+              metadata: { transcriptFile: fileName },
+            });
+          }
+        }
+      }
+    }
+
+    // 3. Scan workspace .claude directory on local filesystem
     try {
       const exists = await this.fsBridge.exists(claudeDir);
       if (exists) {
@@ -101,17 +122,13 @@ export class ClaudeHarnessAdapter implements StrictHarnessAdapter {
         for (const entry of entries) {
           if (entry.isFile() && entry.name.endsWith(".jsonl")) {
             const sessionId = path.basename(entry.name, ".jsonl");
-            if (
-              !sessions.some(
-                (s) => s.sessionId === sessionId || s.sessionId === `session-${sessionId}`,
-              )
-            ) {
+            if (!sessions.some((s) => s.sessionId === sessionId)) {
               sessions.push({
-                sessionId: `session-${sessionId}`,
+                sessionId,
                 workspaceId: workspace.workspaceId,
                 harnessId: this.id,
                 transcriptPath: path.join(claudeDir, entry.name),
-                status: "active",
+                status: sessionId === workspace.activeSessionId ? "active" : "completed",
                 createdAt: nowIso(),
                 updatedAt: nowIso(),
                 metadata: { transcriptFile: entry.name },
@@ -158,9 +175,12 @@ export class ClaudeHarnessAdapter implements StrictHarnessAdapter {
   async applyMcpConfig(plan: ConfigMutationPlan): Promise<ConfigBackup> {
     return await applyClaudeMcpConfig(plan, this.fsBridge);
   }
-
   async verifyMcpConfig(workspace: HarnessWorkspace): Promise<boolean> {
     return await verifyClaudeMcpConfig(workspace, undefined, this.fsBridge);
+  }
+
+  async rollbackMcpConfig(backup: ConfigBackup): Promise<void> {
+    return await rollbackClaudeMcpConfig(backup, this.fsBridge);
   }
 
   async notifyCatalogRefresh(

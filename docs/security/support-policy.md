@@ -17,12 +17,11 @@ This document defines the official support tiers, operating system matrix, harne
 
 ## 2. Supported AI Coding Harnesses
 
-| Harness | Vendor / Runtime | Protocol | Supported Versions |
-|---------|------------------|----------|-------------------|
-| **Claude Code CLI** | Anthropic | MCP (SSE & Stdio) | `>= 0.1.0` |
-| **Codex CLI** | OpenAI | MCP (SSE) | `>= 0.0.1` |
-| **Oh My Pi (OMP)** | Canary Laboratories | MCP (SSE & IPC) | `>= 0.1.0` |
-
+| Harness | Vendor / Runtime | Protocol | Supported Versions | Tested & Qualified Versions |
+|---------|------------------|----------|--------------------|-----------------------------|
+| **Claude Code CLI** | Anthropic | MCP (SSE & Stdio) | `>= 0.1.0` | `0.2.29`, `1.0.0` |
+| **Codex CLI** | OpenAI | MCP (SSE) | `>= 0.1.0` | `0.1.0`, `0.2.0` |
+| **Oh My Pi (OMP)** | Canary Laboratories | MCP (SSE & IPC) | `>= 0.1.0` | `0.1.0`, `0.2.0` |
 ---
 
 ## 3. Node.js & Runtime Dependencies

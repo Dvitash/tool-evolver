@@ -19,12 +19,11 @@ This document specifies the supported scope, platform matrix, resource boundarie
 
 ## 2. Supported AI Coding Harnesses
 
-| Harness | Version Compatibility | Supported Protocols |
-|---------|-----------------------|---------------------|
-| **Claude Code CLI** | `>= 0.1.0` | MCP SSE / JSONL observation |
-| **Codex CLI** | `>= 0.0.1` | MCP SSE / TOML session observation |
-| **Oh My Pi (OMP)** | `>= 0.1.0` | MCP SSE / Hub IPC observation |
-
+| Harness | Version Compatibility | Tested Versions | Supported Protocols |
+|---------|-----------------------|-----------------|---------------------|
+| **Claude Code CLI** | `>= 0.1.0` | `0.2.29`, `1.0.0` | MCP SSE / JSONL observation |
+| **Codex CLI** | `>= 0.1.0` | `0.1.0`, `0.2.0` | MCP SSE / TOML session observation |
+| **Oh My Pi (OMP)** | `>= 0.1.0` | `0.1.0`, `0.2.0` | MCP SSE / Hub IPC observation |
 ---
 
 ## 3. Runtime Boundaries & Default Limits

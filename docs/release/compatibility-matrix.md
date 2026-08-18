@@ -19,12 +19,11 @@ This document defines the version compatibility matrix across all internal schem
 
 ## 2. AI Coding Harness Compatibility
 
-| Harness Adapter | Adapter Package | Supported Harness Versions | Protocol Bridge |
-|-----------------|-----------------|----------------------------|-----------------|
-| **Claude Code CLI** | `@tool-evolver/adapter-claude-code` | Claude Code `>= 0.1.0` | MCP over SSE / Stdio |
-| **Codex CLI** | `@tool-evolver/adapter-codex` | Codex CLI `>= 0.0.1` | MCP over SSE |
-| **Oh My Pi (OMP)** | `@tool-evolver/adapter-omp` | OMP `>= 0.1.0` | MCP over SSE & Hub IPC |
-
+| Harness Adapter | Adapter Package | Supported Versions | Tested & Qualified Versions | Protocol Bridge |
+|-----------------|-----------------|--------------------|-----------------------------|-----------------|
+| **Claude Code CLI** | `@tool-evolver/adapter-claude-code` | `>= 0.1.0` | `0.2.29`, `1.0.0` | MCP over SSE / Stdio |
+| **Codex CLI** | `@tool-evolver/adapter-codex` | `>= 0.1.0` | `0.1.0`, `0.2.0` | MCP over SSE |
+| **Oh My Pi (OMP)** | `@tool-evolver/adapter-omp` | `>= 0.1.0` | `0.1.0`, `0.2.0` | MCP over SSE & Hub IPC |
 ---
 
 ## 3. Host Operating Systems & Node.js Matrix

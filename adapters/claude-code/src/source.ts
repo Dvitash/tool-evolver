@@ -182,6 +182,11 @@ export class ClaudeSessionEventSource implements SessionEventSource {
       }
 
       const buffer = Buffer.from(content, "utf8");
+      if (buffer.length < this.currentByteOffset) {
+        this.currentByteOffset = 0;
+        this.currentLineNumber = 1;
+        this.currentSequence = 0;
+      }
       if (buffer.length <= this.currentByteOffset) {
         return [];
       }
@@ -190,16 +195,13 @@ export class ClaudeSessionEventSource implements SessionEventSource {
       const newText = newBytes.toString("utf8");
 
       const lines = newText.split("\n");
-      const hasTrailingNewline = newText.endsWith("\n");
-      const completeLines = hasTrailingNewline ? lines.slice(0, -1) : lines;
+      const completeLines = lines.slice(0, -1);
 
       let consumedBytes = 0;
 
       for (let i = 0; i < completeLines.length && records.length < maxRecords; i++) {
         const line = completeLines[i];
-        const lineBytes =
-          Buffer.byteLength(line, "utf8") +
-          (hasTrailingNewline || i < completeLines.length - 1 ? 1 : 0);
+        const lineBytes = Buffer.byteLength(line, "utf8") + 1;
 
         if (line.trim().length === 0) {
           consumedBytes += lineBytes;

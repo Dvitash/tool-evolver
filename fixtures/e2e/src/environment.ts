@@ -41,6 +41,7 @@ import {
   createRegistryGatewayRouter,
   createSystemMetaTools,
 } from "@tool-evolver/gateway";
+import { InMemoryConfigFsBridge } from "@tool-evolver/harness-contracts";
 import {
   AuditTrailManager,
   DeploymentActivator,
@@ -103,6 +104,7 @@ export class HermeticE2EEnvironment {
   claudeCodeAdapter!: ClaudeHarnessAdapter;
   codexCliAdapter!: CodexHarnessAdapter;
   ompAdapter!: OmpHarnessAdapter;
+  readonly fsBridge = new InMemoryConfigFsBridge();
 
   private isRunning = false;
 
@@ -179,9 +181,9 @@ export class HermeticE2EEnvironment {
     });
 
     // 7. Setup Harness Adapters
-    this.claudeCodeAdapter = new ClaudeHarnessAdapter();
-    this.codexCliAdapter = new CodexHarnessAdapter();
-    this.ompAdapter = new OmpHarnessAdapter();
+    this.claudeCodeAdapter = new ClaudeHarnessAdapter({ fsBridge: this.fsBridge });
+    this.codexCliAdapter = new CodexHarnessAdapter({ fsBridge: this.fsBridge });
+    this.ompAdapter = new OmpHarnessAdapter({ fsBridge: this.fsBridge });
 
     this.isRunning = true;
   }
@@ -350,8 +352,18 @@ export class HermeticE2EEnvironment {
   /**
    * Execute JSON-RPC message directly through gateway.
    */
-  async callGatewayJsonRpc(message: JsonRpcMessage): Promise<JsonRpcMessage | null> {
-    return this.localGateway.handleMessage("conn_e2e_01", message);
+  async callGatewayJsonRpc(
+    message: JsonRpcMessage,
+    connectionId = "conn_e2e_01",
+  ): Promise<JsonRpcMessage | null> {
+    if (!this.localGateway.getConnection(connectionId)) {
+      this.localGateway.createConnection({
+        connectionId,
+        harnessId: "claude-code",
+        cwd: this.workspacePath,
+      });
+    }
+    return this.localGateway.handleMessage(connectionId, message);
   }
 
   async syncAndActivateCloudTools(workspaceId: string = this.tenant.workspaceId): Promise<number> {

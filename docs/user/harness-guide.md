@@ -6,12 +6,11 @@ Tool Evolver integrates seamlessly with multiple AI developer harnesses via the 
 
 ## Supported Coding Harnesses
 
-| Harness | Configuration File | Bridge Protocol | Observation Mode | Refresh Mechanism |
-|---------|-------------------|-----------------|------------------|-------------------|
-| **Claude Code CLI** | `~/.claude/claude.json` | MCP over SSE / Stdio | Local JSONL Session Tailing | Dynamic ListChanged Notification |
-| **Codex CLI** | `~/.codex/config.toml` | MCP over SSE | Local TOML/JSON Log Tailing | Capability Polling / Refresh Event |
-| **Oh My Pi (OMP)** | `~/.omp/config.json` | MCP over SSE / Hub IPC | In-process Event Tailer | SSE Event Push / Hub Sync |
-
+| Harness | Tested Versions | Configuration File | Bridge Protocol | Observation Mode | Refresh Mechanism |
+|---------|-----------------|-------------------|-----------------|------------------|-------------------|
+| **Claude Code CLI** | `0.2.29`, `1.0.0` (`>= 0.1.0`) | `~/.claude/claude.json` | MCP over SSE / Stdio | Local JSONL Session Tailing | Context Notice Prompt Nudge |
+| **Codex CLI** | `0.1.0`, `0.2.0` (`>= 0.1.0`) | `~/.codex/config.toml` | MCP over SSE | Local TOML/JSON Log Tailing | Session Restart Required |
+| **Oh My Pi (OMP)** | `0.1.0`, `0.2.0` (`>= 0.1.0`) | `~/.omp/config.json` | MCP over SSE / Hub IPC | In-process Event Tailer | Native ListChanged Notification |
 ---
 
 ## 1. Claude Code CLI Integration

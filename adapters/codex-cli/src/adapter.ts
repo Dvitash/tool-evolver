@@ -22,6 +22,7 @@ import {
   DEFAULT_GATEWAY_SERVER_NAME,
   applyCodexMcpConfig,
   planCodexMcpConfig,
+  rollbackCodexMcpConfig,
   verifyCodexMcpConfig,
 } from "./config-planner.js";
 import {
@@ -261,6 +262,12 @@ export class CodexHarnessAdapter implements HarnessAdapter {
       DEFAULT_GATEWAY_SERVER_NAME,
       this.fsBridge,
     );
+  }
+  /**
+   * Reverts a previously applied configuration mutation.
+   */
+  async rollbackMcpConfig(backup: ConfigBackup): Promise<void> {
+    return rollbackCodexMcpConfig(backup, this.fsBridge);
   }
 
   /**

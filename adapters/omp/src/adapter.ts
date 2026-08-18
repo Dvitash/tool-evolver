@@ -2,6 +2,7 @@ import {
   type AdapterCapabilities,
   type CatalogChangeSummary,
   type ConfigBackup,
+  type ConfigFsBridge,
   type ConfigMutationPlan,
   type HarnessInstallation,
   type HarnessSession,
@@ -27,12 +28,21 @@ import { OmpSessionEventSource } from "./source.js";
  * Harness adapter for Oh My Pi (OMP) agent harness.
  * Implements high-fidelity observation, session tailing, MCP configuration, and catalog refresh.
  */
+export interface OmpHarnessAdapterOptions {
+  fsBridge?: ConfigFsBridge;
+}
+
 export class OmpHarnessAdapter implements StrictHarnessAdapter {
   readonly id = "omp";
   readonly name = "omp";
   readonly version = "0.1.0";
   readonly supportedHarnessVersions: readonly string[] = ["^0.1.0", ">=0.1.0", ">=0.0.1", "*"];
 
+  private readonly fsBridge?: ConfigFsBridge;
+
+  constructor(options?: OmpHarnessAdapterOptions) {
+    this.fsBridge = options?.fsBridge;
+  }
   /**
    * Probes the system for an OMP installation and checks its readiness.
    */
@@ -104,28 +114,28 @@ export class OmpHarnessAdapter implements StrictHarnessAdapter {
     workspace: HarnessWorkspace,
     gatewayUrl: string,
   ): Promise<ConfigMutationPlan> {
-    return planOmpMcpConfig({ workspace, gatewayUrl });
+    return planOmpMcpConfig({ workspace, gatewayUrl, fsBridge: this.fsBridge });
   }
 
   /**
    * Atomically applies the MCP mutation plan with backup preservation.
    */
   async applyMcpConfig(plan: ConfigMutationPlan): Promise<ConfigBackup> {
-    return applyOmpMcpConfig(plan);
+    return applyOmpMcpConfig(plan, this.fsBridge);
   }
 
   /**
    * Verifies that the workspace or global OMP config is properly connected to Gateway.
    */
   async verifyMcpConfig(workspace: HarnessWorkspace): Promise<boolean> {
-    return verifyOmpMcpConfig(workspace);
+    return verifyOmpMcpConfig({ workspace, fsBridge: this.fsBridge });
   }
 
   /**
    * Reverts a previously applied configuration mutation.
    */
   async rollbackMcpConfig(backup: ConfigBackup): Promise<void> {
-    return rollbackOmpMcpConfig(backup);
+    return rollbackOmpMcpConfig(backup, this.fsBridge);
   }
 
   /**
