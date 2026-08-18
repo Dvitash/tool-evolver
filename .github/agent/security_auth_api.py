@@ -146,7 +146,6 @@ regex_once(
     r'    if \(path === "/health/ready" && req.method === "GET"\) \{.*?\n      return;\n    \}',
     '''    if (path === "/health/ready" && req.method === "GET") {\n      const checks = await probeReadiness(this.dbPool, this.objectStore, this.queue);\n      const allOk = checks.database && checks.storage && checks.queue;\n      const healthStatus: HealthStatus = {\n        status: allOk ? "ok" : "unready",\n        timestamp: Date.now(),\n        uptime: (Date.now() - this.startTime) / 1000,\n        checks,\n      };\n      this.sendJson(res, allOk ? 200 : 503, healthStatus, standardHeaders);\n      return;\n    }''',
 )
-# Authentication endpoints should return body-limit and JSON errors accurately.
 replace_once(
     api_path,
     '''      } catch (err: unknown) {\n        const message = err instanceof Error ? err.message : String(err);\n        this.sendJson(\n          res,\n          400,\n          {\n            error: "INVALID_REQUEST",\n            message,\n          },\n          standardHeaders,\n        );\n        return;\n      }''',
@@ -162,8 +161,6 @@ replace_once(
     '''      } catch (err: unknown) {\n        const message = err instanceof Error ? err.message : String(err);\n        this.sendJson(\n          res,\n          500,\n          {\n            error: "INTERNAL_ERROR",\n            message,\n          },\n          standardHeaders,\n        );\n      }''',
     '''      } catch (err: unknown) {\n        const failure = classifyHttpError(err);\n        this.sendJson(\n          res,\n          failure.status,\n          { error: failure.code, message: failure.message },\n          standardHeaders,\n        );\n      }''',
 )
-# Route-level scopes. Development/test shorthand remains available only when the
-# explicit config switch is on.
 route_guards = [
     ('    if (path === "/v1/observations/batch" && req.method === "POST") {', '      assertRequestScope(authContext, "observations:write");'),
     ('    if (path === "/v1/telemetry/batch" && req.method === "POST") {', '      assertRequestScope(authContext, "telemetry:write");'),
@@ -201,16 +198,8 @@ replace_once(
     '''      if (req.method === "PUT") {\n        const { promise, resolve, reject } = Promise.withResolvers<Buffer>();\n        const chunks: Buffer[] = [];\n        req.on("data", (chunk: Buffer) => chunks.push(chunk));\n        req.on("end", () => resolve(Buffer.concat(chunks)));\n        req.on("error", reject);\n\n        const data = await promise;''',
     '''      if (req.method === "PUT") {\n        assertRequestScope(authContext, "deployments:write");\n        const data = await readRequestBody(req, this.config.server.bodyLimitBytes);''',
 )
-replace_once(
-    api_path,
-    '? await this.parseJsonBody(req).catch(() => ({}))',
-    '? await this.parseJsonBody(req)',
-)
+replace_once(api_path, '? await this.parseJsonBody(req).catch(() => ({}))', '? await this.parseJsonBody(req)')
 
-# ---------------------------------------------------------------------------
-# Authentication middleware: remove WebSocket query tokens and validate dev
-# shorthand structurally.
-# ---------------------------------------------------------------------------
 middleware_path = "apps/cloud/src/auth/middleware.ts"
 replace_once(
     middleware_path,
@@ -227,20 +216,9 @@ regex_once(
     r'    // 1\. Try URL query parameter \?token=\.\.\..*?\n    // 2\. Try standard Authorization header',
     '    // 1. Standard Authorization header. Query-string tokens are intentionally rejected.\n    // They leak through browser history, reverse-proxy logs, and referrer headers.',
 )
-replace_once(
-    middleware_path,
-    '    // 3. Try Sec-WebSocket-Protocol token',
-    '    // 2. Try Sec-WebSocket-Protocol token',
-)
-replace_once(
-    middleware_path,
-    '    // 4. Dev headers',
-    '    // 3. Dev headers',
-)
+replace_once(middleware_path, '    // 3. Try Sec-WebSocket-Protocol token', '    // 2. Try Sec-WebSocket-Protocol token')
+replace_once(middleware_path, '    // 4. Dev headers', '    // 3. Dev headers')
 
-# ---------------------------------------------------------------------------
-# Hermetic OMP qualification fixture.
-# ---------------------------------------------------------------------------
 omp_test = "adapters/omp/tests/qualification.test.ts"
 replace_once(
     omp_test,
@@ -248,14 +226,12 @@ replace_once(
     '''      const configPath = path.join(tempDir, "config.json");\n      const executablePath = path.join(tempDir, process.platform === "win32" ? "omp.cmd" : "omp");\n      await fsp.writeFile(configPath, JSON.stringify({ mcpServers: {} }));\n      await fsp.writeFile(\n        executablePath,\n        process.platform === "win32" ? "@echo 0.1.0\\r\\n" : "#!/bin/sh\\necho 0.1.0\\n",\n        { mode: 0o755 },\n      );\n\n      const installation = await probeOmpInstallation({\n        customConfigPath: configPath,\n        customExecutablePath: executablePath,\n        ompHome: tempDir,\n      });''',
 )
 
-# ---------------------------------------------------------------------------
-# Security regression tests.
-# ---------------------------------------------------------------------------
 write(
     "apps/cloud/tests/security-hardening.test.ts",
-    '''import { describe, expect, it } from "vitest";\nimport { loadConfig } from "../src/config.js";\nimport { MemoryDatabasePool, runMigrations } from "../src/db/index.js";\nimport { MemoryDurableQueue } from "../src/queue/index.js";\nimport { createCloudServer } from "../src/server/index.js";\nimport { MemoryObjectStore } from "../src/storage/index.js";\n\nasync function startServer(config = loadConfig({\n  environment: "test",\n  server: {\n    host: "127.0.0.1",\n    port: 0,\n    logLevel: "info",\n    bodyLimitBytes: 1024,\n    requestTimeoutMs: 5000,\n    corsOrigins: ["https://allowed.example"],\n  },\n})) {\n  const dbPool = new MemoryDatabasePool();\n  await runMigrations(dbPool);\n  const server = createCloudServer({\n    config,\n    dbPool,\n    objectStore: new MemoryObjectStore(),\n    queue: new MemoryDurableQueue(),\n  });\n  const port = await server.start(0, "127.0.0.1");\n  return {\n    baseUrl: `http://127.0.0.1:${port}`,\n    stop: async () => {\n      await server.stop();\n      await dbPool.end();\n    },\n  };\n}\n\ndescribe("Cloud production security hardening", () => {\n  it("rejects insecure production configuration", () => {\n    expect(() =>\n      loadConfig({\n        environment: "production",\n        auth: {\n          jwtSecret: "dev-jwt-secret-min-16-characters-long",\n          deviceTokenSecret: "dev-device-token-secret-16-chars-long",\n          issuer: "tool-evolver-cloud",\n          audience: "tool-evolver-client",\n          tokenTtlSeconds: 86400,\n          allowDevAuth: true,\n        },\n      }),\n    ).toThrow(/Unsafe production cloud configuration/);\n  });\n\n  it("does not accept development tenant headers in production", async () => {\n    const config = loadConfig({\n      environment: "production",\n      database: {\n        url: "postgres://service:strong-password@db.internal:5432/tool_evolver",\n        host: "db.internal",\n        port: 5432,\n        database: "tool_evolver",\n        user: "service",\n        password: "strong-password",\n        ssl: true,\n        maxConnections: 20,\n        idleTimeoutMs: 30000,\n        connectionTimeoutMs: 5000,\n      },\n      storage: {\n        provider: "s3",\n        bucket: "tool-evolver-prod",\n        region: "us-east-1",\n        accessKeyId: "service-key",\n        secretAccessKey: "service-secret",\n        forcePathStyle: false,\n      },\n      queue: {\n        provider: "postgres",\n        concurrency: 10,\n        pollIntervalMs: 1000,\n        visibilityTimeoutMs: 30000,\n        maxAttempts: 3,\n        deadLetterThreshold: 3,\n        backoffBaseMs: 1000,\n      },\n      auth: {\n        jwtSecret: "production-jwt-secret-value-32-characters",\n        deviceTokenSecret: "production-device-secret-value-32-chars",\n        issuer: "tool-evolver-cloud",\n        audience: "tool-evolver-client",\n        tokenTtlSeconds: 3600,\n        allowDevAuth: false,\n      },\n      server: {\n        host: "127.0.0.1",\n        port: 0,\n        logLevel: "info",\n        bodyLimitBytes: 1024,\n        requestTimeoutMs: 5000,\n        corsOrigins: ["https://console.example"],\n      },\n    });\n    const { baseUrl, stop } = await startServer(config);\n    try {\n      const response = await fetch(`${baseUrl}/v1/devices`, {\n        headers: { "x-account-id": "victim", "x-workspace-id": "victim-workspace" },\n      });\n      expect(response.status).toBe(401);\n    } finally {\n      await stop();\n    }\n  });\n\n  it("enforces request body limits and explicit CORS origins", async () => {\n    const config = loadConfig({\n      environment: "test",\n      server: {\n        host: "127.0.0.1",\n        port: 0,\n        logLevel: "info",\n        bodyLimitBytes: 32,\n        requestTimeoutMs: 5000,\n        corsOrigins: ["https://allowed.example"],\n      },\n    });\n    const { baseUrl, stop } = await startServer(config);\n    try {\n      const corsResponse = await fetch(`${baseUrl}/health/live`, {\n        headers: { Origin: "https://evil.example" },\n      });\n      expect(corsResponse.headers.get("access-control-allow-origin")).toBeNull();\n\n      const oversized = await fetch(`${baseUrl}/v1/accounts`, {\n        method: "POST",\n        headers: {\n          "Content-Type": "application/json",\n          "x-account-id": "acc-test",\n          "x-workspace-id": "ws-test",\n        },\n        body: JSON.stringify({ data: "x".repeat(128) }),\n      });\n      expect(oversized.status).toBe(413);\n    } finally {\n      await stop();\n    }\n  });\n});\n''',
+    '''import { describe, expect, it } from "vitest";\nimport { loadConfig } from "../src/config.js";\nimport { MemoryDatabasePool, runMigrations } from "../src/db/index.js";\nimport { MemoryDurableQueue } from "../src/queue/index.js";\nimport { createCloudServer } from "../src/server/index.js";\nimport { MemoryObjectStore } from "../src/storage/index.js";\n\nasync function startServer(config = loadConfig({\n  environment: "test",\n  server: {\n    host: "127.0.0.1",\n    port: 0,\n    logLevel: "info",\n    bodyLimitBytes: 1024,\n    requestTimeoutMs: 5000,\n    corsOrigins: ["https://allowed.example"],\n  },\n})) {\n  const dbPool = new MemoryDatabasePool();\n  await runMigrations(dbPool);\n  const server = createCloudServer({ config, dbPool, objectStore: new MemoryObjectStore(), queue: new MemoryDurableQueue() });\n  const port = await server.start(0, "127.0.0.1");\n  return { baseUrl: `http://127.0.0.1:${port}`, stop: async () => { await server.stop(); await dbPool.end(); } };\n}\n\ndescribe("Cloud production security hardening", () => {\n  it("rejects insecure production configuration", () => {\n    expect(() => loadConfig({ environment: "production", auth: { jwtSecret: "dev-jwt-secret-min-16-characters-long", deviceTokenSecret: "dev-device-token-secret-16-chars-long", issuer: "tool-evolver-cloud", audience: "tool-evolver-client", tokenTtlSeconds: 86400, allowDevAuth: true } })).toThrow(/Unsafe production cloud configuration/);\n  });\n\n  it("does not accept development tenant headers in production", async () => {\n    const config = loadConfig({\n      environment: "production",\n      database: { url: "postgres://service:strong-password@db.internal:5432/tool_evolver", host: "db.internal", port: 5432, database: "tool_evolver", user: "service", password: "strong-password", ssl: true, maxConnections: 20, idleTimeoutMs: 30000, connectionTimeoutMs: 5000 },\n      storage: { provider: "s3", bucket: "tool-evolver-prod", region: "us-east-1", accessKeyId: "service-key", secretAccessKey: "service-secret", forcePathStyle: false },\n      queue: { provider: "postgres", concurrency: 10, pollIntervalMs: 1000, visibilityTimeoutMs: 30000, maxAttempts: 3, deadLetterThreshold: 3, backoffBaseMs: 1000 },\n      auth: { jwtSecret: "production-jwt-secret-value-32-characters", deviceTokenSecret: "production-device-secret-value-32-chars", issuer: "tool-evolver-cloud", audience: "tool-evolver-client", tokenTtlSeconds: 3600, allowDevAuth: false },\n      server: { host: "127.0.0.1", port: 0, logLevel: "info", bodyLimitBytes: 1024, requestTimeoutMs: 5000, corsOrigins: ["https://console.example"] },\n    });\n    const { baseUrl, stop } = await startServer(config);\n    try {\n      const response = await fetch(`${baseUrl}/v1/devices`, { headers: { "x-account-id": "victim", "x-workspace-id": "victim-workspace" } });\n      expect(response.status).toBe(401);\n    } finally { await stop(); }\n  });\n\n  it("enforces request body limits and explicit CORS origins", async () => {\n    const config = loadConfig({ environment: "test", server: { host: "127.0.0.1", port: 0, logLevel: "info", bodyLimitBytes: 32, requestTimeoutMs: 5000, corsOrigins: ["https://allowed.example"] } });\n    const { baseUrl, stop } = await startServer(config);\n    try {\n      const corsResponse = await fetch(`${baseUrl}/health/live`, { headers: { Origin: "https://evil.example" } });\n      expect(corsResponse.headers.get("access-control-allow-origin")).toBeNull();\n      const oversized = await fetch(`${baseUrl}/v1/accounts`, { method: "POST", headers: { "Content-Type": "application/json", "x-account-id": "acc-test", "x-workspace-id": "ws-test" }, body: JSON.stringify({ data: "x".repeat(128) }) });\n      expect(oversized.status).toBe(413);\n    } finally { await stop(); }\n  });\n});\n''',
 )
 
-# Delete the one-shot patch machinery from the resulting source commit.
 (ROOT / ".github/agent/security_auth_api.py").unlink()
 (ROOT / ".github/workflows/agent-security-auth-api.yml").unlink()
+
+# retrigger marker
