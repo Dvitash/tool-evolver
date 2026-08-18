@@ -41,7 +41,8 @@ jobs:
         run: pnpm exec vitest run fixtures/e2e/tests/real-process-topology.test.ts
       - name: Run complete repository test suite
         run: pnpm test
-      - name: commit
+      - name: materialize patched tree
+        if: always()
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
