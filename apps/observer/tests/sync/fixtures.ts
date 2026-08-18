@@ -83,6 +83,7 @@ export function generateTestSigningKey(
   keyId = `key_${crypto.randomUUID()}`,
   trustLevel: "production" | "development" | "revoked" = "production",
 ): {
+  keyId: string;
   keyEntry: SigningKeyEntry;
   privateKeyPem: string;
   signPayload: (payload: string | Buffer) => string;
@@ -106,7 +107,7 @@ export function generateTestSigningKey(
     return signature.toString("hex");
   };
 
-  return { keyEntry, privateKeyPem: privateKey, signPayload };
+  return { keyId, keyEntry, privateKeyPem: privateKey, signPayload };
 }
 
 /**
@@ -260,7 +261,11 @@ export function createSampleCapabilityEnvelope(
  */
 export function createSignedTestBundle(
   manifest: ToolManifest,
-  signer?: { keyId: string; signPayload: (payload: string | Buffer) => string },
+  signer?: {
+    keyId?: string;
+    keyEntry?: { keyId: string };
+    signPayload: (payload: string | Buffer) => string;
+  },
 ): { archiveBuffer: Buffer; digest: string } {
   const indexJs = 'export default function run(args) { return { result: "ok" }; }';
   const packageJson = JSON.stringify({
@@ -296,13 +301,13 @@ export function createSignedTestBundle(
       algorithm,
       bundleDigest,
       fileDigests,
-      keyId: signer.keyId,
+      keyId: signer.keyId ?? signer.keyEntry?.keyId ?? "unknown",
       signedAt,
     });
 
     const signatureHex = signer.signPayload(canonicalString);
     const signatureJson = JSON.stringify({
-      keyId: signer.keyId,
+      keyId: signer.keyId ?? signer.keyEntry?.keyId ?? "unknown",
       algorithm,
       signature: signatureHex,
       signatureHex,

@@ -6,3 +6,4 @@ export * from "./cache.js";
 export * from "./controls.js";
 export * from "./events.js";
 export * from "./registry.js";
+export * from "./canary-router.js";

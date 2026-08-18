@@ -1,5 +1,10 @@
 import crypto from "node:crypto";
 import {
+  CURRENT_SAFETY_GATE_VERSION,
+  REQUIRED_SAFETY_CHECKS,
+  SAFETY_GATE_ERROR_CODES,
+  type SafetyAttestationRecord,
+  SafetyAttestationRecordSchema,
   type ToolManifest,
   ToolManifestSchema,
   canonicalJson,
@@ -12,6 +17,69 @@ import type {
   SigningKeyStore,
 } from "./types.js";
 
+/**
+ * Computes canonical payload buffer for signing.
+ */
+export function createCanonicalSignPayload(
+  bundleDigest: string,
+  fileDigests: Record<string, string>,
+  keyId: string,
+  algorithm: string,
+  signedAt: string,
+): Buffer {
+  const canonicalString = canonicalJson({
+    algorithm,
+    bundleDigest,
+    fileDigests,
+    keyId,
+    signedAt,
+  });
+  return Buffer.from(canonicalString, "utf8");
+}
+
+/**
+ * Verifies safety attestation record against required checks and version invariants.
+ */
+export function verifySafetyAttestation(record: SafetyAttestationRecord): {
+  valid: boolean;
+  error?: string;
+  errorCode?: string;
+} {
+  if (!record || typeof record !== "object") {
+    return {
+      valid: false,
+      errorCode: SAFETY_GATE_ERROR_CODES.MISSING_ATTESTATION,
+      error: "Safety attestation record is missing or invalid",
+    };
+  }
+  const parseResult = SafetyAttestationRecordSchema.safeParse(record);
+  if (!parseResult.success) {
+    return {
+      valid: false,
+      errorCode: SAFETY_GATE_ERROR_CODES.CORRUPTED_ATTESTATION,
+      error: `Invalid attestation schema: ${parseResult.error.message}`,
+    };
+  }
+  const checks = record.checks as Record<string, boolean>;
+  for (const reqCheck of REQUIRED_SAFETY_CHECKS) {
+    if (checks[reqCheck] !== true) {
+      return {
+        valid: false,
+        errorCode: SAFETY_GATE_ERROR_CODES.UNMET_SAFETY_CHECK,
+        error: `Required safety check '${reqCheck}' failed or is missing`,
+      };
+    }
+  }
+  return { valid: true };
+}
+
+/**
+ * Computes canonical manifest digest, stripping existing digest.
+ */
+export function computeManifestDigest(manifest: ToolManifest | Record<string, unknown>): string {
+  const withEmptyDigest = { ...manifest, digest: "" };
+  return crypto.createHash("sha256").update(canonicalJson(withEmptyDigest)).digest("hex");
+}
 /**
  * Error thrown when an artifact digest does not match the expected SHA-256.
  */
@@ -96,6 +164,48 @@ export class ArtifactInspectionError extends Error {
   ) {
     super(`Artifact inspection failed: ${message}`);
     this.name = "ArtifactInspectionError";
+  }
+}
+/**
+ * Error thrown when an artifact requires an unsupported runtime engine or SDK version.
+ */
+export class IncompatibleRuntimeError extends Error {
+  constructor(
+    public readonly engine: string,
+    public readonly sdkVersion?: string,
+    message?: string,
+  ) {
+    super(
+      message ??
+        `Incompatible runtime or SDK version: engine=${engine}, sdkVersion=${sdkVersion ?? "unspecified"}`,
+    );
+    this.name = "IncompatibleRuntimeError";
+  }
+}
+
+/**
+ * Error thrown when an artifact production-safety attestation fails verification.
+ */
+export class AttestationVerificationError extends Error {
+  constructor(
+    public readonly reason: string,
+    public readonly errorCode?: string,
+  ) {
+    super(`Safety attestation verification failed: ${reason}${errorCode ? ` (${errorCode})` : ""}`);
+    this.name = "AttestationVerificationError";
+  }
+}
+
+/**
+ * Error thrown when an artifact candidate capability violates the local envelope.
+ */
+export class EnvelopeViolationError extends Error {
+  constructor(
+    public readonly violation: string,
+    public readonly details?: Record<string, unknown>,
+  ) {
+    super(`Candidate capability violates local envelope: ${violation}`);
+    this.name = "EnvelopeViolationError";
   }
 }
 
@@ -384,6 +494,9 @@ export class ArtifactTransferClient {
       allowDevKeys?: boolean;
       verifySignature?: boolean;
       requireSignature?: boolean;
+      requireAttestation?: boolean;
+      supportedEngines?: string[];
+      supportedSdkVersions?: string[];
     } = {},
   ): Promise<ArtifactInspectionResult> {
     const bundleDigest =
@@ -391,11 +504,11 @@ export class ArtifactTransferClient {
     const rawEntries = parseTarBuffer(buffer);
 
     if (rawEntries.length === 0) {
-      throw new ArtifactInspectionError("Archive contains no valid tar entries", "EMPTY_ARCHIVE");
+      throw new ArtifactInspectionError("Tar archive is empty", "EMPTY_ARCHIVE");
     }
 
-    const fileMap = new Map<string, Buffer>();
     const files: ArtifactFileEntry[] = [];
+    const fileMap = new Map<string, Buffer>();
 
     for (const entry of rawEntries) {
       const normalizedPath = entry.name.replace(/^\.\//, "").replace(/\/+/g, "/");
@@ -414,19 +527,16 @@ export class ArtifactTransferClient {
       }
 
       // Check for forbidden special files (directories or symlinks pointing outside)
-      if (entry.type !== "0" && entry.type !== "" && entry.type !== "\0" && entry.type !== "5") {
-        // Not a regular file or directory
-        if (entry.type === "2" || entry.type === "1") {
-          // Symlink / hardlink
-          throw new ArtifactInspectionError(
-            `Archive contains forbidden link entry: ${entry.name}`,
-            "FORBIDDEN_LINK_DETECTED",
-          );
-        }
+      if (entry.type === "2" || entry.type === "1") {
+        throw new ArtifactInspectionError(
+          `Archive contains forbidden link entry: ${entry.name}`,
+          "UNSAFE_LINK_DETECTED",
+        );
       }
 
+      // Store regular files
+      fileMap.set(normalizedPath, entry.data);
       if (entry.type === "0" || entry.type === "" || entry.type === "\0") {
-        fileMap.set(normalizedPath, entry.data);
         files.push({
           path: normalizedPath,
           sizeBytes: entry.size,
@@ -446,10 +556,10 @@ export class ArtifactTransferClient {
 
     let manifestRaw: unknown;
     try {
-      manifestRaw = JSON.parse(manifestBuffer.toString("utf8"));
+      manifestRaw = JSON.parse(manifestBuffer.toString("utf-8"));
     } catch (err) {
       throw new ArtifactInspectionError(
-        `Failed to parse manifest.json: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to parse manifest.json as JSON: ${err instanceof Error ? err.message : String(err)}`,
         "INVALID_MANIFEST_JSON",
       );
     }
@@ -464,6 +574,64 @@ export class ArtifactTransferClient {
       );
     }
 
+    // Check runtime & SDK engine compatibility
+    const supportedEngines = new Set(
+      options.supportedEngines ?? ["deno", "node", "bun", "wasm", "process", "builtin"],
+    );
+    const rawRuntime = (manifestRaw as Record<string, unknown>)?.runtime as
+      | Record<string, unknown>
+      | undefined;
+    const runtimeObj = manifest.runtime as unknown as {
+      runtime?: string;
+      engine?: string;
+      sdkVersion?: string;
+    };
+    const engine =
+      (rawRuntime?.engine as string | undefined) ??
+      (rawRuntime?.runtime as string | undefined) ??
+      runtimeObj.engine ??
+      runtimeObj.runtime ??
+      "deno";
+    const sdkVersion = (rawRuntime?.sdkVersion as string | undefined) ?? runtimeObj.sdkVersion;
+    if (!supportedEngines.has(engine)) {
+      throw new IncompatibleRuntimeError(
+        engine,
+        sdkVersion,
+        `Engine '${engine}' is not supported by local runtime (supported: ${Array.from(supportedEngines).join(", ")})`,
+      );
+    }
+
+    // Check manifest self-digest if present
+    const rawManifestJsonDigest = crypto
+      .createHash("sha256")
+      .update(canonicalJson(manifestRaw as Record<string, unknown>))
+      .digest("hex");
+    const rawWithEmptyDigest = crypto
+      .createHash("sha256")
+      .update(canonicalJson({ ...(manifestRaw as Record<string, unknown>), digest: "" }))
+      .digest("hex");
+    const computedManifestDigest = computeManifestDigest(manifest);
+    const rawManifestDigest = crypto
+      .createHash("sha256")
+      .update(canonicalJson(manifest))
+      .digest("hex");
+    const { digest: _digest, ...restOfManifest } = manifest as Record<string, unknown>;
+    const strippedManifestDigest = crypto
+      .createHash("sha256")
+      .update(canonicalJson(restOfManifest))
+      .digest("hex");
+
+    const validManifestDigests = new Set([
+      rawManifestJsonDigest,
+      rawWithEmptyDigest,
+      computedManifestDigest,
+      rawManifestDigest,
+      strippedManifestDigest,
+    ]);
+
+    if (manifest.digest && !validManifestDigests.has(manifest.digest)) {
+      throw new DigestMismatchError(manifest.digest, computedManifestDigest);
+    }
     // Locate signature.json
     const signatureBuffer = fileMap.get("signature.json");
     let rawSignature: Record<string, unknown> | undefined;
@@ -471,32 +639,35 @@ export class ArtifactTransferClient {
 
     if (signatureBuffer) {
       try {
-        rawSignature = JSON.parse(signatureBuffer.toString("utf8"));
-      } catch {
-        // Invalid signature JSON
+        rawSignature = JSON.parse(signatureBuffer.toString("utf-8")) as Record<string, unknown>;
+      } catch (err) {
+        throw new ArtifactInspectionError(
+          `Failed to parse signature.json: ${err instanceof Error ? err.message : String(err)}`,
+          "INVALID_SIGNATURE_JSON",
+        );
       }
     }
 
     if (options.requireSignature && !rawSignature) {
-      throw new ArtifactInspectionError(
-        "Artifact does not contain required signature.json",
-        "SIGNATURE_REQUIRED",
-      );
+      throw new InvalidSignatureError("unknown", "Artifact is missing required signature.json");
     }
 
     if (rawSignature && (options.verifySignature || options.requireSignature)) {
-      const keyId = typeof rawSignature.keyId === "string" ? rawSignature.keyId : "";
+      const keyId = typeof rawSignature.keyId === "string" ? rawSignature.keyId : undefined;
       const algorithm =
         typeof rawSignature.algorithm === "string" ? rawSignature.algorithm : "ed25519";
       const signatureHex =
         typeof rawSignature.signature === "string"
           ? rawSignature.signature
-          : typeof rawSignature.signatureHex === "string"
-            ? rawSignature.signatureHex
-            : "";
+          : typeof rawSignature.sig === "string"
+            ? rawSignature.sig
+            : undefined;
 
       if (!keyId) {
         throw new InvalidSignatureError("unknown", "Missing keyId in signature.json");
+      }
+      if (!signatureHex) {
+        throw new InvalidSignatureError(keyId, "Missing signature in signature.json");
       }
 
       const keyEntry = await this.keyStore.getKey(keyId);
@@ -508,19 +679,28 @@ export class ArtifactTransferClient {
         throw new RevokedSigningKeyError(keyId);
       }
 
-      const isTrusted = await this.keyStore.isTrusted(keyId, options.allowDevKeys);
+      const isTrusted = await this.keyStore.isTrusted(
+        keyId,
+        options.allowDevKeys ?? this.allowDevKeys,
+      );
       if (!isTrusted) {
         throw new UntrustedSigningKeyError(keyId, keyEntry.trustLevel);
       }
 
-      // Verify cryptographic signature over canonical sign payload
-      const signedAt =
-        typeof rawSignature.signedAt === "string"
-          ? rawSignature.signedAt
-          : typeof rawSignature.timestamp === "string"
-            ? rawSignature.timestamp
-            : "";
+      // Verify manifest digest in signature matches computed manifest digest
+      if (
+        typeof rawSignature.manifestDigest === "string" &&
+        rawSignature.manifestDigest !== computedManifestDigest &&
+        rawSignature.manifestDigest !== rawManifestDigest &&
+        rawSignature.manifestDigest !== manifest.digest
+      ) {
+        throw new InvalidSignatureError(
+          keyId,
+          `Manifest digest mismatch in signature: signature has ${rawSignature.manifestDigest}, computed ${computedManifestDigest}`,
+        );
+      }
 
+      // Check fileDigests in signature if present
       const rawFileDigests =
         rawSignature.fileDigests && typeof rawSignature.fileDigests === "object"
           ? (rawSignature.fileDigests as Record<string, string>)
@@ -533,33 +713,70 @@ export class ArtifactTransferClient {
             fileDigestsRecord[f.path] = f.digest;
           }
         }
+      } else {
+        // 1. Verify all files in archive match signature.fileDigests
+        for (const f of files) {
+          if (f.path !== "signature.json") {
+            const expectedFileDigest = fileDigestsRecord[f.path];
+            if (!expectedFileDigest || expectedFileDigest !== f.digest) {
+              throw new InvalidSignatureError(
+                keyId,
+                `File digest mismatch or unknown file '${f.path}' in signature (expected=${expectedFileDigest ?? "none"}, actual=${f.digest})`,
+              );
+            }
+          }
+        }
+        // 2. Verify all files in signature.fileDigests exist in archive
+        for (const expectedPath of Object.keys(fileDigestsRecord)) {
+          const found = files.some((f) => f.path === expectedPath);
+          if (!found) {
+            throw new InvalidSignatureError(
+              keyId,
+              `File '${expectedPath}' listed in signature is missing from archive`,
+            );
+          }
+        }
       }
+
+      // Recreate canonical payload
+      const signedAt =
+        typeof rawSignature.signedAt === "string"
+          ? rawSignature.signedAt
+          : typeof rawSignature.timestamp === "string"
+            ? rawSignature.timestamp
+            : "";
 
       const rawBundleDigest =
-        typeof rawSignature.bundleDigest === "string" ? rawSignature.bundleDigest : bundleDigest;
+        typeof rawSignature.bundleDigest === "string"
+          ? rawSignature.bundleDigest
+          : typeof rawSignature.digest === "string"
+            ? rawSignature.digest
+            : bundleDigest;
 
-      const canonicalString = canonicalJson({
-        algorithm,
-        bundleDigest: rawBundleDigest,
-        fileDigests: fileDigestsRecord,
+      const signPayload = createCanonicalSignPayload(
+        rawBundleDigest,
+        fileDigestsRecord,
         keyId,
+        algorithm,
         signedAt,
-      });
+      );
 
-      const payloadBuf = Buffer.from(canonicalString, "utf8");
-      const sigBuf = Buffer.from(signatureHex, "hex");
-
-      let isValid = false;
+      let isValidSig = false;
       try {
-        if (keyEntry.publicKeyPem) {
-          isValid = crypto.verify(null, payloadBuf, keyEntry.publicKeyPem, sigBuf);
-        }
-      } catch {
-        isValid = false;
+        const sigBuf = Buffer.from(signatureHex, "hex");
+        isValidSig = crypto.verify(null, signPayload, keyEntry.publicKeyPem, sigBuf);
+      } catch (err) {
+        throw new InvalidSignatureError(
+          keyId,
+          `Cryptographic signature verification error: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
 
-      if (!isValid) {
-        throw new InvalidSignatureError(keyId, "Cryptographic signature verification failed");
+      if (!isValidSig) {
+        throw new InvalidSignatureError(
+          keyId,
+          "Cryptographic signature verification failed: signature does not match payload",
+        );
       }
 
       signatureResult = {
@@ -570,12 +787,55 @@ export class ArtifactTransferClient {
       };
     }
 
+    // Production-Safety Attestation Check
+    let attestationRecord: SafetyAttestationRecord | undefined;
+    let rawAttestation: Record<string, unknown> | undefined;
+    const attestationBuffer = fileMap.get("attestation.json");
+    if (attestationBuffer) {
+      try {
+        rawAttestation = JSON.parse(attestationBuffer.toString("utf-8")) as Record<string, unknown>;
+        attestationRecord = SafetyAttestationRecordSchema.parse(rawAttestation);
+      } catch (err) {
+        throw new AttestationVerificationError(
+          `Failed to parse attestation.json: ${err instanceof Error ? err.message : String(err)}`,
+          "INVALID_ATTESTATION_SCHEMA",
+        );
+      }
+    } else {
+      const customManifest = manifest as unknown as { safetyAttestation?: unknown };
+      if (
+        customManifest.safetyAttestation &&
+        typeof customManifest.safetyAttestation === "object"
+      ) {
+        attestationRecord = customManifest.safetyAttestation as SafetyAttestationRecord;
+      }
+    }
+
+    if (options.requireAttestation && !attestationRecord) {
+      throw new AttestationVerificationError(
+        "Safety attestation is required for production activation",
+        "MISSING_ATTESTATION",
+      );
+    }
+
+    if (attestationRecord) {
+      const attestationCheck = verifySafetyAttestation(attestationRecord);
+      if (!attestationCheck.valid) {
+        throw new AttestationVerificationError(
+          attestationCheck.error ?? "Safety attestation verification failed",
+          attestationCheck.errorCode,
+        );
+      }
+    }
+
     return {
       manifest,
       bundleDigest,
       files,
       rawSignature,
       signature: signatureResult,
+      attestation: attestationRecord,
+      rawAttestation,
     };
   }
 }

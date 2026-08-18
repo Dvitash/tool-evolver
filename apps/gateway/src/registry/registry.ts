@@ -590,6 +590,22 @@ export class ToolRegistry {
 
     return undefined;
   }
+  /**
+   * Retrieves a specific version of a registered tool.
+   */
+  getToolVersion(toolIdOrName: string, version: string): RegistryTool | undefined {
+    const direct = this.registeredTools.get(toolIdOrName)?.get(version);
+    if (direct) {
+      return direct;
+    }
+    for (const versions of this.registeredTools.values()) {
+      const vTool = versions.get(version);
+      if (vTool && (vTool.name === toolIdOrName || vTool.exposedName === toolIdOrName)) {
+        return vTool;
+      }
+    }
+    return undefined;
+  }
 
   /**
    * Atomically activates a tool version in a workspace or session,

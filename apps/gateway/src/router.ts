@@ -3,6 +3,7 @@ import type { SafetyGateEvaluator } from "@tool-evolver/runtime";
 import type { ToolInvocationRouter } from "./meta/router-contract.js";
 import { MCP_ERROR_CODES, McpProtocolError } from "./protocol/errors.js";
 import type { CallToolResult, McpTool, McpToolInput } from "./protocol/types.js";
+import { CanaryRouter } from "./registry/canary-router.js";
 import type { CatalogSnapshotRecord, ToolRegistry } from "./registry/index.js";
 import { withResolvers } from "./utils/deferred.js";
 import type { WorkspaceContext } from "./workspace-resolver.js";
@@ -311,6 +312,7 @@ function toMcpInputSchema(rawSchema?: Record<string, unknown>): McpToolInput {
  */
 export class RegistryGatewayRouter implements GatewayRouter {
   private readonly registry: ToolRegistry;
+  private readonly canaryRouter: CanaryRouter;
   private readonly listeners = new Set<() => void>();
   private readonly unsubscribeEvents?: () => void;
   private safetyGateEvaluator?: SafetyGateEvaluator;
@@ -319,12 +321,20 @@ export class RegistryGatewayRouter implements GatewayRouter {
     registry: ToolRegistry,
     invocationRouter?: ToolInvocationRouter,
     safetyGateEvaluator?: SafetyGateEvaluator,
+    canaryRouter?: CanaryRouter,
   ) {
     this.registry = registry;
+    this.canaryRouter =
+      canaryRouter ??
+      new CanaryRouter({
+        registry: this.registry,
+        userControls: this.registry.controls,
+      });
     this.safetyGateEvaluator = safetyGateEvaluator ?? registry.getSafetyGateEvaluator();
     if (safetyGateEvaluator) {
       this.registry.setSafetyGateEvaluator(safetyGateEvaluator);
     }
+
     if (invocationRouter) {
       this.registry.setInvocationRouter(invocationRouter);
     }
@@ -416,6 +426,50 @@ export class RegistryGatewayRouter implements GatewayRouter {
       }
     }
 
+    // Enforce canary execution if candidate active on non-system tools
+    const canary = this.canaryRouter.getCanary(tool.toolId, context.workspaceId);
+    if (canary && !tool.isSystem) {
+      const invocationRequest = {
+        toolId: tool.toolId,
+        name: tool.name,
+        version: tool.version,
+        parameters: params,
+        context,
+        manifest: tool.manifest,
+        signal: options?.signal,
+        onProgress: options?.onProgress,
+        timeoutMs: options?.timeoutMs,
+      };
+
+      return await this.canaryRouter.executeWithCanary(
+        invocationRequest,
+        async (targetVersion: string) => {
+          const targetTool =
+            this.registry.getToolVersion(tool.toolId, targetVersion) ??
+            this.registry.getToolVersion(name, targetVersion) ??
+            (targetVersion === tool.version ? tool : undefined);
+
+          if (targetTool?.handler) {
+            return await targetTool.handler(context, params, options);
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  status: "executed",
+                  tool: targetTool?.name ?? tool.name,
+                  version: targetVersion,
+                  params,
+                }),
+              },
+            ],
+          };
+        },
+      );
+    }
+
     if (tool.handler) {
       return tool.handler(context, params, options);
     }
@@ -457,6 +511,10 @@ export class RegistryGatewayRouter implements GatewayRouter {
     return this.registry;
   }
 
+  getCanaryRouter(): CanaryRouter {
+    return this.canaryRouter;
+  }
+
   destroy(): void {
     if (this.unsubscribeEvents) {
       this.unsubscribeEvents();
@@ -472,6 +530,7 @@ export function createRegistryGatewayRouter(
   registry: ToolRegistry,
   invocationRouter?: ToolInvocationRouter,
   safetyGateEvaluator?: SafetyGateEvaluator,
+  canaryRouter?: CanaryRouter,
 ): RegistryGatewayRouter {
-  return new RegistryGatewayRouter(registry, invocationRouter, safetyGateEvaluator);
+  return new RegistryGatewayRouter(registry, invocationRouter, safetyGateEvaluator, canaryRouter);
 }

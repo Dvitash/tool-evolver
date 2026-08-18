@@ -58,6 +58,7 @@ export class UserControlsManager {
           workspace_id TEXT PRIMARY KEY,
           pinned_versions_json TEXT NOT NULL DEFAULT '{}',
           disabled_tools_json TEXT NOT NULL DEFAULT '[]',
+          frozen_tools_json TEXT NOT NULL DEFAULT '[]',
           rollbacks_json TEXT NOT NULL DEFAULT '[]',
           updated_at TEXT NOT NULL
         );
@@ -82,6 +83,7 @@ export class UserControlsManager {
           workspace_id: string;
           pinned_versions_json: string;
           disabled_tools_json: string;
+          frozen_tools_json?: string;
           rollbacks_json: string;
         }>("SELECT * FROM user_tool_controls WHERE workspace_id = ?;", [workspaceId]);
 
@@ -90,13 +92,14 @@ export class UserControlsManager {
             workspaceId: row.workspace_id,
             pinnedVersions: JSON.parse(row.pinned_versions_json || "{}"),
             disabledTools: JSON.parse(row.disabled_tools_json || "[]"),
+            frozenTools: JSON.parse(row.frozen_tools_json || "[]"),
             rollbacks: JSON.parse(row.rollbacks_json || "[]"),
           };
           this.memoryControls.set(workspaceId, controls);
           return controls;
         }
       } catch {
-        // Fall back to blank controls on DB read error
+        // Fallback to empty controls if DB read fails
       }
     }
 
@@ -104,6 +107,7 @@ export class UserControlsManager {
       workspaceId,
       pinnedVersions: {},
       disabledTools: [],
+      frozenTools: [],
       rollbacks: [],
     };
     this.memoryControls.set(workspaceId, defaultControls);
@@ -111,7 +115,7 @@ export class UserControlsManager {
   }
 
   /**
-   * Persists controls for a workspace to DB and updates in-memory cache.
+   * Persists controls for a workspace to DB and memory cache.
    */
   private async persistControls(controls: UserControls): Promise<void> {
     this.memoryControls.set(controls.workspaceId, controls);
@@ -120,19 +124,28 @@ export class UserControlsManager {
       try {
         const now = new Date().toISOString();
         this.conn.run(
-          `INSERT INTO user_tool_controls (
-            workspace_id, pinned_versions_json, disabled_tools_json, rollbacks_json, updated_at
-          ) VALUES (?, ?, ?, ?, ?)
+          `
+          INSERT INTO user_tool_controls (
+            workspace_id,
+            pinned_versions_json,
+            disabled_tools_json,
+            frozen_tools_json,
+            rollbacks_json,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
           ON CONFLICT(workspace_id) DO UPDATE SET
             pinned_versions_json = excluded.pinned_versions_json,
             disabled_tools_json = excluded.disabled_tools_json,
+            frozen_tools_json = excluded.frozen_tools_json,
             rollbacks_json = excluded.rollbacks_json,
-            updated_at = excluded.updated_at;`,
+            updated_at = excluded.updated_at;
+        `,
           [
             controls.workspaceId,
-            JSON.stringify(controls.pinnedVersions),
-            JSON.stringify(controls.disabledTools),
-            JSON.stringify(controls.rollbacks ?? []),
+            JSON.stringify(controls.pinnedVersions || {}),
+            JSON.stringify(controls.disabledTools || []),
+            JSON.stringify(controls.frozenTools || []),
+            JSON.stringify(controls.rollbacks || []),
             now,
           ],
         );
@@ -206,6 +219,60 @@ export class UserControlsManager {
     return controls.disabledTools.includes(toolId);
   }
 
+  /**
+   * Freezes a tool in a workspace so that no automatic or cloud updates can modify it.
+   */
+  async freezeTool(workspaceId: string, toolId: string): Promise<void> {
+    const controls = await this.getControls(workspaceId);
+    controls.frozenTools = controls.frozenTools ?? [];
+    if (!controls.frozenTools.includes(toolId)) {
+      controls.frozenTools.push(toolId);
+      await this.persistControls(controls);
+    }
+  }
+
+  /**
+   * Unfreezes a tool in a workspace to allow updates again.
+   */
+  async unfreezeTool(workspaceId: string, toolId: string): Promise<void> {
+    const controls = await this.getControls(workspaceId);
+    if (controls.frozenTools && controls.frozenTools.includes(toolId)) {
+      controls.frozenTools = controls.frozenTools.filter((id) => id !== toolId);
+      await this.persistControls(controls);
+    }
+  }
+
+  /**
+   * Checks whether a tool is frozen in a workspace.
+   */
+  async isToolFrozen(workspaceId: string, toolId: string): Promise<boolean> {
+    const controls = await this.getControls(workspaceId);
+    return Boolean(controls.frozenTools && controls.frozenTools.includes(toolId));
+  }
+
+  /**
+   * Synchronous check on in-memory cached controls for tool freezing.
+   */
+  isFrozen(workspaceId: string, toolId: string): boolean {
+    const cached = this.memoryControls.get(workspaceId);
+    return Boolean(cached?.frozenTools && cached.frozenTools.includes(toolId));
+  }
+
+  /**
+   * Synchronous check on in-memory cached controls for tool pinning.
+   */
+  isPinned(workspaceId: string, toolId: string): boolean {
+    const cached = this.memoryControls.get(workspaceId);
+    return Boolean(cached?.pinnedVersions?.[toolId]);
+  }
+
+  /**
+   * Synchronous check on in-memory cached controls for tool disabling.
+   */
+  isDisabled(workspaceId: string, toolId: string): boolean {
+    const cached = this.memoryControls.get(workspaceId);
+    return Boolean(cached?.disabledTools?.includes(toolId));
+  }
   /**
    * Lists all disabled tools in a workspace.
    */

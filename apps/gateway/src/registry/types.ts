@@ -111,10 +111,12 @@ export interface UserControls {
   workspaceId: string;
   pinnedVersions: Record<string, string>; // toolId -> pinned version
   disabledTools: string[]; // toolIds of disabled tools
+  frozenTools?: string[]; // toolIds of frozen tools
   rollbacks?: Array<{
     targetRevision: number | string;
     timestamp: string;
     restoredSnapshotId?: string;
+    toolId?: string;
   }>;
 }
 

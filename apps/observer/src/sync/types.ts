@@ -11,6 +11,8 @@ import {
   IdentifierSchema,
   type InstallationRecord,
   InstallationRecordSchema,
+  type SafetyAttestationRecord,
+  SafetyAttestationRecordSchema,
   SchemaVersionSchema,
   Sha256DigestSchema,
   type ToolManifest,
@@ -125,6 +127,13 @@ export interface UserControls {
   workspaceId: string;
   pinnedVersions: Record<string, string>;
   disabledTools: string[];
+  frozenTools?: string[];
+  rollbacks?: Array<{
+    targetRevision: number | string;
+    timestamp: string;
+    restoredSnapshotId?: string;
+    toolId?: string;
+  }>;
 }
 
 /**
@@ -251,6 +260,8 @@ export interface ArtifactInspectionResult {
     trustLevel: string;
     error?: string;
   };
+  attestation?: SafetyAttestationRecord;
+  rawAttestation?: Record<string, unknown>;
 }
 
 /**

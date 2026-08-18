@@ -12,6 +12,15 @@
       "path": "../../packages/contracts"
     },
     {
+      "path": "../../packages/crypto"
+    },
+    {
+      "path": "../../packages/db"
+    },
+    {
+      "path": "../../packages/harness-contracts"
+    },
+    {
       "path": "../../packages/protocol"
     },
     {
