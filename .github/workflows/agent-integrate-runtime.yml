@@ -29,6 +29,129 @@ jobs:
           git config user.email "tool-evolver-agent@users.noreply.github.com"
       - name: Apply validated Runtime commit
         run: git cherry-pick e2d2339ced0bb90334e2009dc8f5fbd39e00079c
+      - name: Reconcile tests and injectable certification
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          doctor = Path("apps/cli/src/commands/doctor.ts")
+          text = doctor.read_text()
+          old = '''  options: {
+              fsBridge?: ConfigFsBridge;
+              customFetch?: typeof fetch;
+              isRepair?: boolean;
+            } = {},'''
+          new = '''  options: {
+              fsBridge?: ConfigFsBridge;
+              customFetch?: typeof fetch;
+              isRepair?: boolean;
+              safetyCertification?: LocalSafetyCertificationOptions;
+            } = {},'''
+          if old not in text:
+              raise SystemExit("doctorCommand options marker not found")
+          text = text.replace(old, new, 1)
+          old = '''        customFetch: options.customFetch,
+              });'''
+          new = '''        customFetch: options.customFetch,
+                safetyCertification: options.safetyCertification,
+              });'''
+          if old not in text:
+              raise SystemExit("repairState forwarding marker not found")
+          text = text.replace(old, new, 1)
+          old = '''  options: {
+              fsBridge?: ConfigFsBridge;
+              customFetch?: typeof fetch;
+            } = {},'''
+          new = '''  options: {
+              fsBridge?: ConfigFsBridge;
+              customFetch?: typeof fetch;
+              safetyCertification?: LocalSafetyCertificationOptions;
+            } = {},'''
+          if old not in text:
+              raise SystemExit("repairCommand options marker not found")
+          text = text.replace(old, new, 1)
+          doctor.write_text(text)
+
+          doctor_test = Path("apps/cli/tests/doctor-repair-command.test.ts")
+          text = doctor_test.read_text()
+          old = '''    const actions = await repairState({
+                home: homeDir,
+                fsBridge,
+              });'''
+          new = '''    const actions = await repairState({
+                home: homeDir,
+                fsBridge,
+                safetyCertification: {
+                  probeOverrides: { denoAvailable: true, denoVersion: "2.0.0" },
+                },
+              });'''
+          if old not in text:
+              raise SystemExit("direct repairState test marker not found")
+          text = text.replace(old, new, 1)
+          old = '''      const exitCode = await repairCommand(["--json", "--home", homeDir], {
+                  fsBridge,
+                });'''
+          new = '''      const exitCode = await repairCommand(["--json", "--home", homeDir], {
+                  fsBridge,
+                  safetyCertification: {
+                    probeOverrides: { denoAvailable: true, denoVersion: "2.0.0" },
+                  },
+                });'''
+          if old not in text:
+              raise SystemExit("repairCommand test marker not found")
+          text = text.replace(old, new, 1)
+          doctor_test.write_text(text)
+
+          mediation = Path("packages/runtime/tests/brokers/secret-mediation.test.ts")
+          text = mediation.read_text()
+          old = '''      // Dispatched request for mediateHeaders
+              const res = (await brokerManager.handleRequest(
+                "secret",
+                "mediateHeaders",
+                {
+                  headers: {
+                    Authorization: "Bearer {{secret:GITHUB_TOKEN}}",
+                  },
+                },
+                ctx,
+              )) as Record<string, string>;
+
+              expect(res.Authorization).toBe("Bearer ghp_123456789012345678901234567890123456");
+
+              // Dispatched direct read fails
+              await expect(
+                brokerManager.handleRequest("secret", "getSecret", { name: "GITHUB_TOKEN" }, ctx),
+              ).rejects.toThrow(BrokerSecurityError);'''
+          new = '''      // Worker RPC cannot receive a fully mediated plaintext value.
+              await expect(
+                brokerManager.handleRequest(
+                  "secret",
+                  "mediateHeaders",
+                  {
+                    headers: {
+                      Authorization: "Bearer {{secret:GITHUB_TOKEN}}",
+                    },
+                  },
+                  ctx,
+                ),
+              ).rejects.toMatchObject({ code: "DIRECT_READ_DENIED" });
+
+              // Trusted host brokers may consume the secret without returning it to the worker.
+              const trusted = await secretBroker.mediateHeaders(
+                { Authorization: "Bearer {{secret:GITHUB_TOKEN}}" },
+                { ...ctx, isWorker: false, source: "host" },
+              );
+              expect(trusted.Authorization).toBe(
+                "Bearer ghp_123456789012345678901234567890123456",
+              );
+
+              await expect(
+                brokerManager.handleRequest("secret", "getSecret", { name: "GITHUB_TOKEN" }, ctx),
+              ).rejects.toThrow(BrokerSecurityError);'''
+          if old not in text:
+              raise SystemExit("secret mediation test marker not found")
+          mediation.write_text(text.replace(old, new, 1))
+          PY
       - name: Remove temporary integration workflow
         run: rm .github/workflows/agent-integrate-runtime.yml
       - name: Install dependencies
