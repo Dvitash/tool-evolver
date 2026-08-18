@@ -1,7 +1,4 @@
-import {
-  type CapabilityManifest,
-  CapabilityManifestSchema,
-} from "@tool-evolver/contracts";
+import { type CapabilityManifest, CapabilityManifestSchema } from "@tool-evolver/contracts";
 import type { DatabasePool } from "../../db/client.js";
 import { EvidenceRepository } from "../../storage/repositories/evidence-repository.js";
 import type { TenantContext } from "../../tenant.js";
@@ -87,10 +84,8 @@ function normalizeCandidateCapabilities(candidate: CandidateTarget): CandidateTa
       denyPrivateRanges: raw.net?.denyPrivateRanges ?? true,
     },
     command: {
-      allowShellExecution:
-        raw.command?.allowShellExecution ?? raw.exec?.allowExec ?? false,
-      allowedCommands:
-        raw.command?.allowedCommands ?? raw.exec?.allowedCommands ?? [],
+      allowShellExecution: raw.command?.allowShellExecution ?? raw.exec?.allowExec ?? false,
+      allowedCommands: raw.command?.allowedCommands ?? raw.exec?.allowedCommands ?? [],
       allowedBinaries: raw.command?.allowedBinaries ?? [],
       forbiddenPatterns: raw.command?.forbiddenPatterns ?? [],
       allowEnvPassthrough: raw.command?.allowEnvPassthrough ?? [],
@@ -117,7 +112,7 @@ function normalizeCandidateCapabilities(candidate: CandidateTarget): CandidateTa
 }
 
 /**
- * Service orchestrating historical session replay evaluation for candidate tools.
+ * Replays a candidate tool against historical session evidence.
  */
 export class HistoricalReplayService {
   private readonly builder: ReplayScenarioBuilder;
@@ -135,16 +130,12 @@ export class HistoricalReplayService {
     this.defaultSeed = options.defaultSeed ?? 42;
   }
 
-  /**
-   * Replays a candidate tool against historical session evidence.
-   */
   async replayCandidate(
     tenant: TenantContext,
     options: ReplayCandidateOptions,
   ): Promise<HistoricalReplayResult> {
     let evidenceSource = options.evidence;
 
-    // Resolve evidence from repository if ID was specified
     if (!evidenceSource && options.evidenceSetId && this.evidenceRepo) {
       const resolved = await this.evidenceRepo.resolveEvidenceSet(tenant, options.evidenceSetId);
       if (resolved) {
@@ -164,19 +155,11 @@ export class HistoricalReplayService {
       ...options.options,
     };
     const candidate = normalizeCandidateCapabilities(options.candidate);
-
-    // 1. Build deterministic scenarios
     const scenarios = this.builder.buildScenarios(evidenceSource, candidate, replayOpts);
 
-    // 2. Execute scenarios against candidate in isolated sandbox
-    const result = await this.runner.runScenarios(candidate, scenarios, replayOpts);
-
-    return result;
+    return this.runner.runScenarios(candidate, scenarios, replayOpts);
   }
 
-  /**
-   * Builds replay scenarios without executing them.
-   */
   buildScenarios(
     evidence: EvidenceSource,
     candidate: CandidateTarget,
@@ -189,9 +172,6 @@ export class HistoricalReplayService {
     );
   }
 
-  /**
-   * Runs a single pre-built scenario against a candidate.
-   */
   async executeSingleScenario(
     candidate: CandidateTarget,
     scenario: ReplayScenario,
@@ -201,9 +181,6 @@ export class HistoricalReplayService {
   }
 }
 
-/**
- * Factory function for creating a HistoricalReplayService instance.
- */
 export function createHistoricalReplayService(
   options: HistoricalReplayServiceOptions = {},
 ): HistoricalReplayService {

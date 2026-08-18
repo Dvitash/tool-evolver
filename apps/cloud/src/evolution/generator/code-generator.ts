@@ -147,9 +147,7 @@ ${customLogic}
         }
 
         if (!allowFallback) {
-          throw new Error(
-            "Structured inference did not return capability-compatible tool source",
-          );
+          throw new Error("Structured inference did not return capability-compatible tool source");
         }
       } catch (error) {
         if (!allowFallback) {
