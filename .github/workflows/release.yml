@@ -1,0 +1,49 @@
+name: Production Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Exact green main commit SHA to release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-verify-release:
+    runs-on: ubuntu-24.04
+    env:
+      TOOL_EVOLVER_RELEASE_KEY_ID: ${{ vars.TOOL_EVOLVER_RELEASE_KEY_ID }}
+      TOOL_EVOLVER_RELEASE_PUBLIC_KEY_PEM: ${{ vars.TOOL_EVOLVER_RELEASE_PUBLIC_KEY_PEM }}
+      TOOL_EVOLVER_RELEASE_PRIVATE_KEY_PEM: ${{ secrets.TOOL_EVOLVER_RELEASE_PRIVATE_KEY_PEM }}
+      TOOL_EVOLVER_RELEASE_EVIDENCE_PATH: dist/qualification/production-release-evidence.json
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+      - name: Verify exact release commit and signing boundary
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ inputs.commit_sha }}"
+          test -n "$TOOL_EVOLVER_RELEASE_KEY_ID"
+          test -n "$TOOL_EVOLVER_RELEASE_PUBLIC_KEY_PEM"
+          test -n "$TOOL_EVOLVER_RELEASE_PRIVATE_KEY_PEM"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.24.0
+          run_install: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+      - name: Require production qualification evidence
+        run: test -s "$TOOL_EVOLVER_RELEASE_EVIDENCE_PATH"
+      - name: Package exact signed release
+        run: node scripts/package-release.mjs
+      - name: Verify exact signed release
+        run: node scripts/verify-release.mjs
