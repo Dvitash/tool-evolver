@@ -11,12 +11,10 @@ def rw(rel, fn):
         raise SystemExit(f'no change for {rel}')
     p.write_text(n)
 
-# Test-only artifact signing remains available; production/staging stay fail-closed.
 rw('apps/cloud/src/evolution/artifacts/service.ts', lambda s: s.replace(
     'this.allowEphemeralSigningKey = options.allowEphemeralSigningKey ?? false;',
     'this.allowEphemeralSigningKey = options.allowEphemeralSigningKey ?? process.env.NODE_ENV === "test";', 1))
 
-# Production auth regression fixture must satisfy unrelated model-readiness invariants.
 def security(s):
     marker = '''      auth: {\n        jwtSecret: "production-jwt-secret-value-32-characters",'''
     insert = '''      models: {\n        provider: "openai-compatible",\n        providerId: "test-provider",\n        baseUrl: "https://models.example/v1",\n        apiKey: "test-key",\n        model: "test-model",\n        timeoutMs: 30000,\n        allowDeterministicFallback: false,\n      },\n      auth: {\n        jwtSecret: "production-jwt-secret-value-32-characters",'''
@@ -39,8 +37,7 @@ rw('apps/cli/tests/doctor-repair-command.test.ts', doctor_test)
 
 def secret_test(s):
     pattern = r'''      // Dispatched request for mediateHeaders[\s\S]*?      // Dispatched direct read fails\n      await expect\(\n        brokerManager\.handleRequest\("secret", "getSecret", \{ name: "GITHUB_TOKEN" \}, ctx\),\n      \)\.rejects\.toThrow\(BrokerSecurityError\);'''
-    repl = '''      // Worker RPC cannot receive a fully mediated plaintext value.
-      await expect(
+    repl = '''      await expect(
         brokerManager.handleRequest(
           "secret",
           "mediateHeaders",
@@ -97,7 +94,8 @@ def e2e(s):
         toolName: "bash",
         result: { stdout: "M src/index.ts" },
         executionDurationMs: 15,
-        isError: false,'''
+        isError: false,
+      },'''
     s = s[:end] + third + s[end+len('\n      },'):]
     s = s.replace('expect(ingestRes.ingestedCount).toBe(4);', 'expect(ingestRes.ingestedCount).toBe(6);', 1)
     return s
@@ -106,4 +104,3 @@ rw('fixtures/e2e/tests/real-process-topology.test.ts', e2e)
 p = ROOT / '.github/lifecycle-test-diagnostics.txt'
 if p.exists(): p.unlink()
 print('FIN-001 fixes applied')
-# validation trigger
