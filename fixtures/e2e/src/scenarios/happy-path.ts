@@ -560,7 +560,8 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     { category: "functional", evidence: { activatedCount, toolName } },
   );
 
-  const nativeOutcome = await env.invokeTool(toolName, {});
+  const invocationParameters = { includeDiffSummary: true };
+  const nativeOutcome = await env.invokeTool(toolName, invocationParameters);
   const nativeInvocationSuccess = nativeOutcome.success && !nativeOutcome.isError;
 
   reporter.assertRequirement(
@@ -577,9 +578,8 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     name: toolName,
   });
   const invokeOutcome = await env.invokeTool(SYSTEM_META_TOOL_NAMES.INVOKE_TOOL, {
-    toolId: candidate.proposedTool.id,
     name: toolName,
-    parameters: {},
+    parameters: invocationParameters,
   });
   const metaToolInvocationSuccess =
     searchOutcome.success && schemaOutcome.success && invokeOutcome.success;
@@ -594,6 +594,7 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
         searchSuccess: searchOutcome.success,
         schemaSuccess: schemaOutcome.success,
         invokeSuccess: invokeOutcome.success,
+        invokeOutcome: invokeOutcome.content,
       },
     },
   );

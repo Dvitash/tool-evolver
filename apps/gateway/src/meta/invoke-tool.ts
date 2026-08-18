@@ -24,13 +24,13 @@ function normalizeIdentifier(value: unknown): string | undefined {
 }
 
 function isSameLogicalTool(left: RegistryTool, right: RegistryTool): boolean {
-  return (
-    left.toolId === right.toolId ||
-    left.name === right.name ||
-    left.exposedName === right.exposedName ||
-    left.name === right.exposedName ||
-    left.exposedName === right.name
-  );
+  if (left.toolId === right.toolId) {
+    return true;
+  }
+
+  const leftManifestId = left.manifest?.id;
+  const rightManifestId = right.manifest?.id;
+  return Boolean(leftManifestId && rightManifestId && leftManifestId === rightManifestId);
 }
 
 /**
@@ -86,7 +86,30 @@ export function createInvokeToolHandler(
       ? await registry.getTool(toolId, context.workspaceId, context.sessionId)
       : undefined;
 
-    if (byName && byId && !isSameLogicalTool(byName, byId)) {
+    const controls = await registry.controls.getControls(context.workspaceId);
+    const findDisabledScopedTool = (identifier: string | undefined): RegistryTool | undefined => {
+      if (!identifier) {
+        return undefined;
+      }
+      return registry
+        .getAllRegisteredTools()
+        .find(
+          (tool) =>
+            !tool.isSystem &&
+            controls.disabledTools.includes(tool.toolId) &&
+            isToolInScope(tool, context) &&
+            (tool.toolId === identifier ||
+              tool.name === identifier ||
+              tool.exposedName === identifier),
+        );
+    };
+
+    const disabledByName = byName ? undefined : findDisabledScopedTool(publicName);
+    const disabledById = byId ? undefined : findDisabledScopedTool(toolId);
+    const resolvedByName = byName ?? disabledByName;
+    const resolvedById = byId ?? disabledById;
+
+    if (resolvedByName && resolvedById && !isSameLogicalTool(resolvedByName, resolvedById)) {
       return {
         isError: true,
         content: [
@@ -98,7 +121,7 @@ export function createInvokeToolHandler(
       };
     }
 
-    let resolvedTool = byName ?? byId;
+    let resolvedTool = byName ?? byId ?? disabledByName ?? disabledById;
     if (!resolvedTool) {
       return {
         isError: true,
@@ -130,7 +153,6 @@ export function createInvokeToolHandler(
       resolvedTool = explicitVersion;
     }
 
-    const controls = await registry.controls.getControls(context.workspaceId);
     const isDisabled =
       controls.disabledTools.includes(resolvedTool.toolId) && !resolvedTool.isSystem;
     if (isDisabled) {

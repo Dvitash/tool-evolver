@@ -141,8 +141,10 @@ export function createMockEnvelope(overrides: MockEnvelopeOverrides = {}): Capab
         overrides.fs?.allowWorkspaceRoot ?? legacy?.fs?.allowWorkspaceRoot ?? true,
       allowTemp: overrides.fs?.allowTemp ?? legacy?.fs?.allowTemp ?? true,
       denyPaths: overrides.fs?.denyPaths ?? legacy?.fs?.denyPaths ?? [".env", ".git/secrets"],
-      maxFileSizeBytes:
+      maxFileSizeBytes: Math.max(
+        1,
         overrides.fs?.maxFileSizeBytes ?? legacy?.fs?.maxFileSizeBytes ?? 10_485_760,
+      ),
     },
     net: {
       allowOutbound: overrides.net?.allowOutbound ?? legacy?.net?.allowOutbound ?? !legacy?.net,
