@@ -47,4 +47,9 @@ def e2e(s):
   s=s.replace(needle,add,1)
  return re.sub(r'expect\(ingestRes\.ingestedCount\)\.toBe\(\d+\);','expect(ingestRes.ingestedCount).toBe(sessionEvents.length);',s,1)
 edit('fixtures/e2e/tests/real-process-topology.test.ts',e2e)
+
+def topology(s):
+ s=s.replace('body: JSON.stringify({ sessionEvents }),','body: JSON.stringify({ events: sessionEvents }),',1)
+ return s
+edit('fixtures/e2e/src/topology.ts',topology)
 print('FIN97 final applied')
