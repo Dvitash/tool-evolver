@@ -825,7 +825,7 @@ export function formatReleaseEvidenceMarkdown(evidence) {
 export function writeReleaseEvidence(options = {}) {
   const rootDir = options.rootDir || process.cwd();
   const distDir = options.distDir || path.resolve(rootDir, `dist/release/v${RELEASE_VERSION}`);
-  const syncDocs = options.syncDocs ?? true;
+  const syncDocs = options.syncDocs ?? false;
 
   if (!fs.existsSync(distDir)) {
     fs.mkdirSync(distDir, { recursive: true });
@@ -865,7 +865,7 @@ if (
   path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)
 ) {
   try {
-    const result = writeReleaseEvidence();
+    const result = writeReleaseEvidence({ syncDocs: true });
     console.log("✅ Generated V1 release evidence successfully!");
     console.log(`   - JSON: ${result.jsonPath} (${result.jsonSha256.slice(0, 16)}...)`);
     console.log(`   - Markdown: ${result.markdownPath} (${result.markdownSha256.slice(0, 16)}...)`);

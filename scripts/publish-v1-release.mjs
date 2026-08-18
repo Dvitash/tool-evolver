@@ -442,6 +442,7 @@ export function publishV1Release(options = {}) {
     rootDir,
     distDir,
     commitSha,
+    syncDocs: options.syncDocs ?? false,
   });
 
   // 4. Generate Checksums & Detached Signatures
@@ -522,7 +523,7 @@ if (
   path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)
 ) {
   try {
-    const result = publishV1Release();
+    const result = publishV1Release({ syncDocs: true });
     console.log(`\n✨ Status: ${result.success ? "SUCCESS" : "FAILED"}`);
   } catch (err) {
     console.error("\n❌ Release publication failed:", err);

@@ -709,6 +709,7 @@ export function packageRelease(options = {}) {
     rootDir,
     distDir,
     commitSha: options.commitSha,
+    syncDocs: options.syncDocs ?? false,
   });
   console.log(
     `📋 Generated complete V1 evidence bundle: release-evidence.json & RELEASE-EVIDENCE.md (${evidenceResult.evidence.summary.verifiedMilestones}/${evidenceResult.evidence.summary.totalMilestones} verified).`,
