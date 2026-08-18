@@ -46,7 +46,7 @@ def e2e(s):
  s=re.sub(r'expect\(ingestRes\.ingestedCount\)\.toBe\(\d+\);','expect(ingestRes.ingestedCount).toBe(sessionEvents.length);',s,1)
  s=s.replace('expect(opportunity.toolName).toBe("git_status_checker");','expect(opportunity.classification.suggestedToolName).toBeTruthy();',1)
  # The repeated workflow must be meaningful enough to pass the production triviality gate.
- s=s.replace('executionDurationMs: 15', 'executionDurationMs: 5000')
+ s=s.replace('executionDurationMs: 15', 'executionDurationMs: 5000, durationMs: 5000')
  return s
 edit('fixtures/e2e/tests/real-process-topology.test.ts',e2e)
 
@@ -54,6 +54,7 @@ def topology(s):
  s=s.replace('body: JSON.stringify({ sessionEvents }),','body: JSON.stringify({ events: sessionEvents }),',1)
  s=s.replace('Promise<Array<{ id: string; pattern: string; toolName: string }>>','Promise<Array<{ id: string; classification: { suggestedToolName?: string } }>>',1)
  s=s.replace('opportunities?: Array<{ id: string; pattern: string; toolName: string }>;','opportunities?: Array<{ id: string; classification: { suggestedToolName?: string } }>;',1)
+ s=s.replace('throw new Error(`Candidate generation failed with status ${res.status}`);','const body = await res.text();\n      throw new Error(`Candidate generation failed with status ${res.status}: ${body}`);',1)
  return s
 edit('fixtures/e2e/src/topology.ts',topology)
 
