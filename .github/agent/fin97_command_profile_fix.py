@@ -373,7 +373,7 @@ def patch_scenario_builder(source: str) -> str:
 
   /**
    * Formulates primary invariants'''
-    updated, count = pattern.subn(replacement, source, count=1)
+    updated, count = pattern.subn(lambda _match: replacement, source, count=1)
     if count != 1:
         if "const commandProfiles = (caps.command.allowedCommands" not in source:
             raise SystemExit("deriveAllowedBrokerOperations method not found")
