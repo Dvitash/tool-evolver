@@ -18,7 +18,15 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import zlib from "node:zlib";
-import { writeReleaseEvidence } from "./generate-release-evidence.mjs";
+import { getGitCommitSha, writeReleaseEvidence } from "./generate-release-evidence.mjs";
+import {
+  REVOKED_RELEASE_KEY_IDS,
+  createTestReleaseSigningKey,
+  loadReleaseSigningKeyFromEnv,
+  publicTrustRecord,
+  signReleasePayload,
+  trustedKeysFromSigningKey,
+} from "./release-trust.mjs";
 
 export const RELEASE_VERSION = "1.0.0";
 export const RELEASE_DATE = "2026-08-17T00:00:00.000Z";
@@ -495,74 +503,80 @@ export function createPlatformReleaseTarballs(rootDir, outputDir) {
   return assetResults;
 }
 
-/**
- * Known deterministic release Ed25519 keypair for reproducible release generation.
- * Can be overridden with an external private key in production.
- */
-export const DEFAULT_RELEASE_KEY = {
-  keyId: "tool-evolver-release-v1",
-  publicKeyPem:
-    "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEApLkxisOGwOIcMKuh4hHFSIPOtTo5aJmA8uJzh8bF6pU=\n-----END PUBLIC KEY-----\n",
-  publicKeyHex: "a4b9318ac386c0e21c30aba1e211c54883ceb53a39689980f2e27387c6c5ea95",
-  privateKeyPkcs8Pem:
-    // secret-scanner:ignore gitleaks:allow
-    "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIKHrfxWS03wRJJBHc6iyHjaoz93NxyMnlkCPd0XkQJcC\n-----END PRIVATE KEY-----\n",
-};
+function resolveReleaseIdentity(options = {}) {
+  const rootDir = options.rootDir || process.cwd();
+  const testOnly = options.testOnly === true;
+  const commitSha = options.commitSha || process.env.GITHUB_SHA || getGitCommitSha(rootDir);
+  if (!/^[0-9a-f]{40}$/i.test(commitSha)) {
+    throw new Error(
+      `Release commit SHA must be an exact 40-character Git SHA, received '${commitSha}'.`,
+    );
+  }
+  const repository =
+    options.repository || process.env.GITHUB_REPOSITORY || (testOnly ? "test-only/local" : "");
+  const ref = options.ref || process.env.GITHUB_REF || (testOnly ? "refs/test-only/local" : "");
+  const workflowRunId = String(
+    options.workflowRunId || process.env.GITHUB_RUN_ID || (testOnly ? "test-only" : ""),
+  );
+  const workflowRunAttempt = String(
+    options.workflowRunAttempt || process.env.GITHUB_RUN_ATTEMPT || (testOnly ? "1" : ""),
+  );
+  if (!testOnly && (!repository || !ref || !workflowRunId || !workflowRunAttempt)) {
+    throw new Error(
+      "Production release packaging requires GitHub repository/ref/run identity and cannot fabricate provenance.",
+    );
+  }
+
+  return Object.freeze({
+    repository,
+    commitSha,
+    ref,
+    workflow: {
+      name:
+        options.workflowName ||
+        process.env.GITHUB_WORKFLOW ||
+        (testOnly ? "test-only-release" : ""),
+      runId: workflowRunId,
+      runAttempt: workflowRunAttempt,
+    },
+  });
+}
+
+function resolveSigningKey(options = {}) {
+  if (options.keyPair) return options.keyPair;
+  if (options.testOnly === true) return createTestReleaseSigningKey();
+  return loadReleaseSigningKeyFromEnv();
+}
 
 /**
  * Generates and signs the release manifest (`manifest.json`).
- * @param {Record<string, any>} packageDigests
- * @param {Record<string, any>} assetDigests
- * @param {object} options
- * @returns {object}
+ * Production callers must supply an externally provisioned signing identity.
  */
 export function generateSignedManifest(packageDigests, assetDigests, options = {}) {
-  const keyPair = options.keyPair || DEFAULT_RELEASE_KEY;
-
-  const manifestPayload = {
-    schemaVersion: "1.0.0",
-    version: RELEASE_VERSION,
-    releaseDate: RELEASE_DATE,
-    packages: packageDigests,
-    assets: assetDigests,
-  };
-
-  const canonicalPayloadString = canonicalJson(manifestPayload);
-  const signBuffer = Buffer.from(canonicalPayloadString, "utf8");
-
-  // Sign using Ed25519 private key
-  let signatureHex = "";
-  try {
-    const privKey = crypto.createPrivateKey(keyPair.privateKeyPkcs8Pem);
-    const sig = crypto.sign(null, signBuffer, privKey);
-    signatureHex = sig.toString("hex");
-  } catch (_err) {
-    // If key generation fallback
-    const ephemeral = crypto.generateKeyPairSync("ed25519");
-    const sig = crypto.sign(null, signBuffer, ephemeral.privateKey);
-    signatureHex = sig.toString("hex");
-    keyPair.publicKeyPem = ephemeral.publicKey.export({ type: "spki", format: "pem" }).toString();
-    keyPair.publicKeyHex = ephemeral.publicKey
-      .export({ type: "spki", format: "der" })
-      .subarray(-32)
-      .toString("hex");
+  const keyPair = resolveSigningKey(options);
+  const releaseIdentity = options.releaseIdentity || resolveReleaseIdentity(options);
+  const evidence = options.evidence;
+  if (!evidence && options.testOnly !== true) {
+    throw new Error(
+      "Production release manifests require release evidence metadata before signing.",
+    );
   }
 
-  const manifest = {
-    ...manifestPayload,
-    signatures: [
-      {
-        keyId: keyPair.keyId,
-        algorithm: "Ed25519",
-        publicKey: keyPair.publicKeyHex,
-        publicKeyPem: keyPair.publicKeyPem,
-        signature: signatureHex,
-        signedAt: RELEASE_DATE,
-      },
-    ],
+  const manifestPayload = {
+    schemaVersion: "2.0.0",
+    version: RELEASE_VERSION,
+    releaseDate: RELEASE_DATE,
+    releaseIdentity,
+    packages: packageDigests,
+    assets: assetDigests,
+    evidence: evidence || { status: "TEST_ONLY" },
   };
+  const signature = signReleasePayload(manifestPayload, keyPair);
 
-  return manifest;
+  return {
+    ...manifestPayload,
+    signatures: [{ ...signature, signedAt: RELEASE_DATE }],
+  };
 }
 
 /**
@@ -636,16 +650,17 @@ export function generateCycloneDxSbom(rootDir, packageDigests) {
 }
 
 /**
- * Generates release channel metadata (`channels.json`).
- * @param {string} manifestSha256
- * @returns {object}
+ * Generates signed release channel metadata.
  */
-export function generateChannelMetadata(manifestSha256) {
-  return {
-    schemaVersion: "1.0.0",
+export function generateChannelMetadata(manifestSha256, options = {}) {
+  const keyPair = resolveSigningKey(options);
+  const releaseIdentity = options.releaseIdentity || resolveReleaseIdentity(options);
+  const payload = {
+    schemaVersion: "2.0.0",
     minSupportedVersion: "0.1.0",
     currentVersion: RELEASE_VERSION,
     updatedAt: RELEASE_DATE,
+    releaseIdentity,
     channels: {
       stable: {
         version: RELEASE_VERSION,
@@ -655,20 +670,17 @@ export function generateChannelMetadata(manifestSha256) {
         releaseNotesUrl: `https://docs.tool-evolver.dev/release/v${RELEASE_VERSION}-release-notes`,
         isLatest: true,
       },
-      prerelease: {
-        version: "1.1.0-alpha.1",
-        releaseDate: RELEASE_DATE,
-        minSupportedVersion: RELEASE_VERSION,
-        isLatest: false,
-      },
     },
     rollbackReferences: {
       targetVersion: "0.1.0",
       minSafeVersion: "0.1.0",
-      rollbackTarball: "tool-evolver-v0.1.0-rollback.tar.gz",
-      rollbackSha256: sha256Hex("tool-evolver-v0.1.0-rollback"),
       instructionsUrl: "https://docs.tool-evolver.dev/release/rollback-procedure",
     },
+    revokedKeyIds: [...REVOKED_RELEASE_KEY_IDS],
+  };
+  return {
+    ...payload,
+    signatures: [{ ...signReleasePayload(payload, keyPair), signedAt: RELEASE_DATE }],
   };
 }
 
@@ -680,71 +692,78 @@ export function generateChannelMetadata(manifestSha256) {
 export function packageRelease(options = {}) {
   const rootDir = options.rootDir || process.cwd();
   const skipBuild = options.skipBuild ?? false;
+  const testOnly = options.testOnly === true || process.env.TOOL_EVOLVER_RELEASE_TEST_ONLY === "1";
   const distDir =
     options.distDir ||
     options.outputDir ||
     path.resolve(rootDir, `dist/release/v${RELEASE_VERSION}`);
 
+  const releaseIdentity = resolveReleaseIdentity({ ...options, rootDir, testOnly });
+  const keyPair = resolveSigningKey({ ...options, testOnly });
+  let verificationEvidence = options.verificationEvidence;
+  if (!verificationEvidence && !testOnly && process.env.TOOL_EVOLVER_RELEASE_EVIDENCE_PATH) {
+    const evidencePath = path.resolve(rootDir, process.env.TOOL_EVOLVER_RELEASE_EVIDENCE_PATH);
+    verificationEvidence = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
+  }
+
   console.log(`📦 Packaging Tool Evolver V${RELEASE_VERSION} Release...`);
   console.log(`📂 Output Directory: ${distDir}`);
+  console.log(`🔐 Trust Domain: ${keyPair.trustDomain}`);
 
   if (!skipBuild) {
     buildWorkspacePackages(rootDir);
   }
 
-  // 1. Package digests
   const packageDigests = generatePackageDigests(rootDir);
-  console.log(`📋 Computed digests for ${Object.keys(packageDigests).length} workspace packages.`);
-
-  // 2. Platform release tarballs
   const assetDigests = createPlatformReleaseTarballs(rootDir, distDir);
-  console.log(`📦 Generated ${Object.keys(assetDigests).length} platform release tarballs:`);
-  for (const asset of Object.values(assetDigests)) {
-    console.log(
-      `   - ${asset.filename} (${asset.sizeBytes} bytes, sha256: ${asset.sha256.slice(0, 16)}...)`,
-    );
-  }
-  // 3. Release Evidence Bundle
+
   const evidenceResult = writeReleaseEvidence({
     rootDir,
     distDir,
-    commitSha: options.commitSha,
+    releaseIdentity,
+    commitSha: releaseIdentity.commitSha,
+    keyId: keyPair.keyId,
+    testOnly,
+    verificationEvidence,
     syncDocs: options.syncDocs ?? false,
   });
-  console.log(
-    `📋 Generated complete V1 evidence bundle: release-evidence.json & RELEASE-EVIDENCE.md (${evidenceResult.evidence.summary.verifiedMilestones}/${evidenceResult.evidence.summary.totalMilestones} verified).`,
-  );
 
-  // 4. Signed release manifest
-  const manifest = generateSignedManifest(packageDigests, assetDigests, options);
-  manifest.evidence = {
+  const evidenceMetadata = {
     json: "release-evidence.json",
     markdown: "RELEASE-EVIDENCE.md",
     jsonSha256: evidenceResult.jsonSha256,
     markdownSha256: evidenceResult.markdownSha256,
     status: evidenceResult.evidence.status,
+    mode: evidenceResult.evidence.mode,
   };
+  const manifest = generateSignedManifest(packageDigests, assetDigests, {
+    keyPair,
+    releaseIdentity,
+    evidence: evidenceMetadata,
+    testOnly,
+  });
   const manifestPath = path.join(distDir, "manifest.json");
-  const manifestContent = JSON.stringify(manifest, null, 2);
-  fs.writeFileSync(manifestPath, manifestContent);
-  const manifestSha256 = sha256Hex(manifestContent);
-  console.log(
-    `✍️ Generated and signed release manifest: manifest.json (sha256: ${manifestSha256.slice(0, 16)}...)`,
-  );
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  const manifestSha256 = fileSha256(manifestPath);
 
-  // 5. CycloneDX SBOM
   const sbom = generateCycloneDxSbom(rootDir, packageDigests);
-  const sbomPath = path.join(distDir, "sbom.json");
-  fs.writeFileSync(sbomPath, JSON.stringify(sbom, null, 2));
-  console.log(`📜 Generated CycloneDX 1.5 SBOM: sbom.json (${sbom.components.length} components).`);
+  fs.writeFileSync(path.join(distDir, "sbom.json"), JSON.stringify(sbom, null, 2));
 
-  // 6. Channel Metadata
-  const channels = generateChannelMetadata(manifestSha256);
-  const channelsPath = path.join(distDir, "channels.json");
-  fs.writeFileSync(channelsPath, JSON.stringify(channels, null, 2));
-  console.log(`🌐 Generated release channel metadata: channels.json (stable v${RELEASE_VERSION}).`);
+  const channels = generateChannelMetadata(manifestSha256, {
+    keyPair,
+    releaseIdentity,
+    testOnly,
+  });
+  fs.writeFileSync(path.join(distDir, "channels.json"), JSON.stringify(channels, null, 2));
 
-  console.log("\n🎉 Release packaging completed successfully!");
+  const trustRecord = {
+    schemaVersion: "1.0.0",
+    releaseVersion: RELEASE_VERSION,
+    trustDomain: keyPair.trustDomain,
+    signingKey: publicTrustRecord(keyPair),
+    revokedKeyIds: [...REVOKED_RELEASE_KEY_IDS],
+  };
+  fs.writeFileSync(path.join(distDir, "release-trust.json"), JSON.stringify(trustRecord, null, 2));
 
   return {
     success: true,
@@ -754,6 +773,10 @@ export function packageRelease(options = {}) {
     assetsCount: Object.keys(assetDigests).length,
     manifestSha256,
     evidenceSha256: evidenceResult.jsonSha256,
+    releaseIdentity,
+    publicTrust: publicTrustRecord(keyPair),
+    trustedKeys: trustedKeysFromSigningKey(keyPair),
+    testOnly,
   };
 }
 

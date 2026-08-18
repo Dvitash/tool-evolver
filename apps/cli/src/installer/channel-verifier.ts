@@ -2,14 +2,10 @@ import crypto from "node:crypto";
 import type { PlatformInfo } from "./platform.js";
 
 /**
- * Standard public key used for Tool Evolver release verification.
+ * The original V1 release key is permanently revoked because its private half
+ * was committed historically. Callers must supply a pinned public trust root.
  */
-export const DEFAULT_RELEASE_PUBLIC_KEY = {
-  keyId: "tool-evolver-release-v1",
-  publicKeyHex: "a4b9318ac386c0e21c30aba1e211c54883ceb53a39689980f2e27387c6c5ea95",
-  publicKeyPem:
-    "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEApLkxisOGwOIcMKuh4hHFSIPOtTo5aJmA8uJzh8bF6pU=\n-----END PUBLIC KEY-----\n",
-};
+export const REVOKED_RELEASE_KEY_IDS = Object.freeze(["tool-evolver-release-v1"]);
 
 // Ed25519 SPKI DER prefix (12 bytes)
 const ED25519_SPKI_DER_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
@@ -43,6 +39,8 @@ export interface RollbackReferences {
 
 export interface ChannelMetadata {
   readonly schemaVersion: string;
+  readonly releaseIdentity?: unknown;
+  readonly revokedKeyIds?: string[];
   readonly minSupportedVersion?: string;
   readonly currentVersion: string;
   readonly updatedAt: string;
@@ -74,6 +72,8 @@ export interface ManifestPackage {
 
 export interface SignedManifest {
   readonly schemaVersion: string;
+  readonly releaseIdentity?: unknown;
+  readonly evidence?: unknown;
   readonly version: string;
   readonly releaseDate: string;
   readonly packages?: Record<string, ManifestPackage>;
@@ -299,43 +299,59 @@ export function verifyChannelMetadata(
     }
   }
 
-  // Validate Cryptographic Signatures if present
-  if (!options.skipSignatureVerification && meta.signatures && meta.signatures.length > 0) {
-    const trustedKeys = options.trustedPublicKeys || [DEFAULT_RELEASE_PUBLIC_KEY.publicKeyHex];
-    const payloadToVerify = {
-      schemaVersion: meta.schemaVersion,
-      minSupportedVersion: meta.minSupportedVersion,
-      currentVersion: meta.currentVersion,
-      updatedAt: meta.updatedAt,
-      channels: meta.channels,
-      rollbackReferences: meta.rollbackReferences,
-      revokedVersions: meta.revokedVersions,
-    };
-
-    let signatureMatched = false;
-    for (const sig of meta.signatures) {
-      if (sig.algorithm !== "Ed25519") {
-        warnings.push(`Ignoring unsupported signature algorithm: ${sig.algorithm}`);
-        continue;
-      }
-      const pubKey = sig.publicKeyHex || DEFAULT_RELEASE_PUBLIC_KEY.publicKeyHex;
-      if (!trustedKeys.includes(pubKey)) {
-        warnings.push(
-          `Signature key '${sig.keyId}' (${pubKey}) is not in trusted public keys list.`,
-        );
-        continue;
-      }
-
-      if (verifyEd25519Signature(payloadToVerify, sig.signatureHex, pubKey)) {
-        signatureMatched = true;
-        break;
-      }
+  // Release metadata is unsafe unless signed by a caller-pinned trust root.
+  if (!options.skipSignatureVerification) {
+    if (!meta.signatures || meta.signatures.length === 0) {
+      errors.push("Cryptographic verification failed: channel metadata is unsigned.");
     }
-
-    if (!signatureMatched) {
+    const trustedKeys = options.trustedPublicKeys || [];
+    if (trustedKeys.length === 0) {
       errors.push(
-        "Cryptographic verification failed: no valid Ed25519 signature matched channel metadata payload.",
+        "Cryptographic verification failed: no trusted release public keys are configured.",
       );
+    }
+    if (meta.signatures && meta.signatures.length > 0 && trustedKeys.length > 0) {
+      const payloadToVerify = {
+        schemaVersion: meta.schemaVersion,
+        minSupportedVersion: meta.minSupportedVersion,
+        currentVersion: meta.currentVersion,
+        updatedAt: meta.updatedAt,
+        ...(meta.releaseIdentity ? { releaseIdentity: meta.releaseIdentity } : {}),
+        channels: meta.channels,
+        rollbackReferences: meta.rollbackReferences,
+        revokedVersions: meta.revokedVersions,
+        ...(meta.revokedKeyIds ? { revokedKeyIds: meta.revokedKeyIds } : {}),
+      };
+
+      let signatureMatched = false;
+      for (const sig of meta.signatures) {
+        if (sig.algorithm !== "Ed25519") {
+          warnings.push(`Ignoring unsupported signature algorithm: ${sig.algorithm}`);
+          continue;
+        }
+        if (REVOKED_RELEASE_KEY_IDS.includes(sig.keyId)) {
+          warnings.push(`Signature key '${sig.keyId}' is revoked.`);
+          continue;
+        }
+        const pubKey = sig.publicKeyHex;
+        if (!pubKey || !trustedKeys.includes(pubKey)) {
+          warnings.push(
+            `Signature key '${sig.keyId}' (${pubKey}) is not in trusted public keys list.`,
+          );
+          continue;
+        }
+
+        if (verifyEd25519Signature(payloadToVerify, sig.signatureHex, pubKey)) {
+          signatureMatched = true;
+          break;
+        }
+      }
+
+      if (!signatureMatched) {
+        errors.push(
+          "Cryptographic verification failed: no valid Ed25519 signature matched channel metadata payload.",
+        );
+      }
     }
   }
 
@@ -396,38 +412,54 @@ export function verifyManifest(
   }
 
   // Ed25519 Signature Verification
-  if (!options.skipSignatureVerification && manifest.signatures && manifest.signatures.length > 0) {
-    const trustedKeys = options.trustedPublicKeys || [DEFAULT_RELEASE_PUBLIC_KEY.publicKeyHex];
-    const payloadToVerify = {
-      schemaVersion: manifest.schemaVersion,
-      version: manifest.version,
-      releaseDate: manifest.releaseDate,
-      packages: manifest.packages,
-      assets: manifest.assets,
-    };
-
-    let signatureMatched = false;
-    for (const sig of manifest.signatures) {
-      if (sig.algorithm !== "Ed25519") {
-        warnings.push(`Ignoring unsupported signature algorithm: ${sig.algorithm}`);
-        continue;
-      }
-      const pubKey = sig.publicKeyHex || DEFAULT_RELEASE_PUBLIC_KEY.publicKeyHex;
-      if (!trustedKeys.includes(pubKey)) {
-        warnings.push(`Signature key '${sig.keyId}' is not in trusted public keys list.`);
-        continue;
-      }
-
-      if (verifyEd25519Signature(payloadToVerify, sig.signatureHex, pubKey)) {
-        signatureMatched = true;
-        break;
-      }
+  if (!options.skipSignatureVerification) {
+    if (!manifest.signatures || manifest.signatures.length === 0) {
+      errors.push("Cryptographic verification failed: release manifest is unsigned.");
     }
-
-    if (!signatureMatched) {
+    const trustedKeys = options.trustedPublicKeys || [];
+    if (trustedKeys.length === 0) {
       errors.push(
-        "Cryptographic verification failed: no valid Ed25519 signature matched manifest payload.",
+        "Cryptographic verification failed: no trusted release public keys are configured.",
       );
+    }
+    if (manifest.signatures && manifest.signatures.length > 0 && trustedKeys.length > 0) {
+      const payloadToVerify = {
+        schemaVersion: manifest.schemaVersion,
+        version: manifest.version,
+        releaseDate: manifest.releaseDate,
+        ...(manifest.releaseIdentity ? { releaseIdentity: manifest.releaseIdentity } : {}),
+        packages: manifest.packages,
+        assets: manifest.assets,
+        ...(manifest.evidence ? { evidence: manifest.evidence } : {}),
+      };
+
+      let signatureMatched = false;
+      for (const sig of manifest.signatures) {
+        if (sig.algorithm !== "Ed25519") {
+          warnings.push(`Ignoring unsupported signature algorithm: ${sig.algorithm}`);
+          continue;
+        }
+        if (REVOKED_RELEASE_KEY_IDS.includes(sig.keyId)) {
+          warnings.push(`Signature key '${sig.keyId}' is revoked.`);
+          continue;
+        }
+        const pubKey = sig.publicKeyHex;
+        if (!pubKey || !trustedKeys.includes(pubKey)) {
+          warnings.push(`Signature key '${sig.keyId}' is not in trusted public keys list.`);
+          continue;
+        }
+
+        if (verifyEd25519Signature(payloadToVerify, sig.signatureHex, pubKey)) {
+          signatureMatched = true;
+          break;
+        }
+      }
+
+      if (!signatureMatched) {
+        errors.push(
+          "Cryptographic verification failed: no valid Ed25519 signature matched manifest payload.",
+        );
+      }
     }
   }
 

@@ -37,24 +37,25 @@ export function fileSha256(filePath) {
 }
 
 /**
- * Retrieves the current git commit SHA or a deterministic fallback.
- * @param {string} rootDir
- * @returns {string}
+ * Retrieves the exact current Git commit SHA. Release evidence never fabricates identity.
  */
 export function getGitCommitSha(rootDir = process.cwd()) {
+  let sha = "";
   try {
-    const sha = execSync("git rev-parse HEAD", {
+    sha = execSync("git rev-parse HEAD", {
       cwd: rootDir,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
-    if (sha && sha.length >= 7) {
-      return sha;
-    }
-  } catch {
-    // fallback
+  } catch (error) {
+    throw new Error(
+      `Unable to resolve release Git commit: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
-  return "e04d8291f09c64ab724bf39e1a8470a256b829ef";
+  if (!/^[0-9a-f]{40}$/i.test(sha)) {
+    throw new Error(`Release Git commit must be a full 40-character SHA, received '${sha}'.`);
+  }
+  return sha;
 }
 
 /**
@@ -509,21 +510,29 @@ export const V1_MILESTONES_SPEC = [
  */
 export function generateReleaseEvidence(options = {}) {
   const rootDir = options.rootDir || process.cwd();
-  const commitSha = options.commitSha || getGitCommitSha(rootDir);
+  const testOnly = options.testOnly === true;
+  const commitSha =
+    options.commitSha || options.releaseIdentity?.commitSha || getGitCommitSha(rootDir);
+  const verificationEvidence = options.verificationEvidence;
+  if (!testOnly && (!verificationEvidence || typeof verificationEvidence !== "object")) {
+    throw new Error(
+      "Production release evidence requires machine-readable CI qualification evidence; source file existence is not proof of a pass.",
+    );
+  }
 
   let totalArtifactsCount = 0;
   let totalSuitesCount = 0;
   let verifiedMilestonesCount = 0;
 
+  const suiteResults = verificationEvidence?.suites || {};
   const resolvedMilestones = V1_MILESTONES_SPEC.map((spec) => {
     const resolvedArtifacts = spec.artifacts.map((relPath) => {
       totalArtifactsCount++;
       const fullPath = path.resolve(rootDir, relPath);
       const exists = fs.existsSync(fullPath);
-      const digest = exists ? fileSha256(fullPath) : "NOT_FOUND";
       return {
         path: relPath,
-        sha256: digest,
+        sha256: exists ? fileSha256(fullPath) : "NOT_FOUND",
         exists,
       };
     });
@@ -532,22 +541,23 @@ export function generateReleaseEvidence(options = {}) {
       totalSuitesCount++;
       const fullPath = path.resolve(rootDir, relPath);
       const exists = fs.existsSync(fullPath);
-      const digest = exists ? fileSha256(fullPath) : "NOT_FOUND";
+      const observed = suiteResults[relPath];
       return {
         path: relPath,
-        sha256: digest,
+        sha256: exists ? fileSha256(fullPath) : "NOT_FOUND",
         exists,
-        status: exists ? "PASSED" : "MISSING",
+        status: testOnly ? (exists ? "TEST_ONLY" : "MISSING") : observed?.status || "UNVERIFIED",
+        runId: testOnly ? undefined : observed?.runId,
+        jobId: testOnly ? undefined : observed?.jobId,
       };
     });
 
-    const allArtifactsExist = resolvedArtifacts.every((a) => a.exists);
-    const allSuitesExist = resolvedSuites.every((s) => s.exists);
-    const isVerified = allArtifactsExist && allSuitesExist;
-
-    if (isVerified) {
-      verifiedMilestonesCount++;
-    }
+    const allArtifactsExist = resolvedArtifacts.every((artifact) => artifact.exists);
+    const allSuitesPassed = testOnly
+      ? resolvedSuites.every((suite) => suite.exists)
+      : resolvedSuites.every((suite) => suite.status === "PASSED" && suite.runId);
+    const isVerified = allArtifactsExist && allSuitesPassed;
+    if (isVerified) verifiedMilestonesCount++;
 
     return {
       id: spec.id,
@@ -556,125 +566,65 @@ export function generateReleaseEvidence(options = {}) {
       title: spec.title,
       description: spec.description,
       category: spec.category,
-      status: isVerified ? "VERIFIED" : "FAILED",
+      status: testOnly ? (isVerified ? "TEST_ONLY" : "FAILED") : isVerified ? "VERIFIED" : "FAILED",
       artifacts: resolvedArtifacts,
       verificationSuites: resolvedSuites,
     };
   });
 
-  const evidence = {
-    schemaVersion: "1.0.0",
+  const qualification = testOnly
+    ? {
+        platforms: { totalLanes: 5, passedLanes: 0, status: "TEST_ONLY", lanes: [] },
+        harnesses: { totalHarnesses: 3, qualifiedHarnesses: 0, status: "TEST_ONLY", harnesses: [] },
+        cloudStaging: {
+          backupRestoreRehearsal: { status: "TEST_ONLY" },
+          faultInjectionMatrix: { status: "TEST_ONLY" },
+          soakPerformance: { status: "TEST_ONLY" },
+        },
+        securityAudit: { status: "TEST_ONLY" },
+      }
+    : verificationEvidence.qualification;
+
+  if (!testOnly) {
+    const requiredQualification = [
+      qualification?.platforms?.status,
+      qualification?.harnesses?.status,
+      qualification?.cloudStaging?.backupRestoreRehearsal?.status,
+      qualification?.cloudStaging?.faultInjectionMatrix?.status,
+      qualification?.cloudStaging?.soakPerformance?.status,
+      qualification?.securityAudit?.status,
+    ];
+    if (!requiredQualification.every((status) => status === "QUALIFIED" || status === "PASSED")) {
+      throw new Error("Production release qualification evidence is incomplete or not passing.");
+    }
+  }
+
+  const fullyVerified = verifiedMilestonesCount === V1_MILESTONES_SPEC.length;
+  return {
+    schemaVersion: "2.0.0",
     release: RELEASE_VERSION,
     releaseDate: RELEASE_DATE,
     commitSha,
+    releaseIdentity: options.releaseIdentity,
     parentEpic: PARENT_EPIC_ID,
-    status: verifiedMilestonesCount === V1_MILESTONES_SPEC.length ? "VERIFIED" : "INCOMPLETE",
-    keyId: "tool-evolver-release-v1",
-    qualification: {
-      platforms: {
-        totalLanes: 5,
-        passedLanes: 5,
-        lanes: [
-          {
-            id: "linux-x64",
-            os: "linux",
-            arch: "x64",
-            serviceManager: "systemd",
-            status: "QUALIFIED",
-            evidence: "scripts/platform-qualification.test.mjs",
-          },
-          {
-            id: "linux-arm64",
-            os: "linux",
-            arch: "arm64",
-            serviceManager: "systemd",
-            status: "QUALIFIED",
-            evidence: "scripts/platform-qualification.test.mjs",
-          },
-          {
-            id: "darwin-x64",
-            os: "darwin",
-            arch: "x64",
-            serviceManager: "launchd",
-            status: "QUALIFIED",
-            evidence: "scripts/platform-qualification.test.mjs",
-          },
-          {
-            id: "darwin-arm64",
-            os: "darwin",
-            arch: "arm64",
-            serviceManager: "launchd",
-            status: "QUALIFIED",
-            evidence: "scripts/platform-qualification.test.mjs",
-          },
-          {
-            id: "wsl",
-            os: "linux",
-            arch: "x64",
-            serviceManager: "wsl-systemd",
-            status: "QUALIFIED",
-            evidence: "scripts/platform-qualification.test.mjs",
-          },
-        ],
-      },
-      harnesses: {
-        totalHarnesses: 3,
-        qualifiedHarnesses: 3,
-        harnesses: [
-          {
-            id: "claude-code",
-            name: "Anthropic Claude Code",
-            transport: "SSE + Stdio Bridge",
-            status: "QUALIFIED",
-            evidence: "adapters/claude-code/tests/qualification.test.ts",
-          },
-          {
-            id: "codex-cli",
-            name: "Codex CLI",
-            transport: "Stdio MCP Shim",
-            status: "QUALIFIED",
-            evidence: "adapters/codex-cli/tests/qualification.test.ts",
-          },
-          {
-            id: "omp",
-            name: "Oh My Pi (OMP)",
-            transport: "Native MCP In-Process Bridge",
-            status: "QUALIFIED",
-            evidence: "adapters/omp/tests/qualification.test.ts",
-          },
-        ],
-      },
-      cloudStaging: {
-        backupRestoreRehearsal: {
-          encryption: "AES-256-GCM Envelope Encryption",
-          dataLoss: "0 records lost (100% relational & object state preserved)",
-          status: "QUALIFIED",
-          evidence: "apps/cloud/tests/staging/backup-restore-rehearsal.test.ts",
+    mode: testOnly ? "test-only" : "production",
+    status: testOnly
+      ? fullyVerified
+        ? "TEST_ONLY"
+        : "INCOMPLETE"
+      : fullyVerified
+        ? "VERIFIED"
+        : "INCOMPLETE",
+    keyId: options.keyId,
+    verificationSource: testOnly
+      ? { type: "local-test-fixtures" }
+      : {
+          type: "github-actions",
+          workflowRunId: verificationEvidence.workflowRunId,
+          workflowRunAttempt: verificationEvidence.workflowRunAttempt,
+          generatedAt: verificationEvidence.generatedAt,
         },
-        faultInjectionMatrix: {
-          scenariosTested: 12,
-          recoveryRate: "100%",
-          status: "QUALIFIED",
-          evidence: "apps/cloud/tests/staging/fault-injection-matrix.test.ts",
-        },
-        soakPerformance: {
-          durationHours: 24,
-          maxLatencyMs: 250,
-          p95LatencyMs: 42,
-          errorRate: "0.00%",
-          status: "QUALIFIED",
-          evidence: "apps/cloud/tests/staging/soak-profile.test.ts",
-        },
-      },
-      securityAudit: {
-        secretLeaksDetected: 0,
-        boundaryViolations: 0,
-        circularDependencies: 0,
-        adrsEnforced: 10,
-        brokenDocumentationLinks: 0,
-        status: "PASSED",
-      },
-    },
+    qualification,
     summary: {
       totalMilestones: V1_MILESTONES_SPEC.length,
       verifiedMilestones: verifiedMilestonesCount,
@@ -684,8 +634,6 @@ export function generateReleaseEvidence(options = {}) {
     },
     milestones: resolvedMilestones,
   };
-
-  return evidence;
 }
 
 /**
@@ -724,7 +672,12 @@ export function formatReleaseEvidenceMarkdown(evidence) {
   for (const m of evidence.milestones) {
     const artifactsList = m.artifacts.map((a) => `\`${a.path}\``).join("<br/>");
     const suitesList = m.verificationSuites.map((s) => `\`${s.path}\``).join("<br/>");
-    const statusIcon = m.status === "VERIFIED" ? "✅ Verified" : "❌ Failed";
+    const statusIcon =
+      m.status === "VERIFIED"
+        ? "✅ Verified"
+        : m.status === "TEST_ONLY"
+          ? "🧪 Test Only"
+          : "❌ Failed";
 
     lines.push(
       `| **${m.id}** | ${m.issue} | \`${m.category}\` | ${m.title} | ${artifactsList} | ${suitesList} | ${statusIcon} |`,
@@ -768,14 +721,15 @@ export function formatReleaseEvidenceMarkdown(evidence) {
   lines.push("");
   lines.push("## Cloud Staging & Resilience Qualification (REM-019)");
   lines.push("");
+  const cloudQualification = evidence.qualification.cloudStaging || {};
   lines.push(
-    "- **Encrypted Backup & Restore Rehearsal**: Verified AES-256-GCM zero-data-loss recovery (`apps/cloud/tests/staging/backup-restore-rehearsal.test.ts`).",
+    `- **Backup & Restore Rehearsal**: ${cloudQualification.backupRestoreRehearsal?.status || "UNVERIFIED"}.`,
   );
   lines.push(
-    "- **Chaos Fault Injection Matrix**: Verified 12 chaos failure modes with 100% recovery (`apps/cloud/tests/staging/fault-injection-matrix.test.ts`).",
+    `- **Fault Injection Matrix**: ${cloudQualification.faultInjectionMatrix?.status || "UNVERIFIED"}.`,
   );
   lines.push(
-    "- **24h Soak Performance Profile**: Verified p95 latency < 50ms (42ms observed) and 0.00% error rate under peak load (`apps/cloud/tests/staging/soak-profile.test.ts`).",
+    `- **Soak Performance Profile**: ${cloudQualification.soakPerformance?.status || "UNVERIFIED"}.`,
   );
   lines.push("");
   lines.push("---");
@@ -796,12 +750,8 @@ export function formatReleaseEvidenceMarkdown(evidence) {
     "- **Canary & Rollback**: Automatic rollback and quarantine on abnormal error spikes (REM-014).",
   );
   lines.push(
-    "- **Secret Scanner Audit**: 0 leaked keys or private tokens detected across the entire codebase.",
+    `- **Security Audit Evidence**: ${evidence.qualification.securityAudit?.status || "UNVERIFIED"}.`,
   );
-  lines.push(
-    "- **Monorepo Boundaries**: 15 workspace packages verified with 0 boundary violations.",
-  );
-  lines.push("- **Architecture Decision Records**: 10 ADRs verified and enforced.");
   lines.push("");
   lines.push("---");
   lines.push("");
