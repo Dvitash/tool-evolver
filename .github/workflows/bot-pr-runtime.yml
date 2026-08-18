@@ -1,0 +1,35 @@
+name: Create bot-authored Runtime PR
+
+on:
+  push:
+    branches: [agent/bot-pr-runtime]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/bot-pr-runtime
+      - name: Prepare bot-owned branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/bot-pr-runtime.yml
+          git commit -m 'chore: prepare bot-reviewed Runtime branch'
+          git push --force origin HEAD:refs/heads/bot/runtime-trust-boundary
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/pulls" \
+            -f title='fix(runtime): enforce signed safety evidence and Deno isolation' \
+            -f head='bot/runtime-trust-boundary' \
+            -f base='main' \
+            -f body=$'## Scope\n- Evidence-backed signed safety certification.\n- Unknown-key and unsigned production attestation rejection.\n- Deno-only production generated-tool execution.\n- Worker heap, output, timeout, and process-tree limits.\n- Non-disclosing worker secret references.\n- Canonical command identity authorization.\n- Generated-tool ABI normalization and regression coverage.'
