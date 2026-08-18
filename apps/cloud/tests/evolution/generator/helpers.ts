@@ -161,25 +161,20 @@ export function createMockEnvelope(overrides: MockEnvelopeOverrides = {}): Capab
         legacy?.net?.allowedProtocols ??
         (legacy?.net?.allowInsecure ? ["http", "https"] : ["https"]),
       allowLocalhost: overrides.net?.allowLocalhost ?? legacy?.net?.allowLocalhost ?? false,
-      denyPrivateRanges:
-        overrides.net?.denyPrivateRanges ?? legacy?.net?.denyPrivateRanges ?? true,
+      denyPrivateRanges: overrides.net?.denyPrivateRanges ?? legacy?.net?.denyPrivateRanges ?? true,
     },
     command: {
       allowShellExecution:
         overrides.command?.allowShellExecution ?? legacy?.command?.allowShellExecution ?? false,
-      allowedCommands:
-        overrides.command?.allowedCommands ??
-        legacy?.command?.allowedCommands ??
-        ["git status", "pnpm test", "npm run build"],
+      allowedCommands: overrides.command?.allowedCommands ??
+        legacy?.command?.allowedCommands ?? ["git status", "pnpm test", "npm run build"],
       allowedBinaries:
         overrides.command?.allowedBinaries ??
         legacy?.command?.allowedBinaries ??
         (legacy?.command ? legacyBinaries : ["git", "pnpm", "npm", "node"]),
-      forbiddenPatterns:
-        overrides.command?.forbiddenPatterns ??
+      forbiddenPatterns: overrides.command?.forbiddenPatterns ??
         legacy?.command?.forbiddenPatterns ??
-        legacy?.command?.denyCommands ??
-        ["rm -rf /", "mkfs", "> /dev/"],
+        legacy?.command?.denyCommands ?? ["rm -rf /", "mkfs", "> /dev/"],
       allowEnvPassthrough:
         overrides.command?.allowEnvPassthrough ??
         legacy?.command?.allowEnvPassthrough ??
@@ -203,9 +198,7 @@ export function createMockEnvelope(overrides: MockEnvelopeOverrides = {}): Capab
     },
     limits: {
       maxConcurrentExecutions:
-        overrides.limits?.maxConcurrentExecutions ??
-        legacy?.limits?.maxConcurrentExecutions ??
-        4,
+        overrides.limits?.maxConcurrentExecutions ?? legacy?.limits?.maxConcurrentExecutions ?? 4,
       maxCpuUsagePercent:
         overrides.limits?.maxCpuUsagePercent ?? legacy?.limits?.maxCpuUsagePercent ?? 100,
       maxMemoryMb: overrides.limits?.maxMemoryMb ?? legacy?.limits?.maxMemoryMb ?? 256,

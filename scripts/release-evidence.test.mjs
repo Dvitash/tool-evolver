@@ -196,30 +196,26 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
   });
 
   describe("4. Release Verification Integration (verifyReleaseEvidence)", () => {
-    it(
-      "passes verification on a fully packaged release directory",
-      () => {
-        packageRelease({
-          rootDir,
-          distDir: tempReleaseDir,
-          skipBuild: true,
-        });
+    it("passes verification on a fully packaged release directory", () => {
+      packageRelease({
+        rootDir,
+        distDir: tempReleaseDir,
+        skipBuild: true,
+      });
 
-        const fileViolations = verifyReleaseFiles(tempReleaseDir);
-        expect(fileViolations).toHaveLength(0);
+      const fileViolations = verifyReleaseFiles(tempReleaseDir);
+      expect(fileViolations).toHaveLength(0);
 
-        const evidenceViolations = verifyReleaseEvidence(tempReleaseDir);
-        expect(evidenceViolations).toHaveLength(0);
+      const evidenceViolations = verifyReleaseEvidence(tempReleaseDir);
+      expect(evidenceViolations).toHaveLength(0);
 
-        const fullVerify = verifyRelease({
-          rootDir,
-          releaseDir: tempReleaseDir,
-        });
-        expect(fullVerify.valid).toBe(true);
-        expect(fullVerify.violations).toHaveLength(0);
-      },
-      15_000,
-    );
+      const fullVerify = verifyRelease({
+        rootDir,
+        releaseDir: tempReleaseDir,
+      });
+      expect(fullVerify.valid).toBe(true);
+      expect(fullVerify.violations).toHaveLength(0);
+    }, 15_000);
 
     it("detects missing evidence files and incomplete milestones", () => {
       const brokenDir = fs.mkdtempSync(path.join(os.tmpdir(), "broken-release-evidence-"));
