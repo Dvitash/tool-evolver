@@ -3,8 +3,10 @@ from pathlib import Path
 path = Path("apps/cloud/src/evolution/lifecycle/orchestrator.ts")
 source = path.read_text()
 old = '''      throw new Error(`Candidate validation failed with state '${valRecord.currentState}'`);'''
-new = '''      const validationDiagnostics =
-        valRecord.terminalReason?.details ?? valRecord.validationResult ?? {};
+new = '''      const validationDiagnostics = {
+        terminalReason: valRecord.terminalReason,
+        validationResult: valRecord.validationResult,
+      };
       throw new Error(
         `Candidate validation failed with state '${valRecord.currentState}': ${JSON.stringify(validationDiagnostics)}`,
       );'''
