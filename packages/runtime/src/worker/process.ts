@@ -96,6 +96,9 @@ export class WorkerProcess {
     const startTime = Date.now();
     const timeoutMs = this.options.timeoutMs ?? 30000;
     const denoPath = this.options.denoExecutable ?? "deno";
+    const memoryLimitMb = Math.max(16, this.options.memoryLimitMb ?? 128);
+    const maxOutputBytes = Math.max(1024, this.options.maxOutputSizeBytes ?? 1024 * 1024);
+    let observedOutputBytes = 0;
 
     // 1. Create unique temporary scratch workspace
     const tempPrefix = path.join(os.tmpdir(), "te-worker-");
@@ -114,6 +117,7 @@ export class WorkerProcess {
       path.resolve(this.options.bundleEntrypoint),
     ];
     const args = [
+      `--v8-flags=--max-old-space-size=${memoryLimitMb}`,
       "run",
       "--no-prompt",
       `--allow-read=${allowReadPaths.join(",")}`,
@@ -134,6 +138,7 @@ export class WorkerProcess {
           NO_COLOR: "1",
         },
         stdio: ["pipe", "pipe", "pipe"],
+        detached: process.platform !== "win32",
       });
     } catch (spawnErr) {
       this.cleanup();
@@ -188,6 +193,21 @@ export class WorkerProcess {
 
     // 4. Stdio Handling
     this.childProcess.stdout?.on("data", async (chunk: Buffer) => {
+      observedOutputBytes += chunk.length;
+      if (observedOutputBytes > maxOutputBytes) {
+        this.terminateProcessTree("SIGKILL");
+        finalize({
+          status: "error",
+          error: {
+            type: "resource_limit",
+            message: `OUTPUT_LIMIT_EXCEEDED: worker output exceeded ${maxOutputBytes} bytes`,
+          },
+          durationMs: Date.now() - startTime,
+          logs: this.logs,
+          progress: this.progress,
+        });
+        return;
+      }
       try {
         const messages = this.decoder.push(chunk);
         for (const msg of messages) {
@@ -208,6 +228,21 @@ export class WorkerProcess {
 
     let stderrBuffer = "";
     this.childProcess.stderr?.on("data", (chunk: Buffer) => {
+      observedOutputBytes += chunk.length;
+      if (observedOutputBytes > maxOutputBytes) {
+        this.terminateProcessTree("SIGKILL");
+        finalize({
+          status: "error",
+          error: {
+            type: "resource_limit",
+            message: `OUTPUT_LIMIT_EXCEEDED: worker output exceeded ${maxOutputBytes} bytes`,
+          },
+          durationMs: Date.now() - startTime,
+          logs: this.logs,
+          progress: this.progress,
+        });
+        return;
+      }
       stderrBuffer += chunk.toString("utf-8");
     });
 
@@ -409,14 +444,25 @@ export class WorkerProcess {
   /**
    * Forces termination of the child process.
    */
-  forceKill(): void {
-    if (this.childProcess && !this.childProcess.killed) {
+  private terminateProcessTree(signal: NodeJS.Signals): void {
+    if (!this.childProcess || this.childProcess.killed) return;
+    try {
+      if (process.platform !== "win32" && this.childProcess.pid) {
+        process.kill(-this.childProcess.pid, signal);
+      } else {
+        this.childProcess.kill(signal);
+      }
+    } catch {
       try {
-        this.childProcess.kill("SIGKILL");
+        this.childProcess.kill(signal);
       } catch {
-        // ignore
+        // Process already exited.
       }
     }
+  }
+
+  forceKill(): void {
+    this.terminateProcessTree("SIGKILL");
   }
 
   /**
@@ -434,7 +480,7 @@ export class WorkerProcess {
     if (this.childProcess && !this.childProcess.killed) {
       try {
         this.writeMessage(createShutdownMessage({ graceful: true }));
-        this.childProcess.kill("SIGTERM");
+        this.terminateProcessTree("SIGTERM");
       } catch {
         // ignore
       }

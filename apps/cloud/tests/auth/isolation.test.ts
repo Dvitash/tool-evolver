@@ -61,7 +61,7 @@ describe("Workspace & Tenant Membership Isolation", () => {
         workspaceId: "ws_tenant_aaa",
         deviceId: "dev_aaa",
         installationId: "inst_aaa",
-        scopes: ["device:connect", "artifacts:read"],
+        scopes: ["device:connect", "artifacts:read", "deployments:write"],
       });
 
       const tokenB = authService.tokens.issueAccessToken({
@@ -69,7 +69,7 @@ describe("Workspace & Tenant Membership Isolation", () => {
         workspaceId: "ws_tenant_bbb",
         deviceId: "dev_bbb",
         installationId: "inst_bbb",
-        scopes: ["device:connect", "artifacts:read"],
+        scopes: ["device:connect", "artifacts:read", "deployments:write"],
       });
 
       // 2. Tenant A creates a device

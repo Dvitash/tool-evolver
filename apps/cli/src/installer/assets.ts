@@ -225,8 +225,7 @@ export async function discoverAndVerifyAssets(
     }
   }
 
-  const denoDigestOk =
-    !denoExpected || (denoActualSha256 ? denoActualSha256 === denoExpected : true);
+  const denoDigestOk = !denoExpected || denoActualSha256 === denoExpected;
   if (denoExpected && denoActualSha256 && !denoDigestOk) {
     digestMismatches.push({
       name: "deno",
@@ -235,8 +234,11 @@ export async function discoverAndVerifyAssets(
     });
   }
 
+  const denoRequired = manifest?.assets.deno?.required ?? true;
   const denoVerified =
-    (Boolean(denoInfo) && denoDigestOk) || (options.allowMissingOptional ?? false);
+    Boolean(denoInfo) && denoDigestOk
+      ? true
+      : !denoRequired && (options.allowMissingOptional ?? false);
 
   results.push({
     name: "deno",
@@ -244,7 +246,7 @@ export async function discoverAndVerifyAssets(
     path: denoInfo?.path ?? options.denoExecutable ?? "deno",
     expectedSha256: denoExpected,
     actualSha256: denoActualSha256,
-    required: manifest?.assets.deno?.required ?? false,
+    required: manifest?.assets.deno?.required ?? true,
     verified: denoVerified,
     notes: denoInfo
       ? `Found Deno at ${denoInfo.path}`

@@ -46,6 +46,7 @@ export interface ToolExecutionOptions {
   sessionId?: string;
   workspaceId?: string;
   allowDirectHostAccess?: boolean;
+  allowUnsafeVmFallback?: boolean;
   grant?: InvocationGrant;
   brokerManager?: CapabilityBrokerManager;
   secretBroker?: SecretBroker;
@@ -473,14 +474,20 @@ export class ToolRuntime {
       ...options,
     };
 
-    const mode = mergedOptions.mode ?? "auto";
+    const isTestRuntime = Boolean(process.env.VITEST || process.env.VITEST_WORKER_ID);
+    const mode = mergedOptions.mode ?? (isTestRuntime ? "sandbox-vm" : "deno");
 
-    // If in-process or sandbox-vm explicitly selected, or handler is a direct function:
-    if (
-      mode === "in-process" ||
-      mode === "sandbox-vm" ||
-      typeof bundlePathOrHandler === "function"
-    ) {
+    if (typeof bundlePathOrHandler === "function") {
+      if (mode !== "in-process" && mode !== "sandbox-vm") {
+        throw new Error(
+          "Direct function handlers are test-only and cannot execute in Deno production mode",
+        );
+      }
+      if (!isTestRuntime && !mergedOptions.allowUnsafeVmFallback) {
+        throw new Error(
+          "In-process generated-tool execution is disabled outside explicit test mode",
+        );
+      }
       return await DeterministicWorkerSandbox.execute(
         manifest,
         bundlePathOrHandler,
@@ -489,20 +496,42 @@ export class ToolRuntime {
       );
     }
 
-    // Check if Deno is available when in auto mode
-    const denoAvailable = isDenoAvailable(mergedOptions.denoExecutable);
+    if (mode === "in-process" || mode === "sandbox-vm") {
+      if (!isTestRuntime && !mergedOptions.allowUnsafeVmFallback) {
+        throw new Error("Node VM generated-tool execution is disabled in production");
+      }
+      return await DeterministicWorkerSandbox.execute(
+        manifest,
+        bundlePathOrHandler,
+        input,
+        mergedOptions,
+      );
+    }
 
-    if (mode === "deno" || (mode === "auto" && denoAvailable)) {
-      if (!denoAvailable && mode === "deno") {
-        throw new Error(
-          `Deno executable '${mergedOptions.denoExecutable ?? "deno"}' is not available in PATH`,
+    const denoAvailable = isDenoAvailable(mergedOptions.denoExecutable);
+    if (mode === "auto" && !denoAvailable) {
+      if (isTestRuntime && mergedOptions.allowUnsafeVmFallback) {
+        return await DeterministicWorkerSandbox.execute(
+          manifest,
+          bundlePathOrHandler,
+          input,
+          mergedOptions,
         );
       }
+      throw new Error(
+        "Production tool execution requires Deno; unsafe Node VM fallback is disabled",
+      );
+    }
 
-      // Execute via Deno Child Process
+    if (mode === "deno" || mode === "auto") {
+      if (!denoAvailable) {
+        throw new Error(
+          `Deno executable '${mergedOptions.denoExecutable ?? "deno"}' is not available`,
+        );
+      }
       const workerProcess = new WorkerProcess({
         manifest,
-        bundleEntrypoint: bundlePathOrHandler as string,
+        bundleEntrypoint: bundlePathOrHandler,
         workspaceRoot: mergedOptions.workspaceRoot,
         environment: mergedOptions.environment,
         timeoutMs: mergedOptions.timeoutMs,
@@ -513,13 +542,11 @@ export class ToolRuntime {
         onProgress: mergedOptions.onProgress,
         onLog: mergedOptions.onLog,
       });
-
       const invocationId = `inv_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
       const workerRes = await workerProcess.execute(invocationId, input, {
         sessionId: mergedOptions.sessionId,
         workspaceId: mergedOptions.workspaceId,
       });
-
       return {
         status: workerRes.status,
         output: workerRes.output,
@@ -531,12 +558,6 @@ export class ToolRuntime {
       };
     }
 
-    // Fallback to DeterministicWorkerSandbox
-    return await DeterministicWorkerSandbox.execute(
-      manifest,
-      bundlePathOrHandler,
-      input,
-      mergedOptions,
-    );
+    throw new Error(`Unsupported execution mode '${mode}'`);
   }
 }

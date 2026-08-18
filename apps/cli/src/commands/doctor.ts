@@ -3,7 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import type { SafetyAttestationRecord } from "@tool-evolver/contracts";
-import { SafetyGateEvaluator, createSafetyAttestation } from "@tool-evolver/runtime";
+import {
+  AttestationVerifier,
+  type LocalSafetyCertificationOptions,
+  SafetyGateEvaluator,
+  certifyLocalRuntime,
+} from "@tool-evolver/runtime";
 const SYSTEM_META_TOOL_NAMES = [
   "search_tools",
   "get_tool_schema",
@@ -375,8 +380,17 @@ export async function runDiagnostics(options: {
     }
   }
 
+  const publicKeyPath = path.join(toolEvolverHome, "state", "safety-attestation.pub.pem");
+  const publicKeyPem = await fsBridge.readFile(publicKeyPath);
+  const trustedKeys = new Map<string, string>();
+  const keyId = attestationRecord?.signature?.keyId;
+  if (publicKeyPem && keyId) trustedKeys.set(keyId, publicKeyPem);
   const safetyEvaluator = new SafetyGateEvaluator({
     attestation: attestationRecord,
+    verifier: new AttestationVerifier({
+      trustedPublicKeys: trustedKeys,
+      allowUnsignedTestAttestations: Boolean(process.env.VITEST || process.env.VITEST_WORKER_ID),
+    }),
   });
   const gateStatus = safetyEvaluator.getStatus();
 
@@ -419,6 +433,7 @@ export async function repairState(options: {
   home?: string;
   fsBridge?: ConfigFsBridge;
   customFetch?: typeof fetch;
+  safetyCertification?: LocalSafetyCertificationOptions;
 }): Promise<string[]> {
   const customHome = options.home ? path.resolve(options.home) : os.homedir();
   const toolEvolverHome = path.join(customHome, ".tool-evolver");
@@ -509,27 +524,22 @@ export async function repairState(options: {
     }
   }
 
-  // 5. Repair / generate production safety attestation
-  let attestationNeedsRepair = true;
+  // 5. Execute evidence-backed local Runtime certification.
   const targetAttPath = path.join(toolEvolverHome, "safety-attestation.json");
-  const existingRaw = await fsBridge.readFile(targetAttPath);
-  if (existingRaw) {
-    try {
-      const parsed = JSON.parse(existingRaw);
-      const testEvaluator = new SafetyGateEvaluator({ attestation: parsed });
-      if (testEvaluator.getStatus().isOpen && testEvaluator.getStatus().status === "passed") {
-        attestationNeedsRepair = false;
-      }
-    } catch {
-      attestationNeedsRepair = true;
-    }
-  }
-
-  if (attestationNeedsRepair) {
-    const newAttestation = createSafetyAttestation();
-    await fsBridge.writeFile(targetAttPath, JSON.stringify(newAttestation, null, 2));
-    actions.push(`Generated and wrote production safety attestation: ${targetAttPath}`);
-  }
+  const privateKeyPath = path.join(toolEvolverHome, "state", "safety-attestation.key.pem");
+  const publicKeyPath = path.join(toolEvolverHome, "state", "safety-attestation.pub.pem");
+  const existingPrivateKey = await fsBridge.readFile(privateKeyPath);
+  const existingPublicKey = await fsBridge.readFile(publicKeyPath);
+  const certification = certifyLocalRuntime({
+    environment: "production",
+    privateKeyPem: existingPrivateKey ?? undefined,
+    publicKeyPem: existingPublicKey ?? undefined,
+    ...options.safetyCertification,
+  });
+  await fsBridge.writeFile(privateKeyPath, certification.privateKeyPem);
+  await fsBridge.writeFile(publicKeyPath, certification.publicKeyPem);
+  await fsBridge.writeFile(targetAttPath, JSON.stringify(certification.attestation, null, 2));
+  actions.push(`Certified and wrote production safety attestation: ${targetAttPath}`);
 
   return actions;
 }

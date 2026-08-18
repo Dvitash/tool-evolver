@@ -118,12 +118,9 @@ export const OutputSchema = ${zodOutputSchemaSource};
 export type ToolInput = z.infer<typeof InputSchema>;
 export type ToolOutput = z.infer<typeof OutputSchema>;
 
-export default defineTool<ToolInput, ToolOutput>({
-  name: ${JSON.stringify(plan.name)},
-  description: ${JSON.stringify(plan.description)},
-  inputSchema: InputSchema,
-  outputSchema: OutputSchema,
-  handler: async (input: ToolInput, context: ToolContext): Promise<ToolOutput> => {
+export default defineTool<ToolInput, ToolOutput>(
+  async (context: ToolContext<ToolInput>): Promise<ToolOutput> => {
+    const input = context.input;
     const { broker, logger, progress } = context;
     await progress(0, "Starting execution");
     await logger.info("Executing tool", { toolName: ${JSON.stringify(plan.name)} });
@@ -144,7 +141,7 @@ ${customLogic}
       throw new Error(\`[${plan.name}] Execution error: \${errorMessage}\`);
     }
   },
-});
+);
 `;
             return {
               sourceCode,
@@ -186,12 +183,9 @@ export const OutputSchema = ${zodOutputSchemaSource};
 export type ToolInput = z.infer<typeof InputSchema>;
 export type ToolOutput = z.infer<typeof OutputSchema>;
 
-export default defineTool<ToolInput, ToolOutput>({
-  name: ${JSON.stringify(plan.name)},
-  description: ${JSON.stringify(plan.description)},
-  inputSchema: InputSchema,
-  outputSchema: OutputSchema,
-  handler: async (input: ToolInput, context: ToolContext): Promise<ToolOutput> => {
+export default defineTool<ToolInput, ToolOutput>(
+  async (context: ToolContext<ToolInput>): Promise<ToolOutput> => {
+    const input = context.input;
     const { broker, logger, progress } = context;
     await progress(0, "Starting execution");
     await logger.info("Executing tool", { toolName: ${JSON.stringify(plan.name)} });
@@ -212,7 +206,7 @@ ${executionBody}
       throw new Error(\`[${plan.name}] Execution error: \${errorMessage}\`);
     }
   },
-});
+);
 `;
   }
 
@@ -305,7 +299,7 @@ ${executionBody}
       if (secretName) {
         return `      const url = (input as Record<string, unknown>).url as string ?? (input as Record<string, unknown>).endpoint as string ?? ${JSON.stringify(defaultUrl)};
       await logger.debug("Fetching authenticated network resource", { url });
-      const authRef = broker.secret.getSecretRef(${JSON.stringify(secretName)}, { mode: "bearer_token" });
+      const authRef = broker.secret.createReference(${JSON.stringify(secretName)}, { modes: ["bearer_token", "header_template"] });
       const response = await broker.net.fetch(url, {
         method: "GET",
         headers: {
@@ -356,7 +350,7 @@ ${executionBody}
         return `      const command = (input as Record<string, unknown>).command as string ?? (input as Record<string, unknown>).cmd as string ?? ${JSON.stringify(commandName)};
       const args = ((input as Record<string, unknown>).args as string[]) ?? [];
       await logger.debug("Executing command with secret env via cmd broker", { command, args });
-      const secretEnv = broker.secret.getSecretRef(${JSON.stringify(secretName)}, { mode: "command_env" });
+      const secretEnv = broker.secret.createReference(${JSON.stringify(secretName)}, { modes: ["command_env"] });
       const res = await broker.cmd.exec(command, args, {
         env: { AUTH_TOKEN: secretEnv },
       });

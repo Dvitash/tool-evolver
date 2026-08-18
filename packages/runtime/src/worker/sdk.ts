@@ -184,11 +184,6 @@ export interface ToolBrokerClient {
   net: NetBrokerClient;
   cmd: CmdBrokerClient;
   secret: SecretBrokerClient;
-  request<T = unknown>(
-    service: "fs" | "net" | "cmd" | "secret",
-    action: string,
-    payload?: Record<string, unknown>,
-  ): Promise<T>;
 }
 
 /**
@@ -231,13 +226,29 @@ export type ToolHandler<TInput = unknown, TOutput = unknown> = (
   context: ToolContext<TInput>,
 ) => Promise<TOutput> | TOutput;
 
+export interface LegacyToolDefinition<TInput = unknown, TOutput = unknown> {
+  name?: string;
+  description?: string;
+  inputSchema?: unknown;
+  outputSchema?: unknown;
+  handler: (input: TInput, context: ToolContext<TInput>) => Promise<TOutput> | TOutput;
+}
+
 /**
- * Helper to define and type a tool execution handler.
+ * Defines the canonical generated-tool ABI. New tools export a context-first
+ * handler. Legacy descriptor objects are adapted at definition time so the
+ * Deno bootstrap always receives one callable default export.
  */
 export function defineTool<TInput = unknown, TOutput = unknown>(
-  handler: ToolHandler<TInput, TOutput>,
+  handlerOrDefinition: ToolHandler<TInput, TOutput> | LegacyToolDefinition<TInput, TOutput>,
 ): ToolHandler<TInput, TOutput> {
-  return handler;
+  if (typeof handlerOrDefinition === "function") {
+    return handlerOrDefinition;
+  }
+  if (!handlerOrDefinition || typeof handlerOrDefinition.handler !== "function") {
+    throw new TypeError("defineTool requires a callable handler");
+  }
+  return (context: ToolContext<TInput>) => handlerOrDefinition.handler(context.input, context);
 }
 
 export type BrokerRequestHandlerFn = (
@@ -252,7 +263,7 @@ export type BrokerRequestHandlerFn = (
 export class DefaultToolBrokerClient implements ToolBrokerClient {
   constructor(private readonly handler: BrokerRequestHandlerFn) {}
 
-  async request<T = unknown>(
+  private async request<T = unknown>(
     service: "fs" | "net" | "cmd" | "secret",
     action: string,
     payload: Record<string, unknown> = {},
