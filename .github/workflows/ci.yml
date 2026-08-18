@@ -10,30 +10,25 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: agent/product-hardening
-          fetch-depth: 0
+        with: {ref: agent/product-hardening, fetch-depth: 0}
       - uses: actions/setup-node@v4
-        with:
-          node-version: 22
+        with: {node-version: 22}
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10.24.0
-          run_install: false
+        with: {version: 10.24.0, run_install: false}
       - run: python3 .github/agent/fin97_fix.py
-      - name: Restore repository CI and remove temporary files
+      - run: python3 .github/agent/fin97_final.py
+      - name: restore repository CI/remove temporary patchers
         run: |
           git checkout origin/main -- .github/workflows/ci.yml
-          rm -f .github/agent/fin97_fix.py .github/workflows/fin97-apply.yml .github/lifecycle-test-diagnostics.txt
+          rm -f .github/agent/fin97_fix.py .github/agent/fin97_final.py .github/workflows/fin97-apply.yml .github/lifecycle-test-diagnostics.txt
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec biome check --write .
       - run: pnpm build
       - run: pnpm test
-      - name: Commit validated FIN-001
+      - name: commit
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           git commit -m 'fix(cloud): finish authoritative lifecycle integration'
           git push origin HEAD:agent/product-hardening
-# validation trigger 2
