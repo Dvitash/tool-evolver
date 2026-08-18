@@ -39,3 +39,4 @@ jobs:
           if git diff --cached --quiet; then exit 0; fi
           git commit -m 'fix(release): establish external release trust boundary'
           git push origin HEAD:agent/product-hardening
+# retrigger materialization after workflow creation
