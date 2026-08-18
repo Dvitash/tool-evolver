@@ -1,0 +1,310 @@
+# ==============================================================================
+# Tool Evolver Staging - Prometheus Alerting Rules Matrix
+# Covers all 11 critical operational categories required for staging and production.
+# ==============================================================================
+
+groups:
+  # ----------------------------------------------------------------------------
+  # 1. API & Control Plane Health
+  # ----------------------------------------------------------------------------
+  - name: api_and_control_health
+    rules:
+      - alert: ApiHighErrorRate
+        expr: rate(tool_evolver_http_requests_total{status=~"5.."}[5m]) / rate(tool_evolver_http_requests_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          component: cloud-api
+        annotations:
+          summary: "API Server HTTP 5xx error rate exceeded 5%"
+          description: "Staging API error rate is {{ $value | humanizePercentage }} over the last 5 minutes."
+
+      - alert: ApiDegradedLatency
+        expr: histogram_quantile(0.99, sum(rate(tool_evolver_http_request_duration_seconds_bucket[5m])) by (le)) > 2.0
+        for: 3m
+        labels:
+          severity: warning
+          component: cloud-api
+        annotations:
+          summary: "API p99 latency exceeded 2 seconds"
+          description: "Staging API p99 latency is {{ $value | humanizeDuration }}."
+
+      - alert: ControlPlaneUnreachable
+        expr: up{job=~"cloud-api|cloud-worker|cloud-scheduler"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: control-plane
+        annotations:
+          summary: "Control plane service {{ $labels.instance }} is unreachable"
+          description: "Service instance {{ $labels.instance }} has been down for more than 1 minute."
+
+  # ----------------------------------------------------------------------------
+  # 2. Authentication & Device Flow Failures
+  # ----------------------------------------------------------------------------
+  - name: auth_and_device_flow
+    rules:
+      - alert: AuthHighFailureRate
+        expr: rate(tool_evolver_auth_failures_total[5m]) / (rate(tool_evolver_auth_requests_total[5m]) + 0.001) > 0.15
+        for: 2m
+        labels:
+          severity: warning
+          component: auth-service
+        annotations:
+          summary: "High Authentication failure rate (>15%)"
+          description: "Authentication failure rate is {{ $value | humanizePercentage }} over the last 5 minutes."
+
+      - alert: DeviceAuthAnomaly
+        expr: rate(tool_evolver_device_auth_errors_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+          component: device-auth
+        annotations:
+          summary: "Device authorization flow anomaly detected"
+          description: "RFC 8628 Device Authorization is encountering {{ $value }} errors per second."
+
+  # ----------------------------------------------------------------------------
+  # 3. Observation Ingestion Lag & Drops
+  # ----------------------------------------------------------------------------
+  - name: ingestion_and_telemetry
+    rules:
+      - alert: ObservationIngestionLagHigh
+        expr: tool_evolver_ingestion_queue_lag_seconds > 30
+        for: 3m
+        labels:
+          severity: warning
+          component: ingestion-service
+        annotations:
+          summary: "Observation ingestion lag exceeded 30 seconds"
+          description: "Client observations are queueing with {{ $value }} seconds of processing lag."
+
+      - alert: TelemetryBatchDropSpike
+        expr: rate(tool_evolver_telemetry_batch_drops_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: ingestion-service
+        annotations:
+          summary: "Telemetry batches are being dropped"
+          description: "Telemetry ingestion is dropping batches due to buffer exhaustion or schema validation errors."
+
+  # ----------------------------------------------------------------------------
+  # 4. Durable Queue & Dead-Letter Queue (DLQ)
+  # ----------------------------------------------------------------------------
+  - name: queue_and_dlq
+    rules:
+      - alert: DeadLetterQueueGrowing
+        expr: tool_evolver_queue_dead_letter_total > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: durable-queue
+        annotations:
+          summary: "Dead-Letter Queue has permanently failed jobs"
+          description: "DLQ contains {{ $value }} unrecovered evolution or storage jobs requiring operator intervention."
+
+      - alert: QueuePendingSpike
+        expr: tool_evolver_queue_pending_jobs > 500
+        for: 5m
+        labels:
+          severity: warning
+          component: durable-queue
+        annotations:
+          summary: "Queue pending jobs spike (>500)"
+          description: "Backpressure warning: pending job count has risen to {{ $value }}."
+
+      - alert: JobProcessingStall
+        expr: rate(tool_evolver_queue_jobs_completed_total[5m]) == 0 and tool_evolver_queue_pending_jobs > 10
+        for: 5m
+        labels:
+          severity: critical
+          component: cloud-worker
+        annotations:
+          summary: "Job processing stalled"
+          description: "No jobs completed in 5 minutes while {{ $value }} jobs are pending."
+
+  # ----------------------------------------------------------------------------
+  # 5. Inference Cost & Provider Errors
+  # ----------------------------------------------------------------------------
+  - name: inference_and_models
+    rules:
+      - alert: InferenceErrorRateHigh
+        expr: rate(tool_evolver_model_inference_errors_total[5m]) / (rate(tool_evolver_model_inference_requests_total[5m]) + 0.001) > 0.10
+        for: 2m
+        labels:
+          severity: warning
+          component: model-router
+        annotations:
+          summary: "Inference provider error rate exceeded 10%"
+          description: "Upstream LLM provider error rate is {{ $value | humanizePercentage }}."
+
+      - alert: InferenceBudgetThresholdExceeded
+        expr: tool_evolver_inference_cost_hourly_usd > 50.0
+        for: 5m
+        labels:
+          severity: critical
+          component: model-router
+        annotations:
+          summary: "Inference cost budget threshold exceeded"
+          description: "Hourly inference cost has reached ${{ $value }}, exceeding safety budget limit."
+
+      - alert: InferenceRateLimitExceeded
+        expr: rate(tool_evolver_model_rate_limits_total[5m]) > 2
+        for: 1m
+        labels:
+          severity: warning
+          component: model-router
+        annotations:
+          summary: "Inference provider rate limits encountered"
+          description: "Upstream provider is returning HTTP 429 rate limit errors at {{ $value }}/s."
+
+  # ----------------------------------------------------------------------------
+  # 6. Candidate Evolution Lifecycle Stalls
+  # ----------------------------------------------------------------------------
+  - name: lifecycle_stalls
+    rules:
+      - alert: CandidateLifecycleStalled
+        expr: tool_evolver_candidate_lifecycle_duration_seconds{status="in_progress"} > 600
+        for: 5m
+        labels:
+          severity: warning
+          component: lifecycle-orchestrator
+        annotations:
+          summary: "Candidate lifecycle stalled in state {{ $labels.step }}"
+          description: "Evolution candidate {{ $labels.candidate_id }} has been in {{ $labels.step }} for >10 minutes."
+
+      - alert: ValidationPipelineHang
+        expr: tool_evolver_validation_sandbox_active_time_seconds > 180
+        for: 2m
+        labels:
+          severity: warning
+          component: validation-sandbox
+        annotations:
+          summary: "Validation sandbox execution timeout"
+          description: "Sandbox validation has run for {{ $value }}s without completing."
+
+  # ----------------------------------------------------------------------------
+  # 7. Signing & Publication Integrity
+  # ----------------------------------------------------------------------------
+  - name: signing_and_publication
+    rules:
+      - alert: SigningKeyExpiryApproaching
+        expr: (tool_evolver_signing_key_expiry_timestamp - time()) < 86400 * 7
+        for: 1h
+        labels:
+          severity: warning
+          component: artifact-signer
+        annotations:
+          summary: "Artifact signing key expires in <7 days"
+          description: "Active signing key {{ $labels.key_id }} will expire in {{ $value | humanizeDuration }}."
+
+      - alert: PublicationVerificationFailure
+        expr: rate(tool_evolver_artifact_verification_failures_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: artifact-service
+        annotations:
+          summary: "Artifact publication verification failure detected"
+          description: "Published artifact failed digital signature or checksum validation."
+
+      - alert: ArtifactDigestMismatch
+        expr: rate(tool_evolver_artifact_digest_mismatches_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: object-store
+        annotations:
+          summary: "Object storage SHA-256 digest mismatch detected"
+          description: "Stored object digest did not match expected hash during retrieval."
+
+  # ----------------------------------------------------------------------------
+  # 8. Deployment Drift
+  # ----------------------------------------------------------------------------
+  - name: deployment_drift
+    rules:
+      - alert: CanaryDeploymentDriftDetected
+        expr: tool_evolver_deployment_drift_ratio > 0.10
+        for: 5m
+        labels:
+          severity: warning
+          component: rollout-controller
+        annotations:
+          summary: "Canary deployment drift detected (>10%)"
+          description: "Observed device traffic distribution deviates from configured rollout weights by {{ $value | humanizePercentage }}."
+
+  # ----------------------------------------------------------------------------
+  # 9. Rollback Spikes
+  # ----------------------------------------------------------------------------
+  - name: rollout_rollback
+    rules:
+      - alert: RollbackSpikeDetected
+        expr: rate(tool_evolver_rollout_rollbacks_total[10m]) > 3
+        for: 2m
+        labels:
+          severity: critical
+          component: rollout-controller
+        annotations:
+          summary: "Spike in automated rollbacks detected"
+          description: "Automated canary rollbacks occurred {{ $value }} times over the last 10 minutes."
+
+      - alert: CanaryBreachRateHigh
+        expr: rate(tool_evolver_canary_policy_breaches_total[5m]) > 1
+        for: 1m
+        labels:
+          severity: critical
+          component: rollout-evaluator
+        annotations:
+          summary: "Canary health policy breaches detected"
+          description: "Canary versions are violating error rate or latency SLOs."
+
+  # ----------------------------------------------------------------------------
+  # 10. Privacy & Redaction Anomalies
+  # ----------------------------------------------------------------------------
+  - name: privacy_and_safety
+    rules:
+      - alert: PrivacyGateViolationDetected
+        expr: rate(tool_evolver_privacy_gate_violations_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: privacy-gate
+        annotations:
+          summary: "Privacy Gate detected and rejected unredacted sensitive payload"
+          description: "Ingested observation contained unredacted secrets or private tokens."
+
+      - alert: UnredactedObservationAnomaly
+        expr: rate(tool_evolver_unredacted_payload_rejections_total[5m]) > 0.5
+        for: 2m
+        labels:
+          severity: critical
+          component: privacy-gate
+        annotations:
+          summary: "High volume of rejected unredacted payloads"
+          description: "Multiple client observations failed privacy scanning."
+
+  # ----------------------------------------------------------------------------
+  # 11. Unsupported & Deprecated Clients
+  # ----------------------------------------------------------------------------
+  - name: client_compatibility
+    rules:
+      - alert: UnsupportedClientVersionDetected
+        expr: rate(tool_evolver_unsupported_client_requests_total[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: api-gateway
+        annotations:
+          summary: "Requests from unsupported client versions detected"
+          description: "Clients running deprecated protocol versions are attempting API connections."
+
+      - alert: ClientProtocolDowngradeAttempt
+        expr: rate(tool_evolver_protocol_downgrade_attempts_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: api-gateway
+        annotations:
+          summary: "Protocol downgrade attempt detected"
+          description: "Insecure or deprecated client handshake was rejected."

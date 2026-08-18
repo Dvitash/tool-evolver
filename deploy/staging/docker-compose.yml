@@ -1,0 +1,346 @@
+# Tool Evolver Staging Environment Deployment
+# Pinned images, explicit configuration, least-privilege service identities, no dev defaults.
+version: "3.8"
+
+networks:
+  cloud-public:
+    driver: bridge
+  cloud-internal:
+    driver: bridge
+    internal: true
+  metrics-net:
+    driver: bridge
+    internal: true
+
+volumes:
+  postgres-staging-data:
+    driver: local
+  minio-staging-data:
+    driver: local
+  redis-staging-data:
+    driver: local
+  prometheus-staging-data:
+    driver: local
+  backup-staging-data:
+    driver: local
+
+services:
+  # Primary Relational Datastore - PostgreSQL 16.4 Pinned
+  postgres:
+    image: postgres:16.4-alpine3.20
+    container_name: tool-evolver-postgres-staging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    user: postgres
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME:-tool_evolver_staging}
+      POSTGRES_USER: ${DATABASE_USER:-tool_evolver_staging_user}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD is required}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-staging-data:/var/lib/postgresql/data
+    networks:
+      - cloud-internal
+    ports:
+      - "127.0.0.1:5432:5432"
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2048M
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-tool_evolver_staging_user} -d $${POSTGRES_DB:-tool_evolver_staging}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Object & Artifact Storage - MinIO RELEASE.2024-08-03T04-33-23Z Pinned
+  minio:
+    image: minio/minio:RELEASE.2024-08-03T04-33-23Z
+    container_name: tool-evolver-minio-staging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    user: "10001:10001"
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY_ID:-minio-staging-access-key}
+      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_ACCESS_KEY:?STORAGE_SECRET_ACCESS_KEY is required}
+    volumes:
+      - minio-staging-data:/data
+    networks:
+      - cloud-internal
+      - cloud-public
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1024M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # MinIO Bucket and Policy Initializer
+  minio-init:
+    image: minio/mc:RELEASE.2024-08-03T03-24-34Z
+    container_name: tool-evolver-minio-init-staging
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - cloud-internal
+    security_opt:
+      - no-new-privileges:true
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $${MINIO_ROOT_USER:-minio-staging-access-key} $${MINIO_ROOT_PASSWORD};
+      mc mb --ignore-existing local/$${STORAGE_BUCKET:-tool-evolver-staging-artifacts};
+      mc mb --ignore-existing local/$${BACKUP_S3_BUCKET:-tool-evolver-staging-backups};
+      mc anonymous set none local/$${STORAGE_BUCKET:-tool-evolver-staging-artifacts};
+      mc anonymous set none local/$${BACKUP_S3_BUCKET:-tool-evolver-staging-backups};
+      echo 'MinIO buckets and least-privilege policies configured successfully.';
+      "
+    environment:
+      MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY_ID:-minio-staging-access-key}
+      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_ACCESS_KEY:?STORAGE_SECRET_ACCESS_KEY is required}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-tool-evolver-staging-artifacts}
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-tool-evolver-staging-backups}
+
+  # In-Memory Cache & Ephemeral Queue - Redis 7.4.0 Pinned
+  redis:
+    image: redis:7.4.0-alpine3.20
+    container_name: tool-evolver-redis-staging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    user: redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-staging-redis-auth-pass-2026}
+    volumes:
+      - redis-staging-data:/data
+    networks:
+      - cloud-internal
+    ports:
+      - "127.0.0.1:6379:6379"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.2"
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-staging-redis-auth-pass-2026}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # Database Schema Migrations (Runs before API and Workers)
+  cloud-migrate:
+    build:
+      context: ../..
+      dockerfile: deploy/staging/Dockerfile.cloud
+    image: ghcr.io/tool-evolver/cloud-migrate:0.1.0-staging
+    container_name: tool-evolver-migrate-staging
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    user: "10001:10001"
+    command: ["node", "dist/bin/migrate.js", "up"]
+    environment:
+      NODE_ENV: production
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${DATABASE_NAME:-tool_evolver_staging}
+      DATABASE_USER: ${DATABASE_USER:-tool_evolver_staging_user}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD is required}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cloud-internal
+
+  # Cloud API Server (HTTP, Ingestion, MCP, Auth, Analytics)
+  cloud-api:
+    build:
+      context: ../..
+      dockerfile: deploy/staging/Dockerfile.cloud
+    image: ghcr.io/tool-evolver/cloud-api:0.1.0-staging
+    container_name: tool-evolver-cloud-api-staging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    command: ["node", "dist/bin/api.js"]
+    env_file:
+      - config.env
+    environment:
+      NODE_ENV: production
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: "4000"
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      STORAGE_ENDPOINT: http://minio:9000
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      cloud-migrate:
+        condition: service_completed_successfully
+    networks:
+      - cloud-public
+      - cloud-internal
+      - metrics-net
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2048M
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:4000/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # Cloud Evolution Background Worker (Validation, Replay, Synthesis, Lifecycle)
+  cloud-worker:
+    build:
+      context: ../..
+      dockerfile: deploy/staging/Dockerfile.worker
+    image: ghcr.io/tool-evolver/cloud-worker:0.1.0-staging
+    container_name: tool-evolver-cloud-worker-staging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    command: ["node", "dist/bin/worker.js"]
+    env_file:
+      - config.env
+    environment:
+      NODE_ENV: production
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      STORAGE_ENDPOINT: http://minio:9000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      cloud-migrate:
+        condition: service_completed_successfully
+    networks:
+      - cloud-internal
+      - metrics-net
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 4096M
+        reservations:
+          cpus: "1.0"
+          memory: 1024M
+
+  # Cloud Evolution Scheduler (Retention, Expirations, Metrics Rollup)
+  cloud-scheduler:
+    build:
+      context: ../..
+      dockerfile: deploy/staging/Dockerfile.cloud
+    image: ghcr.io/tool-evolver/cloud-scheduler:0.1.0-staging
+    container_name: tool-evolver-cloud-scheduler-staging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    command: ["node", "dist/bin/scheduler.js"]
+    env_file:
+      - config.env
+    environment:
+      NODE_ENV: production
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      STORAGE_ENDPOINT: http://minio:9000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      cloud-migrate:
+        condition: service_completed_successfully
+    networks:
+      - cloud-internal
+      - metrics-net
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.2"
+          memory: 128M
+
+  # Observability & Metrics - Prometheus v2.54.0 Pinned
+  prometheus:
+    image: prom/prometheus:v2.54.0
+    container_name: tool-evolver-prometheus-staging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    user: "nobody:nobody"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - prometheus-staging-data:/prometheus
+      - ./prometheus-alerts.yml:/etc/prometheus/prometheus-alerts.yml:ro
+    networks:
+      - metrics-net
+      - cloud-public
+    ports:
+      - "127.0.0.1:9090:9090"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1024M
+        reservations:
+          cpus: "0.2"
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --tries=1 -O- http://localhost:9090/-/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

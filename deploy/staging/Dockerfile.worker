@@ -1,0 +1,51 @@
+# ==============================================================================
+# Tool Evolver Cloud Worker - Background Execution Containerfile
+# Pinned Alpine base, multi-stage build, least-privilege non-root execution.
+# ==============================================================================
+
+# Stage 1: Build & Bundle
+FROM node:22.13.4-alpine3.21 AS builder
+
+WORKDIR /build
+
+# Install core build dependencies
+RUN apk add --no-cache python3 make g++ git
+
+# Install pnpm 10.24.0 pinned
+RUN npm install -g pnpm@10.24.0
+
+# Copy repository dependency manifests
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json tsconfig.json ./
+COPY packages/ ./packages/
+COPY apps/ ./apps/
+COPY adapters/ ./adapters/
+COPY fixtures/ ./fixtures/
+
+# Install full workspace dependencies and compile typescript
+RUN pnpm install --frozen-lockfile
+RUN pnpm run build
+
+# Prune non-production dependencies for deployable closure
+RUN pnpm --filter @tool-evolver/cloud --prod deploy /prod-bundle
+
+# Stage 2: Hardened Runtime Container
+FROM node:22.13.4-alpine3.21 AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# Install minimal operational utilities
+RUN apk add --no-cache curl tini
+
+# Create dedicated non-root service user (UID 10001)
+RUN addgroup -g 10001 toolevolver && \
+    adduser -u 10001 -G toolevolver -s /sbin/nologin -D toolevolver
+
+# Copy built runtime closure from builder stage
+COPY --from=builder --chown=toolevolver:toolevolver /prod-bundle /app
+
+USER toolevolver:toolevolver
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "dist/bin/worker.js"]
