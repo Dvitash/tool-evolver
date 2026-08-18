@@ -560,7 +560,7 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     { category: "functional", evidence: { activatedCount, toolName } },
   );
 
-  const invocationParameters = { includeDiffSummary: true };
+  const invocationParameters = { path: "." };
   const nativeOutcome = await env.invokeTool(toolName, invocationParameters);
   const nativeInvocationSuccess = nativeOutcome.success && !nativeOutcome.isError;
 
