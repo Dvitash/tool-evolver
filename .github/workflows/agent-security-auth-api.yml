@@ -33,16 +33,19 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           api = Path("apps/cloud/src/server/api.ts")
           text = api.read_text()
-          old = '''    if (path === "/v1/devices") {
-                assertRequestScope(authContext, "admin:all");'''
-          new = '''    if (path === "/v1/devices") {
-                assertRequestScope(authContext, "device:connect");'''
-          if old not in text:
+          text, count = re.subn(
+              r'(if \(path === "/v1/devices"\) \{\s*)assertRequestScope\(authContext, "admin:all"\);',
+              r'\1assertRequestScope(authContext, "device:connect");',
+              text,
+              count=1,
+          )
+          if count != 1:
               raise SystemExit("device scope marker not found")
-          api.write_text(text.replace(old, new, 1))
+          api.write_text(text)
 
           isolation = Path("apps/cloud/tests/auth/isolation.test.ts")
           text = isolation.read_text()
