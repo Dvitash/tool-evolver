@@ -3,18 +3,23 @@ name: Agent Security Auth API Patcher
 on:
   push:
     branches: [agent/security-auth-api]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
   patch-and-validate:
-    if: github.actor != 'github-actions[bot]'
+    if: >-
+      (github.event_name == 'push' && github.ref_name == 'agent/security-auth-api' && github.actor != 'github-actions[bot]') ||
+      (github.event_name == 'pull_request' && github.head_ref == 'agent/security-auth-api')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.head_ref || github.ref_name }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
