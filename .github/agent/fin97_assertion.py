@@ -3,13 +3,14 @@ import re
 
 path = Path("fixtures/e2e/tests/real-process-topology.test.ts")
 source = path.read_text()
+replacement = 'expect(candidate.proposedTool.name).toMatch(/^[a-z][a-z0-9_]*$/);'
 source, count = re.subn(
     r'expect\(candidate\.proposedTool\.name\)\.toBe\(\s*"git_status_checker"\s*,?\s*\);',
-    'expect(candidate.proposedTool.name).toMatch(/^[a-z][a-z0-9_]*$/);',
+    replacement,
     source,
     count=1,
 )
-if count != 1:
-    raise SystemExit("stale candidate-name assertion not found")
+if count == 0 and replacement not in source:
+    raise SystemExit("candidate-name assertion is neither stale nor already updated")
 path.write_text(source)
-print("FIN-001 candidate assertion updated")
+print("FIN-001 candidate assertion ready")
