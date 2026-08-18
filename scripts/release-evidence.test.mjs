@@ -259,8 +259,8 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
           rootDir,
           distDir: pubDir,
           skipBuild: true,
+          syncDocs: false,
         });
-
         expect(pubResult.success).toBe(true);
         expect(pubResult.version).toBe(RELEASE_VERSION);
         expect(pubResult.releaseTag).toBe(`v${RELEASE_VERSION}`);
