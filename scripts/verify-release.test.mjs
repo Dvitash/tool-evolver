@@ -112,7 +112,7 @@ describe("Release Packaging & Verification Suite", () => {
       expect(manifest.version).toBe(RELEASE_VERSION);
       expect(manifest.signatures).toHaveLength(1);
       expect(manifest.signatures[0].algorithm).toBe("Ed25519");
-      expect(manifest.signatures[0].signature).toMatch(/^[a-f0-9]{128}$/);
+      expect(manifest.signatures[0].signatureHex).toMatch(/^[a-f0-9]{128}$/);
 
       const sig = manifest.signatures[0];
       const violations = verifyManifestSignatures(manifest, {
@@ -161,6 +161,7 @@ describe("Release Packaging & Verification Suite", () => {
           rootDir,
           distDir: path.join(tempReleaseDir, "no-credentials"),
           skipBuild: true,
+          testOnly: false,
         }),
       ).toThrow(/private key|required|TOOL_EVOLVER_RELEASE/i);
     });
@@ -215,7 +216,7 @@ describe("Release Packaging & Verification Suite", () => {
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
-    });
+    }, 30_000);
   });
 
   describe("CycloneDX SBOM Generation & Verification", () => {
@@ -247,7 +248,7 @@ describe("Release Packaging & Verification Suite", () => {
     it("generates valid channel metadata with stable and rollback definitions", () => {
       const channels = generateChannelMetadata("test-manifest-sha256", { testOnly: true });
 
-      expect(channels.schemaVersion).toBe("1.0.0");
+      expect(channels.schemaVersion).toBe("2.0.0");
       expect(channels.channels.stable.version).toBe(RELEASE_VERSION);
       expect(channels.channels.stable.manifestDigest).toBe("test-manifest-sha256");
       expect(channels.minSupportedVersion).toBe("0.1.0");

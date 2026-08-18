@@ -21,11 +21,7 @@ import path from "node:path";
 import process from "node:process";
 import zlib from "node:zlib";
 
-import {
-  generateReleaseEvidence,
-  getGitCommitSha,
-  writeReleaseEvidence,
-} from "./generate-release-evidence.mjs";
+import { getGitCommitSha } from "./generate-release-evidence.mjs";
 import {
   PLATFORMS,
   RELEASE_DATE,
@@ -417,16 +413,12 @@ export function publishV1Release(options = {}) {
     syncDocs: options.syncDocs ?? false,
   });
   const releaseIdentity = packageResult.releaseIdentity;
-  const evidenceResult = writeReleaseEvidence({
-    rootDir,
-    distDir,
-    commitSha,
-    releaseIdentity,
-    keyId: keyPair.keyId,
-    testOnly,
-    verificationEvidence: options.verificationEvidence,
-    syncDocs: options.syncDocs ?? false,
-  });
+  // packageRelease already generated the exact evidence whose digest is signed by
+  // manifest.json. Never regenerate it after signing.
+  const evidenceResult = {
+    evidence: JSON.parse(fs.readFileSync(path.join(distDir, "release-evidence.json"), "utf8")),
+    jsonSha256: packageResult.evidenceSha256,
+  };
   const checksumsResult = generateChecksumsAndSignatures(distDir, keyPair);
   const verifyResult = verifyRelease({
     rootDir,

@@ -64,7 +64,7 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
     it("generates evidence where all 21 milestones are verified and files exist on disk", () => {
       const evidence = generateReleaseEvidence({ rootDir, testOnly: true });
 
-      expect(evidence.schemaVersion).toBe("1.0.0");
+      expect(evidence.schemaVersion).toBe("2.0.0");
       expect(evidence.release).toBe(RELEASE_VERSION);
       expect(evidence.status).toBe("TEST_ONLY");
       expect(evidence.parentEpic).toBe(PARENT_EPIC_ID);

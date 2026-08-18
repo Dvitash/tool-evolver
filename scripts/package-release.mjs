@@ -692,7 +692,7 @@ export function generateChannelMetadata(manifestSha256, options = {}) {
 export function packageRelease(options = {}) {
   const rootDir = options.rootDir || process.cwd();
   const skipBuild = options.skipBuild ?? false;
-  const testOnly = options.testOnly === true || process.env.TOOL_EVOLVER_RELEASE_TEST_ONLY === "1";
+  const testOnly = options.testOnly ?? process.env.TOOL_EVOLVER_RELEASE_TEST_ONLY === "1";
   const distDir =
     options.distDir ||
     options.outputDir ||
