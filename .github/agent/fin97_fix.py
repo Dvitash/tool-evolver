@@ -24,7 +24,6 @@ def security(s):
     return s.replace(marker, insert, 1)
 rw('apps/cloud/tests/security-hardening.test.ts', security)
 
-# Repair tests explicitly inject a successful Deno probe instead of relying on host installation.
 def doctor_test(s):
     s, n1 = re.subn(r'(const actions = await repairState\(\{\s*home: homeDir,\s*fsBridge,)(\s*\}\);)', r'''\1
       safetyCertification: {
@@ -38,7 +37,6 @@ def doctor_test(s):
     return s
 rw('apps/cli/tests/doctor-repair-command.test.ts', doctor_test)
 
-# Worker RPC may not receive mediated plaintext; trusted host brokers may consume it internally.
 def secret_test(s):
     pattern = r'''      // Dispatched request for mediateHeaders[\s\S]*?      // Dispatched direct read fails\n      await expect\(\n        brokerManager\.handleRequest\("secret", "getSecret", \{ name: "GITHUB_TOKEN" \}, ctx\),\n      \)\.rejects\.toThrow\(BrokerSecurityError\);'''
     repl = '''      // Worker RPC cannot receive a fully mediated plaintext value.
@@ -51,7 +49,6 @@ def secret_test(s):
         ),
       ).rejects.toMatchObject({ code: "DIRECT_READ_DENIED" });
 
-      // Trusted host brokers consume the secret without returning it to the worker.
       const trusted = await secretBroker.mediateHeaders(
         { Authorization: "Bearer {{secret:GITHUB_TOKEN}}" },
         { ...ctx, isWorker: false, source: "host" },
@@ -66,12 +63,10 @@ def secret_test(s):
     return out
 rw('packages/runtime/tests/brokers/secret-mediation.test.ts', secret_test)
 
-# Real-process test supplies the required third repeated workflow rather than depending on a fabricated opportunity.
 def e2e(s):
     anchor = '''      {\n        eventId: "evt_real_04",\n        sessionId: "sess_real_02",'''
     idx = s.find(anchor)
     if idx < 0: raise SystemExit('e2e anchor missing')
-    # insert after the complete evt_real_04 object by locating the next '\n      },\n    ];'
     end_marker = '\n      },\n    ];'
     end = s.find(end_marker, idx)
     if end < 0: raise SystemExit('e2e end marker missing')
@@ -108,7 +103,7 @@ def e2e(s):
     return s
 rw('fixtures/e2e/tests/real-process-topology.test.ts', e2e)
 
-# Diagnostic file is temporary.
 p = ROOT / '.github/lifecycle-test-diagnostics.txt'
 if p.exists(): p.unlink()
 print('FIN-001 fixes applied')
+# validation trigger
