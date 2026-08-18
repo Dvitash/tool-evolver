@@ -19,7 +19,6 @@ def replace_once(source: str, old: str, new: str, label: str) -> str:
     return source.replace(old, new, 1)
 
 
-# Preserve deterministic, non-secret command profiles as part of the opportunity contract.
 def patch_types(source: str) -> str:
     return replace_once(
         source,
@@ -173,8 +172,16 @@ def patch_opportunity_service(source: str) -> str:
         cluster,
         triggerResult.reason,
       );
-      // Command profiles are deterministic evidence, not model-authored capability requests.
-      classification.commandProfiles = [...cluster.representativeSignature.commandPatterns];'''
+      // Models may summarize intent, but cannot rewrite the deterministic operation class
+      // or the exact command profiles that define the candidate's capability boundary.
+      const primaryToolClass = cluster.representativeSignature.toolClasses[0];
+      if (primaryToolClass) classification.taskClass = primaryToolClass;
+      classification.commandProfiles = [...cluster.representativeSignature.commandPatterns];
+      if (classification.commandProfiles.length > 0 && primaryToolClass === "vcs") {
+        classification.pattern = `vcs_${classification.commandProfiles[0]!
+          .replace(/[^a-z0-9]+/gi, "_")
+          .replace(/^_+|_+$/g, "")}`;
+      }'''
     return replace_once(source, old, new, "deterministic command profile assignment")
 
 
@@ -317,7 +324,7 @@ def patch_scenario_builder(source: str) -> str:
         : undefined;
     if (!caps) return allowed;
 
-    const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&");
+    const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     const fsPaths = [...(caps.fs.readPaths ?? []), ...(caps.fs.writePaths ?? [])];
     if (fsPaths.length > 0 || caps.fs.allowWorkspaceRoot || caps.fs.allowTemp) {
@@ -349,7 +356,7 @@ def patch_scenario_builder(source: str) -> str:
         ? ".*"
         : `^(?:${[
             ...commandProfiles.map((value) => escapeRegex(value)),
-            ...commandBinaries.map((value) => `${escapeRegex(value)}(?:\\\\s|$)`),
+            ...commandBinaries.map((value) => `${escapeRegex(value)}(?:\\s|$)`),
           ].join("|")})`;
       allowed.push({ service: "cmd", operation: "*", commandPattern });
     }
