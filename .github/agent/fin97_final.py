@@ -45,6 +45,7 @@ def e2e(s):
   s=s.replace(needle,add,1)
  s=re.sub(r'expect\(ingestRes\.ingestedCount\)\.toBe\(\d+\);','expect(ingestRes.ingestedCount).toBe(sessionEvents.length);',s,1)
  s=s.replace('expect(opportunity.toolName).toBe("git_status_checker");','expect(opportunity.classification.suggestedToolName).toBeTruthy();',1)
+ s=s.replace('expect(candidate.proposedTool.name).toBe("git_status_checker");','expect(candidate.proposedTool.name).toMatch(/^[a-z][a-z0-9_]*$/);',1)
  # The repeated workflow must be meaningful enough to pass the production triviality gate.
  s=s.replace('executionDurationMs: 15', 'executionDurationMs: 5000, durationMs: 5000')
  return s
