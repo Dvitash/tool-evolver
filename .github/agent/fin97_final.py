@@ -45,11 +45,15 @@ def e2e(s):
   add=needle+'''\n      { eventId: "evt_real_07", sessionId: "sess_real_01", timestamp: new Date().toISOString(), type: "tool_call", schemaVersion: "1.0.0", causalRef: { causalSequence: 3 }, redaction: DEFAULT_REDACTION, callId: "call_r1_02", toolName: "bash", parameters: { command: "git diff --stat" }, isShadow: false },\n      { eventId: "evt_real_08", sessionId: "sess_real_01", timestamp: new Date().toISOString(), type: "tool_result", schemaVersion: "1.0.0", causalRef: { causalSequence: 4, parentId: "evt_real_07" }, redaction: DEFAULT_REDACTION, callId: "call_r1_02", toolName: "bash", result: { stdout: "src/index.ts | 2 +-" }, executionDurationMs: 15, isError: false },\n      { eventId: "evt_real_09", sessionId: "sess_real_02", timestamp: new Date().toISOString(), type: "tool_call", schemaVersion: "1.0.0", causalRef: { causalSequence: 3 }, redaction: DEFAULT_REDACTION, callId: "call_r2_02", toolName: "bash", parameters: { command: "git diff --stat" }, isShadow: false },\n      { eventId: "evt_real_10", sessionId: "sess_real_02", timestamp: new Date().toISOString(), type: "tool_result", schemaVersion: "1.0.0", causalRef: { causalSequence: 4, parentId: "evt_real_09" }, redaction: DEFAULT_REDACTION, callId: "call_r2_02", toolName: "bash", result: { stdout: "src/index.ts | 2 +-" }, executionDurationMs: 15, isError: false },\n      { eventId: "evt_real_11", sessionId: "sess_real_03", timestamp: new Date().toISOString(), type: "tool_call", schemaVersion: "1.0.0", causalRef: { causalSequence: 3 }, redaction: DEFAULT_REDACTION, callId: "call_r3_02", toolName: "bash", parameters: { command: "git diff --stat" }, isShadow: false },\n      { eventId: "evt_real_12", sessionId: "sess_real_03", timestamp: new Date().toISOString(), type: "tool_result", schemaVersion: "1.0.0", causalRef: { causalSequence: 4, parentId: "evt_real_11" }, redaction: DEFAULT_REDACTION, callId: "call_r3_02", toolName: "bash", result: { stdout: "src/index.ts | 2 +-" }, executionDurationMs: 15, isError: false },'''
   if needle not in s: raise SystemExit('e2e marker')
   s=s.replace(needle,add,1)
- return re.sub(r'expect\(ingestRes\.ingestedCount\)\.toBe\(\d+\);','expect(ingestRes.ingestedCount).toBe(sessionEvents.length);',s,1)
+ s=re.sub(r'expect\(ingestRes\.ingestedCount\)\.toBe\(\d+\);','expect(ingestRes.ingestedCount).toBe(sessionEvents.length);',s,1)
+ s=s.replace('expect(opportunity.toolName).toBe("git_status_checker");','expect(opportunity.classification.suggestedToolName).toBe("git_status_checker");',1)
+ return s
 edit('fixtures/e2e/tests/real-process-topology.test.ts',e2e)
 
 def topology(s):
  s=s.replace('body: JSON.stringify({ sessionEvents }),','body: JSON.stringify({ events: sessionEvents }),',1)
+ s=s.replace('Promise<Array<{ id: string; pattern: string; toolName: string }>>','Promise<Array<{ id: string; classification: { suggestedToolName?: string } }>>',1)
+ s=s.replace('opportunities?: Array<{ id: string; pattern: string; toolName: string }>;','opportunities?: Array<{ id: string; classification: { suggestedToolName?: string } }>;',1)
  return s
 edit('fixtures/e2e/src/topology.ts',topology)
 print('FIN97 final applied')
