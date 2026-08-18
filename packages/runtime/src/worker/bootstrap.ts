@@ -158,7 +158,6 @@ function requestBroker(service, action, payload = {}) {
 
 function createToolContext(invocationId, input, options = {}) {
   const brokerClient = {
-    request: requestBroker,
     fs: {
       readFile: async (path, encoding = "utf-8") => {
         const res = await requestBroker("fs", "readFile", { path, encoding });
@@ -190,6 +189,9 @@ function createToolContext(invocationId, input, options = {}) {
           status: res.status,
           statusText: res.statusText,
           headers: res.headers,
+          ok: res.status >= 200 && res.status < 300,
+          url: res.finalUrl || url,
+          redirected: Boolean(res.redirected),
           text: async () => res.body,
           json: async () => JSON.parse(res.body),
         };
@@ -201,10 +203,26 @@ function createToolContext(invocationId, input, options = {}) {
       },
     },
     secret: {
-      getSecret: async (name) => {
-        const res = await requestBroker("secret", "getSecret", { name });
-        return res.secret;
-      },
+      createReference: (name, refOptions = {}) => ({
+        kind: "secret_reference",
+        name,
+        ref: "sec_ref_" + name.toLowerCase().replace(/[^a-z0-9_]/g, "_") + "_" + Math.random().toString(36).slice(2, 10),
+        workspaceId: refOptions.workspaceId || options.metadata?.workspaceId || "default",
+        toolId: refOptions.toolId,
+        permittedModes: refOptions.modes || ["header_template", "bearer_token", "query_template", "command_stdin", "command_env"],
+        expiresAt: refOptions.expiresAt,
+        metadata: refOptions.metadata || {},
+      }),
+      bearerToken: (nameOrRef) => typeof nameOrRef === "string"
+        ? brokerClient.secret.createReference(nameOrRef, { modes: ["bearer_token", "header_template"] })
+        : nameOrRef,
+      template: (nameOrRef) => "{{secret:" + (typeof nameOrRef === "string" ? nameOrRef : nameOrRef.name) + "}}",
+      envSecret: (nameOrRef) => typeof nameOrRef === "string"
+        ? brokerClient.secret.createReference(nameOrRef, { modes: ["command_env"] })
+        : nameOrRef,
+      stdinSecret: (nameOrRef) => typeof nameOrRef === "string"
+        ? brokerClient.secret.createReference(nameOrRef, { modes: ["command_stdin"] })
+        : nameOrRef,
     },
   };
 
@@ -249,6 +267,10 @@ function createToolContext(invocationId, input, options = {}) {
       error: (msg, data) => logFn("error", msg, data),
     },
     broker: brokerClient,
+    fs: brokerClient.fs,
+    net: brokerClient.net,
+    cmd: brokerClient.cmd,
+    secret: brokerClient.secret,
   };
 }
 

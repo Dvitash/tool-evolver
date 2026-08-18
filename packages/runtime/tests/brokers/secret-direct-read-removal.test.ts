@@ -201,20 +201,24 @@ describe("Secret Direct-Read Removal & Mediation Broker Contracts", () => {
       }
     });
 
-    it("mediates headers safely without leaking secrets into return values", async () => {
-      const mediated = (await secretBroker.handleRequest(
-        "mediateHeaders",
-        {
-          headers: {
-            Authorization: "Bearer {{secret:AUTH_BEARER_TOKEN}}",
-            "X-Custom-Header": "StaticValue",
+    it("denies worker requests that would return mediated plaintext", async () => {
+      await expect(
+        secretBroker.handleRequest(
+          "mediateHeaders",
+          {
+            headers: {
+              Authorization: "Bearer {{secret:AUTH_BEARER_TOKEN}}",
+            },
           },
-        },
-        workerContext,
-      )) as Record<string, string>;
+          workerContext,
+        ),
+      ).rejects.toMatchObject({ code: "DIRECT_READ_DENIED" });
 
-      expect(mediated["X-Custom-Header"]).toBe("StaticValue");
-      expect(mediated.Authorization).toBe("Bearer bearer_token_xyz_8888");
+      const trustedResult = await secretBroker.mediateHeaders(
+        { Authorization: "Bearer {{secret:AUTH_BEARER_TOKEN}}" },
+        { ...workerContext, isWorker: false, source: "host" },
+      );
+      expect(trustedResult.Authorization).toBe("Bearer bearer_token_xyz_8888");
     });
 
     it("rejects unauthorized secret reference resolution across workspaces", async () => {

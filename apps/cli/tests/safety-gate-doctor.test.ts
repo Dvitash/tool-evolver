@@ -129,7 +129,7 @@ describe("CLI Safety Gate Doctor & Status Diagnostics", () => {
   });
 
   describe("Doctor Repair", () => {
-    it("repairs missing safety attestation by generating a new valid record", async () => {
+    it("repairs missing safety attestation by executing signed local certification", async () => {
       const fsBridge = createMockFsBridge();
 
       // Verify fail before repair
@@ -137,9 +137,15 @@ describe("CLI Safety Gate Doctor & Status Diagnostics", () => {
       expect(beforeItems.find((i) => i.id === "safety_gate")?.status).toBe("fail");
 
       // Run repair
-      const actions = await repairState({ home: homeDir, fsBridge });
+      const actions = await repairState({
+        home: homeDir,
+        fsBridge,
+        safetyCertification: {
+          probeOverrides: { denoAvailable: true, denoVersion: "2.0.0" },
+        },
+      });
       expect(
-        actions.some((a) => a.includes("Generated and wrote production safety attestation")),
+        actions.some((a) => a.includes("Certified and wrote production safety attestation")),
       ).toBe(true);
 
       // Verify file was written

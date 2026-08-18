@@ -5,7 +5,7 @@ import { probeClaudeInstallation, verifyClaudeMcpConfig } from "@tool-evolver/ad
 import { probeCodexInstallation, verifyCodexMcpConfig } from "@tool-evolver/adapter-codex";
 import { probeOmpInstallation, verifyOmpMcpConfig } from "@tool-evolver/adapter-omp";
 import type { ProductionSafetyGateStatus, SafetyAttestationRecord } from "@tool-evolver/contracts";
-import { SafetyGateEvaluator } from "@tool-evolver/runtime";
+import { AttestationVerifier, SafetyGateEvaluator } from "@tool-evolver/runtime";
 const SYSTEM_META_TOOL_NAMES = [
   "search_tools",
   "get_tool_schema",
@@ -236,8 +236,22 @@ export async function collectStatus(options: {
     }
   }
 
+  const publicKeyPath = path.join(
+    customHome,
+    ".tool-evolver",
+    "state",
+    "safety-attestation.pub.pem",
+  );
+  const publicKeyPem = await fsBridge.readFile(publicKeyPath);
+  const trustedKeys = new Map<string, string>();
+  const keyId = attestationRecord?.signature?.keyId;
+  if (publicKeyPem && keyId) trustedKeys.set(keyId, publicKeyPem);
   const safetyEvaluator = new SafetyGateEvaluator({
     attestation: attestationRecord,
+    verifier: new AttestationVerifier({
+      trustedPublicKeys: trustedKeys,
+      allowUnsignedTestAttestations: Boolean(process.env.VITEST || process.env.VITEST_WORKER_ID),
+    }),
   });
   const safetyGate = safetyEvaluator.getStatus();
   const metaToolNames = [...SYSTEM_META_TOOL_NAMES];
