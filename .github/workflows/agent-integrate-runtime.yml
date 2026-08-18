@@ -23,6 +23,10 @@ jobs:
         with:
           version: 10.24.0
           run_install: false
+      - name: Configure git identity
+        run: |
+          git config user.name "tool-evolver-agent"
+          git config user.email "tool-evolver-agent@users.noreply.github.com"
       - name: Apply validated Runtime commit
         run: git cherry-pick e2d2339ced0bb90334e2009dc8f5fbd39e00079c
       - name: Remove temporary integration workflow
@@ -37,8 +41,6 @@ jobs:
         run: pnpm test
       - name: Commit integrated source
         run: |
-          git config user.name "tool-evolver-agent"
-          git config user.email "tool-evolver-agent@users.noreply.github.com"
           git add -A
           git commit --amend --no-edit
           git push --force-with-lease origin HEAD:agent/finished-product
