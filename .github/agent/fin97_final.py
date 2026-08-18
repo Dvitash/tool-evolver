@@ -45,6 +45,8 @@ def e2e(s):
   s=s.replace(needle,add,1)
  s=re.sub(r'expect\(ingestRes\.ingestedCount\)\.toBe\(\d+\);','expect(ingestRes.ingestedCount).toBe(sessionEvents.length);',s,1)
  s=s.replace('expect(opportunity.toolName).toBe("git_status_checker");','expect(opportunity.classification.suggestedToolName).toBeTruthy();',1)
+ # The repeated workflow must be meaningful enough to pass the production triviality gate.
+ s=s.replace('executionDurationMs: 15', 'executionDurationMs: 5000')
  return s
 edit('fixtures/e2e/tests/real-process-topology.test.ts',e2e)
 
