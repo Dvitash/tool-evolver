@@ -42,6 +42,7 @@ export class CodeGenerator {
       tenantId?: string;
       inferenceService?: InferenceService;
       workflowEvidence?: string;
+      allowDeterministicFallback?: boolean;
     } = {},
   ): Promise<GeneratedSourceResult> {
     if (plan.targetType === "workflow") {
@@ -151,9 +152,14 @@ ${customLogic}
             };
           }
         }
-      } catch {
-        // Fall back to deterministic code generation on inference error
+      } catch (error) {
+        const allowFallback = options.allowDeterministicFallback ?? false;
+        if (!allowFallback) {
+          throw error;
+        }
       }
+    } else if (options.allowDeterministicFallback === false) {
+      throw new Error("Structured inference is required for candidate synthesis");
     }
 
     // 2. Deterministic Code Synthesis

@@ -1349,18 +1349,6 @@ export class CandidateLifecycleOrchestrator {
         },
       );
 
-      // 6. Register in CloudCatalogService
-      if (this.catalogService) {
-        this.catalogService.registerTool({
-          name: toolVersion.manifest.name,
-          description: toolVersion.manifest.description,
-          inputSchema: toolVersion.manifest.parameters,
-          handler: async () => ({
-            content: [{ type: "text", text: "Tool executed successfully" }],
-          }),
-        });
-      }
-
       const publicationRecordId = `pub_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
       const idempotencyKey =
         options.idempotencyKey ?? `cand_${candidateId}_published_${attemptNumber}`;

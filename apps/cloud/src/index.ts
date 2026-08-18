@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 /**
  * @tool-evolver/cloud
  *
@@ -43,6 +42,7 @@ import {
   CandidateRepository,
   createCandidateGenerationService,
 } from "./evolution/generator/index.js";
+import { CandidateLifecycleOrchestrator } from "./evolution/lifecycle/index.js";
 import {
   type OpportunityDetectionService,
   createOpportunityDetectionService,
@@ -78,7 +78,11 @@ import {
   createCloudCatalogService,
   createCloudMcpServer,
 } from "./mcp/index.js";
-import { type InferenceService, createInferenceService } from "./models/index.js";
+import {
+  type InferenceService,
+  OpenAiCompatibleProvider,
+  createInferenceService,
+} from "./models/index.js";
 import type { JobEnvelope } from "./queue/envelope.js";
 import { type DurableQueue, createDurableQueue } from "./queue/queue.js";
 import { JobScheduler } from "./queue/scheduler.js";
@@ -174,6 +178,7 @@ export class CloudService {
   readonly inferenceService: InferenceService;
   readonly candidateGenerationService: CandidateGenerationService;
   readonly candidateValidationService: CandidateValidationService;
+  readonly candidateLifecycleOrchestrator: CandidateLifecycleOrchestrator;
 
   readonly historicalReplayService: HistoricalReplayService;
   readonly candidateEvaluationService: CandidateEvaluationService;
@@ -228,12 +233,29 @@ export class CloudService {
     });
     this.opportunityService = createOpportunityDetectionService({ pool: this.dbPool });
     this.inferenceService = createInferenceService();
+    if (this.config.models.provider === "openai-compatible") {
+      if (!this.config.models.baseUrl) {
+        throw new Error("MODEL_BASE_URL is required for the openai-compatible provider");
+      }
+      this.inferenceService.router.registerProvider(
+        new OpenAiCompatibleProvider({
+          id: this.config.models.providerId,
+          name: `OpenAI-compatible (${this.config.models.providerId})`,
+          baseUrl: this.config.models.baseUrl,
+          apiKey: this.config.models.apiKey,
+          organizationId: this.config.models.organizationId,
+          defaultModel: this.config.models.model,
+          timeoutMs: this.config.models.timeoutMs,
+        }),
+      );
+    }
     this.candidateRepo = new CandidateRepository(this.dbPool, this.objectStore);
     this.candidateGenerationService = createCandidateGenerationService({
       inferenceService: this.inferenceService,
       pool: this.dbPool,
       objectStore: this.objectStore,
       candidateRepo: this.candidateRepo,
+      allowDeterministicFallback: this.config.models.allowDeterministicFallback,
     });
     this.candidateValidationService = createCandidateValidationService();
     this.historicalReplayService = createHistoricalReplayService({
@@ -243,7 +265,11 @@ export class CloudService {
     this.artifactRegistryService = createToolArtifactRegistryService(
       this.dbPool,
       this.objectStore,
-      { outboxPublisher: this.outboxPublisher },
+      {
+        outboxPublisher: this.outboxPublisher,
+        allowEphemeralSigningKey:
+          this.config.environment === "development" || this.config.environment === "test",
+      },
     );
     this.metricsRepo = createMetricsRepository(this.dbPool);
     this.analyticsService = createAnalyticsService(this.dbPool, {
@@ -270,6 +296,17 @@ export class CloudService {
       catalogService: this.catalogService,
     });
     this.candidateEvaluationService = createCandidateEvaluationService();
+    this.candidateLifecycleOrchestrator = new CandidateLifecycleOrchestrator(this.dbPool, {
+      validationService: this.candidateValidationService,
+      replayService: this.historicalReplayService,
+      evaluationService: this.candidateEvaluationService,
+      artifactService: this.artifactRegistryService,
+      catalogService: this.catalogService,
+      candidateRepo: this.candidateRepo,
+      outboxPublisher: this.outboxPublisher,
+      queue: this.queue,
+      objectStore: this.objectStore,
+    });
     this.worker.registerHandler("opportunity.detect", async (job) => {
       const tenant = job.tenantContext;
       const payload = job.payload as { sessionIds?: string[] } | undefined;
@@ -312,12 +349,26 @@ export class CloudService {
       const payload = job.payload as
         | { opportunityId?: string; options?: Record<string, unknown> }
         | undefined;
-      if (payload?.opportunityId) {
-        const opp = await this.opportunityService.getOpportunityById(tenant, payload.opportunityId);
-        if (opp && opp.status === "eligible") {
-          await this.candidateGenerationService.generateCandidate(tenant, opp, payload.options);
-        }
+      if (!payload?.opportunityId) {
+        throw new Error("candidate.generate requires opportunityId");
       }
+      const opportunity = await this.opportunityService.getOpportunityById(
+        tenant,
+        payload.opportunityId,
+      );
+      if (!opportunity || opportunity.status !== "eligible") {
+        throw new Error(`Eligible opportunity '${payload.opportunityId}' was not found`);
+      }
+      const generated = await this.candidateGenerationService.generateCandidate(
+        tenant,
+        opportunity,
+        payload.options,
+      );
+      await this.candidateLifecycleOrchestrator.startLifecycle(
+        tenant,
+        generated.candidate,
+        generated.activeRevision,
+      );
     });
 
     this.worker.registerHandler("store-observation-batch", async (job) => {
@@ -326,77 +377,43 @@ export class CloudService {
     });
 
     this.worker.registerHandler("candidate.validate", async (job) => {
-      const payload = job.payload as
-        | { candidate?: unknown; revision?: unknown; target?: unknown }
-        | undefined;
-      if (payload) {
-        const target = (payload.target ??
-          payload.revision ??
-          payload.candidate) as CandidateValidationTarget;
-        if (target) {
-          await this.candidateValidationService.validateCandidate(target);
-        }
-      }
+      const payload = job.payload as { candidateId?: string } | undefined;
+      if (!payload?.candidateId) throw new Error("candidate.validate requires candidateId");
+      await this.candidateLifecycleOrchestrator.stepValidate(
+        job.tenantContext,
+        payload.candidateId,
+      );
     });
 
     this.worker.registerHandler("candidate.replay", async (job) => {
-      const tenant = job.tenantContext;
-      const payload = job.payload as
-        | {
-            candidate?: unknown;
-            target?: unknown;
-            evidence?: unknown;
-            evidenceSetId?: string;
-            options?: Record<string, unknown>;
-          }
-        | undefined;
-      if (payload) {
-        const candidate = (payload.target ?? payload.candidate) as CandidateTarget;
-        if (candidate) {
-          await this.historicalReplayService.replayCandidate(tenant, {
-            candidate,
-            evidence: payload.evidence as EvidenceSource | undefined,
-            evidenceSetId: payload.evidenceSetId,
-            options: payload.options,
-          });
-        }
-      }
+      const payload = job.payload as { candidateId?: string } | undefined;
+      if (!payload?.candidateId) throw new Error("candidate.replay requires candidateId");
+      await this.candidateLifecycleOrchestrator.stepReplay(job.tenantContext, payload.candidateId);
     });
 
     this.worker.registerHandler("candidate.evaluate", async (job) => {
-      const payload = job.payload as CandidateEvaluationInput | undefined;
-      if (payload?.candidate && payload.validationResult) {
-        await this.candidateEvaluationService.evaluateCandidate(payload);
-      }
+      const payload = job.payload as { candidateId?: string } | undefined;
+      if (!payload?.candidateId) throw new Error("candidate.evaluate requires candidateId");
+      await this.candidateLifecycleOrchestrator.stepEvaluate(
+        job.tenantContext,
+        payload.candidateId,
+      );
     });
+
     this.worker.registerHandler("candidate.publish", async (job) => {
       const tenant = job.tenantContext;
-      const payload = job.payload as
-        | {
-            candidate?: EvolutionCandidate;
-            evaluationResult?: EvaluationResult;
-            options?: PublishCandidateOptions;
-          }
-        | undefined;
-      if (payload?.candidate && payload.evaluationResult) {
-        const toolVersion = await this.artifactRegistryService.publishCandidate(
-          payload.candidate,
-          payload.evaluationResult,
-          payload.options,
-        );
-        if (toolVersion) {
-          try {
-            await this.rolloutController.createRolloutForPublishedVersion(tenant, {
-              toolId: payload.candidate.proposedTool.id,
-              version: toolVersion.version,
-              artifactDigest: toolVersion.artifact.artifactDigest,
-              manifestDigest: toolVersion.manifest.digest,
-            });
-          } catch {
-            // Rollout creation can be deferred or handled via queue
-          }
-        }
-      }
+      const payload = job.payload as { candidateId?: string } | undefined;
+      if (!payload?.candidateId) throw new Error("candidate.publish requires candidateId");
+      const { toolVersion } = await this.candidateLifecycleOrchestrator.stepPublish(
+        tenant,
+        payload.candidateId,
+      );
+      await this.rolloutController.createRolloutForPublishedVersion(tenant, {
+        toolId: toolVersion.toolId,
+        version: toolVersion.version,
+        artifactDigest: toolVersion.artifactDigest,
+        manifestDigest: toolVersion.manifestDigest,
+      });
     });
 
     this.worker.registerHandler("rollout.create", async (job) => {
@@ -470,222 +487,155 @@ export class CloudService {
         const parsedObj = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
 
         if (path === "/v1/evolution/opportunity/detect" && req.method === "POST") {
-          const events = (parsedObj.sessionEvents as NormalizedSessionEvent[]) ?? [];
-          const result = await this.opportunityService.detectOpportunities({
-            accountId: tenant.accountId,
-            workspaceId: tenant.workspaceId,
-            events,
-          });
-          const opportunities =
-            result.opportunities && result.opportunities.length > 0
-              ? result.opportunities
-              : [
-                  {
-                    id: `opp_${Date.now()}`,
-                    accountId: tenant.accountId,
-                    workspaceId: tenant.workspaceId,
-                    clusterId: "cluster_git_status",
-                    structuralHash: "a".repeat(64),
-                    idempotencyKey: `idempotency_${Date.now()}`,
-                    status: "new" as const,
-                    triggerType: "repeated_sequence" as const,
-                    triggerReason: "Repetitive git status command pattern detected across sessions",
-                    occurrenceCount: events.length || 3,
-                    distinctSessionCount: 2,
-                    evidenceEventIds: events.map((e) => e.eventId),
-                    pattern: "repetitive_git_status",
-                    toolName: "git_status_checker",
-                    description: "Checks git working tree status cleanly",
-                    suggestedName: "git_status_checker",
-                    suggestedDescription: "Checks git working tree status cleanly",
-                    metrics: {
-                      totalDurationMs: 30,
-                      avgLatencyMs: 15,
-                      errorRate: 0,
-                      estimatedSpeedupPercent: 50,
-                    },
-                    confidenceScore: 0.95,
-                    proposedCapabilities: {
-                      fs: { readPaths: ["."], writePaths: [] },
-                      net: {},
-                      command: { allowedExecutables: ["git"] },
-                      secrets: {},
-                    },
-                    createdAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString(),
-                  },
-                ];
+          const events = (parsedObj.events as NormalizedSessionEvent[] | undefined) ?? [];
+          const opportunities = await this.opportunityService.processSessionEvents(tenant, events);
           sendJson(res, 200, { opportunities }, headers);
           return true;
         }
+
         if (path === "/v1/evolution/candidates/generate" && req.method === "POST") {
-          try {
-            const opp = parsedObj.opportunity as unknown as Parameters<
-              typeof this.candidateGenerationService.generateCandidate
-            >[1];
-            const options = (parsedObj.options ??
-              parsedObj.envelope ??
-              {}) as unknown as Parameters<
-              typeof this.candidateGenerationService.generateCandidate
-            >[2];
-            const genResult = await this.candidateGenerationService.generateCandidate(
-              tenant,
-              opp,
-              options,
-            );
-            const candidate =
-              (genResult as { candidate?: EvolutionCandidate }).candidate ?? genResult;
-            sendJson(res, 201, { candidate }, headers);
-            return true;
-          } catch {
-            const opp = (parsedObj.opportunity ?? {}) as Record<string, unknown>;
-            const toolName =
-              (opp.toolName as string) ?? (opp.suggestedName as string) ?? "git_status_checker";
-            const candidate: EvolutionCandidate = {
-              id: `cand_${Date.now()}`,
-              workspaceId: tenant.workspaceId,
-              state: "synthesized",
-              trigger: {
-                reason: "repeated_pattern",
-                evidenceEventIds: ["evt_01"],
-                sessionOccurrences: 3,
-                detectedAt: new Date().toISOString(),
-                patternFrequency: 1.0,
-              },
-              proposedTool: {
-                id: `tool_${toolName}`,
-                name: toolName,
-                version: "1.0.0",
-                description: "Deterministic Git status checker tool",
-                parameters: ToolParameterSchema.parse({
-                  properties: { command: { type: "string" } },
-                  required: ["command"],
-                }),
-                runtime: ToolRuntimeRequirementSchema.parse({ runtime: "deno" }),
-                capabilities: CapabilityManifestSchema.parse({}),
-                limits: ToolLimitConfigSchema.parse({}),
-                scope: "workspace",
-                digest: "d".repeat(64),
-                metadata: {},
-                createdAt: new Date().toISOString(),
-              },
-              requiredCapabilities: CapabilityManifestSchema.parse({}),
-              sourceCode: `
-export default async function run(input) {
-  return {
-    status: "ok",
-    executed: input.command,
-    cleaned: true,
-  };
-}
-`.trim(),
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            };
-            sendJson(res, 201, { candidate }, headers);
+          const submittedOpportunity = parsedObj.opportunity as { id?: string } | undefined;
+          const opportunityId =
+            (parsedObj.opportunityId as string | undefined) ?? submittedOpportunity?.id;
+          if (!opportunityId) {
+            sendJson(res, 400, { error: "opportunityId is required" }, headers);
             return true;
           }
+          const opportunity = await this.opportunityService.getOpportunityById(
+            tenant,
+            opportunityId,
+          );
+          if (!opportunity) {
+            sendJson(res, 404, { error: "Opportunity not found" }, headers);
+            return true;
+          }
+          if (opportunity.status !== "eligible") {
+            sendJson(res, 409, { error: `Opportunity is ${opportunity.status}` }, headers);
+            return true;
+          }
+          const generated = await this.candidateGenerationService.generateCandidate(
+            tenant,
+            opportunity,
+            parsedObj.options as Record<string, unknown> | undefined,
+          );
+          const lifecycle = await this.candidateLifecycleOrchestrator.startLifecycle(
+            tenant,
+            generated.candidate,
+            generated.activeRevision,
+          );
+          sendJson(
+            res,
+            202,
+            { candidate: generated.candidate, candidateId: generated.candidate.id, lifecycle },
+            headers,
+          );
+          return true;
         }
 
         if (path === "/v1/evolution/candidates/validate" && req.method === "POST") {
-          const candidate = parsedObj.candidate as unknown as Parameters<
-            typeof this.candidateValidationService.validateCandidate
-          >[0];
-          const options = parsedObj.options as unknown as Parameters<
-            typeof this.candidateValidationService.validateCandidate
-          >[1];
-          const validationResult = await this.candidateValidationService.validateCandidate(
-            candidate,
-            options,
+          const candidateId =
+            (parsedObj.candidateId as string | undefined) ??
+            (parsedObj.candidate as { id?: string } | undefined)?.id;
+          if (!candidateId) {
+            sendJson(res, 400, { error: "candidateId is required" }, headers);
+            return true;
+          }
+          const lifecycle = await this.candidateLifecycleOrchestrator.stepValidate(
+            tenant,
+            candidateId,
           );
-          sendJson(res, 200, { validationResult }, headers);
+          sendJson(res, 200, { lifecycle }, headers);
           return true;
         }
+
         if (path === "/v1/evolution/candidates/replay" && req.method === "POST") {
-          const candidate = parsedObj.candidate as unknown as Parameters<
-            typeof this.historicalReplayService.replayCandidate
-          >[1]["candidate"];
-          const replayResult = await this.historicalReplayService.replayCandidate(tenant, {
-            candidate,
-            evidence: parsedObj.evidence as unknown as Parameters<
-              typeof this.historicalReplayService.replayCandidate
-            >[1]["evidence"],
-            evidenceSetId: parsedObj.evidenceSetId as string | undefined,
-            options: parsedObj.options as unknown as Parameters<
-              typeof this.historicalReplayService.replayCandidate
-            >[1]["options"],
-          });
-          sendJson(res, 200, { replayResult }, headers);
+          const candidateId =
+            (parsedObj.candidateId as string | undefined) ??
+            (parsedObj.candidate as { id?: string } | undefined)?.id;
+          if (!candidateId) {
+            sendJson(res, 400, { error: "candidateId is required" }, headers);
+            return true;
+          }
+          const lifecycle = await this.candidateLifecycleOrchestrator.stepReplay(
+            tenant,
+            candidateId,
+          );
+          sendJson(res, 200, { lifecycle }, headers);
           return true;
         }
 
         if (path === "/v1/evolution/candidates/evaluate" && req.method === "POST") {
-          const evalInput = parsedObj as unknown as CandidateEvaluationInput;
-          const evaluationResult =
-            await this.candidateEvaluationService.evaluateCandidate(evalInput);
-          sendJson(res, 200, { evaluationResult }, headers);
+          const candidateId =
+            (parsedObj.candidateId as string | undefined) ??
+            (parsedObj.candidate as { id?: string } | undefined)?.id;
+          if (!candidateId) {
+            sendJson(res, 400, { error: "candidateId is required" }, headers);
+            return true;
+          }
+          const lifecycle = await this.candidateLifecycleOrchestrator.stepEvaluate(
+            tenant,
+            candidateId,
+          );
+          sendJson(res, 200, { lifecycle }, headers);
           return true;
         }
 
         if (path === "/v1/evolution/candidates/publish" && req.method === "POST") {
-          const candidate = parsedObj.candidate as unknown as EvolutionCandidate;
-          const tool =
-            candidate?.proposedTool ?? ({} as unknown as EvolutionCandidate["proposedTool"]);
-          const toolName = tool.name ?? "evolved_tool";
-          const version = tool.version ?? "1.0.0";
-          const bundleCode =
-            (parsedObj.bundleCode as string) ??
-            candidate?.sourceCode ??
-            `export default async function run(i) { return { status: "ok", input: i }; }`;
-          const bundleDigest = crypto.createHash("sha256").update(bundleCode).digest("hex");
-          const artifactKey = `artifacts/${tenant.accountId}/${tenant.workspaceId}/${toolName}/${version}/${bundleDigest}.tar.gz`;
-          await this.objectStore.putObject(artifactKey, Buffer.from(bundleCode), {
-            contentType: "application/gzip",
-            sha256: bundleDigest,
-            retention: "permanent",
-          });
-
-          let inputSchema: Record<string, unknown> = { type: "object" };
-          if (tool && typeof tool === "object") {
-            if ("parameters" in tool && tool.parameters && typeof tool.parameters === "object") {
-              inputSchema = tool.parameters as Record<string, unknown>;
-            } else if (
-              "inputSchema" in tool &&
-              tool.inputSchema &&
-              typeof tool.inputSchema === "object"
-            ) {
-              inputSchema = tool.inputSchema as Record<string, unknown>;
-            }
+          const candidateId =
+            (parsedObj.candidateId as string | undefined) ??
+            (parsedObj.candidate as { id?: string } | undefined)?.id;
+          if (!candidateId) {
+            sendJson(res, 400, { error: "candidateId is required" }, headers);
+            return true;
           }
-          await this.artifactRegistryService.toolRegistryRepo.saveTool(tenant, {
-            id: tool.id ?? `tool_${toolName}`,
-            name: toolName,
-            description: tool.description ?? "Evolved tool",
-            activeVersion: version,
-            metadata: {
-              inputSchema,
-              outputSchema: tool.outputSchema,
-              artifactDigest: bundleDigest,
+          const candidate = await this.candidateRepo.getCandidateById(tenant, candidateId);
+          if (!candidate) {
+            sendJson(res, 404, { error: "Candidate not found" }, headers);
+            return true;
+          }
+          const revision = await this.candidateRepo.getActiveRevision(tenant, candidateId);
+          const { record, toolVersion } =
+            await this.candidateLifecycleOrchestrator.driveToCompletion(
+              tenant,
+              candidate,
+              revision,
+            );
+          const rollout = await this.rolloutController.createRolloutForPublishedVersion(tenant, {
+            toolId: toolVersion.toolId,
+            version: toolVersion.version,
+            artifactDigest: toolVersion.artifactDigest,
+            manifestDigest: toolVersion.manifestDigest,
+          });
+          sendJson(
+            res,
+            202,
+            {
+              published: true,
+              candidateId,
+              bundleDigest: toolVersion.artifactDigest,
+              toolName: toolVersion.manifest.name,
+              version: toolVersion.version,
+              lifecycle: record,
+              rolloutId: rollout.id,
+              state: rollout.state,
             },
-          });
-          this.catalogService.registerTool({
-            name: toolName,
-            description: tool.description ?? `Evolved tool ${toolName}`,
-            inputSchema,
-            handler: async (args) => ({ content: [{ type: "text", text: JSON.stringify(args) }] }),
-          });
-          sendJson(res, 201, { published: true, bundleDigest, toolName, version }, headers);
+            headers,
+          );
           return true;
         }
 
         if (path === "/v1/evolution/rollout/promote" && req.method === "POST") {
           const rolloutId = parsedObj.rolloutId as string | undefined;
-          const targetStage =
-            (parsedObj.targetStage as "canary" | "promoted" | "rollback" | "retired") ?? "promoted";
-          if (rolloutId) {
-            await this.rolloutController.evaluateRollout(rolloutId);
+          if (!rolloutId) {
+            sendJson(res, 400, { error: "rolloutId is required" }, headers);
+            return true;
           }
-          sendJson(res, 200, { success: true, stage: targetStage }, headers);
+          const result = await this.rolloutController.executeManualPromotion(
+            tenant,
+            rolloutId,
+            (parsedObj.reason as string | undefined) ?? "Manual promotion",
+          );
+          sendJson(res, 200, { result }, headers);
           return true;
         }
 

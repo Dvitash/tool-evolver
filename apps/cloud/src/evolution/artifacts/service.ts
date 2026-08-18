@@ -107,6 +107,7 @@ export class ToolArtifactRegistryService {
   readonly builder: ArtifactBuilder;
   readonly signer: ArtifactSigner;
   readonly versioning: SemanticVersionClassifier;
+  private readonly allowEphemeralSigningKey: boolean;
 
   constructor(
     private readonly pool: DatabasePool,
@@ -118,6 +119,7 @@ export class ToolArtifactRegistryService {
       signer?: ArtifactSigner;
       versioning?: SemanticVersionClassifier;
       outboxPublisher?: OutboxPublisher;
+      allowEphemeralSigningKey?: boolean;
     } = {},
   ) {
     this.toolRegistryRepo = options.toolRegistryRepo ?? new ToolRegistryRepository(this.pool);
@@ -125,6 +127,7 @@ export class ToolArtifactRegistryService {
     this.builder = options.builder ?? new ArtifactBuilder();
     this.signer = options.signer ?? new ArtifactSigner();
     this.versioning = options.versioning ?? new SemanticVersionClassifier();
+    this.allowEphemeralSigningKey = options.allowEphemeralSigningKey ?? false;
   }
 
   /**
@@ -279,8 +282,12 @@ export class ToolArtifactRegistryService {
       } else {
         signingKey = await this.signingKeyRepo.getActiveKey(signingAlgorithm);
         if (!signingKey) {
-          // Initialize active key if none exists in store
-          signingKey = this.signer.generateKeyPair(signingAlgorithm, "production");
+          if (!this.allowEphemeralSigningKey) {
+            throw new Error(
+              "No active artifact signing key is provisioned; publication is fail-closed",
+            );
+          }
+          signingKey = this.signer.generateKeyPair(signingAlgorithm, "development");
           await this.signingKeyRepo.saveKey(signingKey);
         }
       }
@@ -339,11 +346,11 @@ export class ToolArtifactRegistryService {
       const provenance: ProvenanceMetadata = {
         sourceCandidateId: candidate.id,
         synthesizedAt: candidate.createdAt,
-        synthesizerModel: options.synthesizerModel ?? "claude-3-7-sonnet",
+        synthesizerModel: options.synthesizerModel ?? options.revision?.modelId ?? "unknown",
         deterministicBuildHash: bundle.artifactDigest,
         environment: {
           platform: "cloud",
-          runtime: "node",
+          runtime: "deno",
         },
       };
 
@@ -356,51 +363,30 @@ export class ToolArtifactRegistryService {
         artifact,
         provenance,
         signature,
-        status: "active",
+        status: "draft",
         createdAt: new Date().toISOString(),
         createdBy: "evolution-service",
       };
 
       await this.pool.transaction(async (txClient) => {
-        // Save logical tool
+        // Save the logical tool without changing the active version. Promotion owns that transition.
         await this.toolRegistryRepo.saveTool(
           tenant,
           {
             id: candidate.proposedTool.id,
             name: candidate.proposedTool.name,
             description: candidate.proposedTool.description,
-            activeVersion: targetVersion,
+            activeVersion: priorActiveVersion?.version,
           },
           txClient,
         );
 
-        // Deprecate prior active version if superseded
-        if (priorActiveVersion && priorActiveVersion.version !== targetVersion) {
-          await this.toolRegistryRepo.setVersionStatus(
-            tenant,
-            candidate.proposedTool.id,
-            priorActiveVersion.version,
-            "deprecated",
-            targetVersion,
-            txClient,
-          );
-        }
-
-        // Save immutable ToolVersion
+        // Save immutable draft version and expose only the latest alias.
         await this.toolRegistryRepo.saveToolVersion(tenant, toolVersion, txClient);
-
-        // Update aliases
         await this.toolRegistryRepo.setAlias(
           tenant,
           candidate.proposedTool.id,
           "latest",
-          targetVersion,
-          txClient,
-        );
-        await this.toolRegistryRepo.setAlias(
-          tenant,
-          candidate.proposedTool.id,
-          "active",
           targetVersion,
           txClient,
         );
@@ -557,6 +543,7 @@ export function createToolArtifactRegistryService(
     signer?: ArtifactSigner;
     versioning?: SemanticVersionClassifier;
     outboxPublisher?: OutboxPublisher;
+    allowEphemeralSigningKey?: boolean;
   },
 ): ToolArtifactRegistryService {
   return new ToolArtifactRegistryService(pool, objectStore, options);

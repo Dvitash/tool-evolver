@@ -43,6 +43,7 @@ export interface CandidateGenerationServiceOptions {
   pool?: DatabasePool;
   objectStore?: ObjectStore;
   candidateRepo?: CandidateRepository;
+  allowDeterministicFallback?: boolean;
 }
 
 /**
@@ -58,6 +59,7 @@ export class CandidateGenerationService {
   private readonly workflowGenerator: WorkflowGenerator;
   private readonly inferenceService?: InferenceService;
   private readonly candidateRepo?: CandidateRepository;
+  private readonly allowDeterministicFallback: boolean;
 
   private readonly candidateStore: Map<
     string,
@@ -67,6 +69,7 @@ export class CandidateGenerationService {
 
   constructor(options: CandidateGenerationServiceOptions = {}) {
     this.inferenceService = options.inferenceService;
+    this.allowDeterministicFallback = options.allowDeterministicFallback ?? true;
     this.schemaGenerator = options.schemaGenerator ?? new SchemaGenerator();
     this.capabilityMapper = options.capabilityMapper ?? new CapabilityMapper();
     this.workflowGenerator =
@@ -128,6 +131,7 @@ export class CandidateGenerationService {
       tenantId: tenant.workspaceId,
       inferenceService: this.inferenceService,
       workflowEvidence: opportunity.classification.description,
+      allowDeterministicFallback: this.allowDeterministicFallback,
     });
     const sourceCode = codeResult.sourceCode;
     if (codeResult.toolName) {

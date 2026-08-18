@@ -96,6 +96,22 @@ export const ServerConfigSchema = z.object({
 });
 export type ServerConfig = z.infer<typeof ServerConfigSchema>;
 
+/** Model provider used by the structured inference gateway. */
+export const ModelProviderSchema = z.enum(["disabled", "openai-compatible"]).default("disabled");
+export type ModelProviderKind = z.infer<typeof ModelProviderSchema>;
+
+export const ModelConfigSchema = z.object({
+  provider: ModelProviderSchema,
+  providerId: z.string().min(1).default("primary"),
+  baseUrl: z.string().url().optional(),
+  apiKey: z.string().optional(),
+  organizationId: z.string().optional(),
+  model: z.string().min(1).default("gpt-4o-mini"),
+  timeoutMs: z.coerce.number().int().positive().default(30000),
+  allowDeterministicFallback: z.boolean().default(true),
+});
+export type ModelConfig = z.infer<typeof ModelConfigSchema>;
+
 /**
  * Comprehensive Cloud Configuration schema.
  */
@@ -105,6 +121,7 @@ export const CloudConfigSchema = z.object({
   storage: StorageConfigSchema,
   queue: QueueConfigSchema,
   auth: AuthConfigSchema,
+  models: ModelConfigSchema.default({}),
   server: ServerConfigSchema,
 });
 export type CloudConfig = z.infer<typeof CloudConfigSchema>;
@@ -115,6 +132,7 @@ export type RedactedCloudConfig = {
   database: Omit<DatabaseConfig, "password"> & { password: string };
   storage: Omit<StorageConfig, "secretAccessKey"> & { secretAccessKey: string };
   queue: QueueConfig;
+  models: Omit<ModelConfig, "apiKey"> & { apiKey?: string };
   auth: Omit<AuthConfig, "jwtSecret" | "deviceTokenSecret"> & {
     jwtSecret: string;
     deviceTokenSecret: string;
@@ -155,6 +173,10 @@ export function redactConfig(config: CloudConfig): RedactedCloudConfig {
     queue: {
       ...config.queue,
     },
+    models: {
+      ...config.models,
+      apiKey: config.models.apiKey ? "[REDACTED]" : undefined,
+    },
     auth: {
       ...config.auth,
       jwtSecret: "[REDACTED]",
@@ -188,6 +210,15 @@ export function assertSecureCloudConfig(config: CloudConfig): void {
   if (config.storage.provider === "memory") violations.push("memory object storage is configured");
   if (config.queue.provider === "memory") violations.push("memory queue is configured");
   if (config.database.url.startsWith("memory://")) violations.push("memory database is configured");
+  if (config.models.provider === "disabled") {
+    violations.push("structured inference provider is disabled");
+  }
+  if (config.models.provider === "openai-compatible" && !config.models.baseUrl) {
+    violations.push("structured inference base URL is missing");
+  }
+  if (config.models.allowDeterministicFallback) {
+    violations.push("deterministic synthesis fallback is enabled");
+  }
   if (
     config.storage.provider === "minio" &&
     config.storage.accessKeyId === "minioadmin" &&
@@ -254,6 +285,19 @@ export function loadConfig(overrides?: Partial<RawCloudConfig>): CloudConfig {
         : 3,
       backoffBaseMs: env.QUEUE_BACKOFF_BASE_MS ? Number(env.QUEUE_BACKOFF_BASE_MS) : 1000,
     },
+    models: {
+      provider: (env.MODEL_PROVIDER as "disabled" | "openai-compatible" | undefined) ?? "disabled",
+      providerId: env.MODEL_PROVIDER_ID ?? "primary",
+      baseUrl: env.MODEL_BASE_URL,
+      apiKey: env.MODEL_API_KEY,
+      organizationId: env.MODEL_ORGANIZATION_ID,
+      model: env.MODEL_ID ?? "gpt-4o-mini",
+      timeoutMs: env.MODEL_TIMEOUT_MS ? Number(env.MODEL_TIMEOUT_MS) : 30000,
+      allowDeterministicFallback: env.MODEL_ALLOW_DETERMINISTIC_FALLBACK
+        ? env.MODEL_ALLOW_DETERMINISTIC_FALLBACK === "true" ||
+          env.MODEL_ALLOW_DETERMINISTIC_FALLBACK === "1"
+        : environment === "development" || environment === "test",
+    },
     auth: {
       jwtSecret: env.AUTH_JWT_SECRET ?? "dev-jwt-secret-min-16-characters-long",
       deviceTokenSecret: env.AUTH_DEVICE_TOKEN_SECRET ?? "dev-device-token-secret-16-chars-long",
@@ -280,6 +324,7 @@ export function loadConfig(overrides?: Partial<RawCloudConfig>): CloudConfig {
     database: { ...rawFromEnv.database, ...overrides?.database },
     storage: { ...rawFromEnv.storage, ...overrides?.storage },
     queue: { ...rawFromEnv.queue, ...overrides?.queue },
+    models: { ...rawFromEnv.models, ...overrides?.models },
     auth: { ...rawFromEnv.auth, ...overrides?.auth },
     server: { ...rawFromEnv.server, ...overrides?.server },
   };
