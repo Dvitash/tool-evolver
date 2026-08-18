@@ -44,10 +44,17 @@ describe("Oh My Pi (OMP) Harness Qualification Suite [REM-017]", () => {
     it("qualifies installed OMP harness with valid configuration and executable", async () => {
       const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), "omp-qual-probe-"));
       const configPath = path.join(tempDir, "config.json");
+      const executablePath = path.join(tempDir, process.platform === "win32" ? "omp.cmd" : "omp");
       await fsp.writeFile(configPath, JSON.stringify({ mcpServers: {} }));
+      await fsp.writeFile(
+        executablePath,
+        process.platform === "win32" ? "@echo 0.1.0\r\n" : "#!/bin/sh\necho 0.1.0\n",
+        { mode: 0o755 },
+      );
 
       const installation = await probeOmpInstallation({
         customConfigPath: configPath,
+        customExecutablePath: executablePath,
         ompHome: tempDir,
       });
 
