@@ -18,6 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import zlib from "node:zlib";
+import { writeReleaseEvidence } from "./generate-release-evidence.mjs";
 
 export const RELEASE_VERSION = "1.0.0";
 export const RELEASE_DATE = "2026-08-17T00:00:00.000Z";
@@ -679,7 +680,10 @@ export function generateChannelMetadata(manifestSha256) {
 export function packageRelease(options = {}) {
   const rootDir = options.rootDir || process.cwd();
   const skipBuild = options.skipBuild ?? false;
-  const distDir = options.distDir || path.resolve(rootDir, `dist/release/v${RELEASE_VERSION}`);
+  const distDir =
+    options.distDir ||
+    options.outputDir ||
+    path.resolve(rootDir, `dist/release/v${RELEASE_VERSION}`);
 
   console.log(`📦 Packaging Tool Evolver V${RELEASE_VERSION} Release...`);
   console.log(`📂 Output Directory: ${distDir}`);
@@ -700,9 +704,25 @@ export function packageRelease(options = {}) {
       `   - ${asset.filename} (${asset.sizeBytes} bytes, sha256: ${asset.sha256.slice(0, 16)}...)`,
     );
   }
+  // 3. Release Evidence Bundle
+  const evidenceResult = writeReleaseEvidence({
+    rootDir,
+    distDir,
+    commitSha: options.commitSha,
+  });
+  console.log(
+    `📋 Generated complete V1 evidence bundle: release-evidence.json & RELEASE-EVIDENCE.md (${evidenceResult.evidence.summary.verifiedMilestones}/${evidenceResult.evidence.summary.totalMilestones} verified).`,
+  );
 
-  // 3. Signed release manifest
+  // 4. Signed release manifest
   const manifest = generateSignedManifest(packageDigests, assetDigests, options);
+  manifest.evidence = {
+    json: "release-evidence.json",
+    markdown: "RELEASE-EVIDENCE.md",
+    jsonSha256: evidenceResult.jsonSha256,
+    markdownSha256: evidenceResult.markdownSha256,
+    status: evidenceResult.evidence.status,
+  };
   const manifestPath = path.join(distDir, "manifest.json");
   const manifestContent = JSON.stringify(manifest, null, 2);
   fs.writeFileSync(manifestPath, manifestContent);
@@ -711,13 +731,13 @@ export function packageRelease(options = {}) {
     `✍️ Generated and signed release manifest: manifest.json (sha256: ${manifestSha256.slice(0, 16)}...)`,
   );
 
-  // 4. CycloneDX SBOM
+  // 5. CycloneDX SBOM
   const sbom = generateCycloneDxSbom(rootDir, packageDigests);
   const sbomPath = path.join(distDir, "sbom.json");
   fs.writeFileSync(sbomPath, JSON.stringify(sbom, null, 2));
   console.log(`📜 Generated CycloneDX 1.5 SBOM: sbom.json (${sbom.components.length} components).`);
 
-  // 5. Channel Metadata
+  // 6. Channel Metadata
   const channels = generateChannelMetadata(manifestSha256);
   const channelsPath = path.join(distDir, "channels.json");
   fs.writeFileSync(channelsPath, JSON.stringify(channels, null, 2));
@@ -732,6 +752,7 @@ export function packageRelease(options = {}) {
     packagesCount: Object.keys(packageDigests).length,
     assetsCount: Object.keys(assetDigests).length,
     manifestSha256,
+    evidenceSha256: evidenceResult.jsonSha256,
   };
 }
 

@@ -77,7 +77,13 @@ export function verifyReleaseFiles(releaseDir) {
     return violations;
   }
 
-  const requiredFiles = ["manifest.json", "sbom.json", "channels.json"];
+  const requiredFiles = [
+    "manifest.json",
+    "sbom.json",
+    "channels.json",
+    "release-evidence.json",
+    "RELEASE-EVIDENCE.md",
+  ];
 
   for (const f of requiredFiles) {
     const full = path.join(releaseDir, f);
@@ -107,6 +113,123 @@ export function verifyReleaseFiles(releaseDir) {
           message: `Platform release tarball is empty (0 bytes): ${platform.filename}`,
         });
       }
+    }
+  }
+
+  return violations;
+}
+
+/**
+ * Validates the existence and contents of release-evidence.json and RELEASE-EVIDENCE.md.
+ * @param {string} releaseDir
+ * @returns {Array<{ rule: string, file: string, message: string }>}
+ */
+export function verifyReleaseEvidence(releaseDir) {
+  /** @type {Array<{ rule: string, file: string, message: string }>} */
+  const violations = [];
+
+  const evidenceJsonPath = path.join(releaseDir, "release-evidence.json");
+  const evidenceMdPath = path.join(releaseDir, "RELEASE-EVIDENCE.md");
+
+  if (!fs.existsSync(evidenceJsonPath)) {
+    violations.push({
+      rule: "MISSING_EVIDENCE_JSON",
+      file: "release-evidence.json",
+      message: "release-evidence.json is missing from release directory.",
+    });
+    return violations;
+  }
+
+  if (!fs.existsSync(evidenceMdPath)) {
+    violations.push({
+      rule: "MISSING_EVIDENCE_MD",
+      file: "RELEASE-EVIDENCE.md",
+      message: "RELEASE-EVIDENCE.md is missing from release directory.",
+    });
+  }
+
+  try {
+    const evidence = JSON.parse(fs.readFileSync(evidenceJsonPath, "utf8"));
+
+    if (evidence.release !== RELEASE_VERSION) {
+      violations.push({
+        rule: "INVALID_EVIDENCE_VERSION",
+        file: "release-evidence.json",
+        message: `Evidence release version '${evidence.release}' does not match expected '${RELEASE_VERSION}'.`,
+      });
+    }
+
+    if (evidence.status !== "VERIFIED") {
+      violations.push({
+        rule: "EVIDENCE_NOT_VERIFIED",
+        file: "release-evidence.json",
+        message: `Release evidence status is '${evidence.status}' (expected 'VERIFIED').`,
+      });
+    }
+
+    if (!Array.isArray(evidence.milestones) || evidence.milestones.length < 21) {
+      violations.push({
+        rule: "INCOMPLETE_EVIDENCE_MILESTONES",
+        file: "release-evidence.json",
+        message: `Evidence milestones count (${evidence.milestones?.length}) is less than expected (21 milestones: #47 and REM-001 through REM-020).`,
+      });
+    } else {
+      for (const m of evidence.milestones) {
+        if (m.status !== "VERIFIED") {
+          violations.push({
+            rule: "UNVERIFIED_MILESTONE",
+            file: "release-evidence.json",
+            message: `Milestone ${m.id} (${m.issue}) status is '${m.status}' (expected 'VERIFIED').`,
+          });
+        }
+        if (!Array.isArray(m.artifacts) || m.artifacts.length === 0) {
+          violations.push({
+            rule: "EMPTY_MILESTONE_ARTIFACTS",
+            file: "release-evidence.json",
+            message: `Milestone ${m.id} has no implementation artifacts mapped.`,
+          });
+        }
+        if (!Array.isArray(m.verificationSuites) || m.verificationSuites.length === 0) {
+          violations.push({
+            rule: "EMPTY_MILESTONE_SUITES",
+            file: "release-evidence.json",
+            message: `Milestone ${m.id} has no verification test suites mapped.`,
+          });
+        }
+      }
+    }
+
+    if (
+      !evidence.qualification ||
+      !evidence.qualification.platforms ||
+      !evidence.qualification.harnesses
+    ) {
+      violations.push({
+        rule: "MISSING_EVIDENCE_QUALIFICATION",
+        file: "release-evidence.json",
+        message: "Release evidence is missing platform or harness qualification data.",
+      });
+    }
+  } catch (err) {
+    violations.push({
+      rule: "CORRUPT_EVIDENCE_JSON",
+      file: "release-evidence.json",
+      message: `Failed to parse release-evidence.json: ${err.message}`,
+    });
+  }
+
+  if (fs.existsSync(evidenceMdPath)) {
+    const mdContent = fs.readFileSync(evidenceMdPath, "utf8");
+    if (
+      !mdContent.includes("REM-001") ||
+      !mdContent.includes("REM-020") ||
+      !mdContent.includes("#47")
+    ) {
+      violations.push({
+        rule: "INCOMPLETE_EVIDENCE_MD",
+        file: "RELEASE-EVIDENCE.md",
+        message: "RELEASE-EVIDENCE.md does not contain references to all REM milestones.",
+      });
     }
   }
 
@@ -602,6 +725,10 @@ export function verifyRelease(options = {}) {
 
   // 7. Documentation verification
   const docViolations = verifyDocumentation(rootDir);
+  // 8. Release Evidence verification
+  const evidenceViolations = verifyReleaseEvidence(releaseDir);
+  violations.push(...evidenceViolations);
+
   violations.push(...docViolations);
 
   const valid = violations.length === 0;
