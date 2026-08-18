@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { OpportunityClassifier } from "../../../src/evolution/opportunity/classifier.js";
 import { StructuralClusterer } from "../../../src/evolution/opportunity/clustering.js";
 import { EpisodeSegmenter } from "../../../src/evolution/opportunity/episode.js";
+import type { WorkflowCluster } from "../../../src/evolution/opportunity/types.js";
 import { FakeModelProvider, createInferenceService } from "../../../src/models/index.js";
 import {
   createCommandExecEvent,
@@ -39,6 +40,57 @@ describe("OpportunityClassifier & Model Invariants", () => {
     expect(classification.pattern).toBeDefined();
     expect(classification.confidenceScore).toBeGreaterThan(0);
     expect(classification.taskClass).toBe("file_read");
+  });
+
+  it("does not expose unrelated path inputs for an immutable VCS command profile", async () => {
+    const classifier = new OpportunityClassifier();
+    const cluster: WorkflowCluster = {
+      clusterId: "cluster-vcs",
+      workspaceId: "ws-1",
+      version: "1.0.0",
+      structuralHash: "vcs-hash",
+      representativeSignature: {
+        signatureId: "sig-vcs",
+        structuralHash: "vcs-hash",
+        operationSequence: ["vcs:git status --porcelain"],
+        toolClasses: ["vcs"],
+        commandPatterns: ["git status --porcelain"],
+        normalizedPaths: ["src/a.ts"],
+        argumentShapeHashes: [],
+        stepCount: 1,
+        totalDurationMs: 10,
+        totalTokens: 0,
+        retryCount: 0,
+        estimatedCostUsd: 0,
+        errorTypes: [],
+      },
+      episodes: [],
+      episodeCount: 1,
+      distinctSessionIds: ["sess-1"],
+      completedOccurrences: 1,
+      metrics: {
+        totalDurationMs: 10,
+        avgDurationMs: 10,
+        totalTokens: 0,
+        avgTokens: 0,
+        totalCostUsd: 0,
+        totalRetries: 0,
+        totalStepCount: 1,
+        avgStepCount: 1,
+      },
+      firstSeenAt: "2026-08-18T00:00:00.000Z",
+      lastSeenAt: "2026-08-18T00:00:00.000Z",
+      evidenceEventIds: ["evt-1"],
+    };
+
+    const classification = await classifier.classifyOpportunity(
+      "tenant-1",
+      cluster,
+      "repeated_pattern",
+    );
+
+    expect(classification.commandProfiles).toEqual(["git status --porcelain"]);
+    expect(classification.inferredInputs).toEqual([]);
   });
 
   it("should enrich opportunity classification using InferenceService", async () => {
@@ -84,7 +136,6 @@ describe("OpportunityClassifier & Model Invariants", () => {
   });
 
   it("CRITICAL INVARIANT: model output cannot alter deterministic occurrence counts or evidence references", async () => {
-    // Construct mock inference service that tries to return manipulated evidence or counts
     const fakeProvider = new FakeModelProvider({ id: "malicious-mock" });
     const inferenceService = createInferenceService();
     inferenceService.router.registerProvider(fakeProvider);
@@ -111,7 +162,6 @@ describe("OpportunityClassifier & Model Invariants", () => {
     const episodes = segmenter.segmentEvents(events);
     const [cluster] = clusterer.clusterEpisodes(episodes);
 
-    // Initial deterministic properties
     expect(cluster.completedOccurrences).toBe(1);
     expect(cluster.evidenceEventIds).toEqual(["truth-event-1", "truth-event-2", "truth-event-3"]);
 
@@ -121,12 +171,10 @@ describe("OpportunityClassifier & Model Invariants", () => {
       "repeated_pattern",
     );
 
-    // The classifier returns qualitative metadata only
     expect(classification).not.toHaveProperty("completedOccurrences");
     expect(classification).not.toHaveProperty("occurrenceCount");
     expect(classification).not.toHaveProperty("evidenceEventIds");
 
-    // Cluster deterministic properties remain unmodified
     expect(cluster.completedOccurrences).toBe(1);
     expect(cluster.evidenceEventIds).toEqual(["truth-event-1", "truth-event-2", "truth-event-3"]);
   });

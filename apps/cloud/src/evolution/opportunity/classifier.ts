@@ -31,6 +31,10 @@ function generateHeuristicClassification(sig: EpisodeSignature): OpportunityClas
   }
 
   if (sig.toolClasses.includes("vcs")) {
+    // VCS candidates execute an observed immutable command profile. Generic paths
+    // observed elsewhere in the episode are not parameters unless the profile
+    // explicitly supports templating, which the current command contract does not.
+    inferredInputs.length = 0;
     const profile = commandProfiles[0] ?? "git status --porcelain";
     title = profile.startsWith("git status")
       ? "Inspect Git Working Tree Status"
