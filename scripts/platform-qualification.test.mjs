@@ -18,11 +18,14 @@ describe("Platform Matrix Qualification Script Suite", () => {
 
   beforeAll(() => {
     fs.mkdirSync(testOutputDir, { recursive: true });
-    // Package release tarballs in isolated test directory
+    // Package release tarballs in isolated test directory using an explicit
+    // test-only trust identity; unit tests must never inherit production mode
+    // from ambient CI environment variables.
     packageRelease({
       rootDir,
       distDir: testOutputDir,
       skipBuild: true,
+      testOnly: true,
     });
   });
 
