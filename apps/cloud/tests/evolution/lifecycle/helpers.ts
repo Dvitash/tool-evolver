@@ -251,6 +251,416 @@ export function createMockRevision(
 }
 
 /**
+ * Creates a mock Brokered Candidate tool requiring external capabilities.
+ */
+export function createMockBrokeredCandidate(
+  tenant: TenantContext,
+  overrides: Partial<EvolutionCandidate> = {},
+): EvolutionCandidate {
+  const candidateId =
+    overrides.id || `cand_brokered_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  const manifest = createMockToolManifest({
+    id: "tool_weather_fetcher",
+    name: "weather_fetcher",
+    description: "Fetches live weather via external API broker",
+    parameters: {
+      type: "object",
+      properties: {
+        city: { type: "string", description: "City name" },
+        units: { type: "string", enum: ["metric", "imperial"], default: "metric" },
+      },
+      required: ["city"],
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        city: { type: "string", description: "City name" },
+        temp: { type: "number", description: "Temperature" },
+        condition: { type: "string", description: "Weather condition" },
+        units: { type: "string", description: "Measurement units" },
+      },
+      required: ["city", "temp", "condition"],
+    },
+    capabilities: {
+      net: {
+        allowOutbound: true,
+        allowedDomains: ["api.weather.com", "services.weather.org"],
+        allowedHosts: ["api.weather.com", "services.weather.org"],
+        allowedPorts: [443],
+        allowHttp: false,
+        allowHttps: true,
+      },
+      secrets: {
+        allowedSecretNames: ["WEATHER_API_KEY"],
+      },
+      fs: {
+        allowRead: false,
+        allowWrite: false,
+        readPaths: [],
+        writePaths: [],
+      },
+      exec: {
+        allowExec: false,
+        allowedCommands: [],
+      },
+      env: {
+        allowAll: false,
+        allowEnvPassthrough: [],
+      },
+      limits: {
+        maxCpuUsagePercent: 100,
+        maxMemoryMb: 128,
+        maxExecutionTimeMs: 30000,
+        maxOutputSizeBytes: 1048576,
+      },
+    },
+    ...overrides.proposedTool,
+  });
+
+  const sourceCode =
+    overrides.sourceCode ||
+    `import { defineTool, type ToolContext } from "@tool-evolver/runtime";
+import { z } from "zod";
+
+export const InputSchema = z.object({
+  city: z.string(),
+  units: z.enum(["metric", "imperial"]).default("metric"),
+});
+export type ToolInput = z.infer<typeof InputSchema>;
+
+export const OutputSchema = z.object({
+  city: z.string(),
+  temp: z.number(),
+  condition: z.string(),
+  units: z.string(),
+});
+export type ToolOutput = z.infer<typeof OutputSchema>;
+export default defineTool<ToolInput, ToolOutput>(async (context: ToolContext<ToolInput>): Promise<ToolOutput> => {
+  const { input, logger, progress, broker } = context;
+  await progress(0, "Fetching weather data", "init");
+  await logger.info("Fetching weather for", { city: input.city });
+  if (broker) {
+    const b = broker as unknown as { net?: { fetch?: (...args: unknown[]) => Promise<unknown> }; fetch?: (...args: unknown[]) => Promise<unknown> };
+    if (b.net?.fetch) {
+      await b.net.fetch(\`https://api.weather.com/v1?q=\${encodeURIComponent(input.city)}\`);
+    } else if (b.fetch) {
+      await b.fetch(\`https://api.weather.com/v1?q=\${encodeURIComponent(input.city)}\`);
+    }
+  }
+  await progress(100, "Fetch complete", "done");
+  return {
+    city: input.city,
+    temp: 22,
+    condition: "Sunny",
+    units: input.units ?? "metric",
+  };
+});`;
+
+  return {
+    id: candidateId,
+    workspaceId: tenant.workspaceId,
+    schemaVersion: "1.0.0",
+    state: "synthesized",
+    trigger: {
+      reason: "repeated_pattern",
+      evidenceEventIds: [`evt_${randomUUID().replace(/-/g, "").slice(0, 12)}`],
+      sessionOccurrences: 4,
+      detectedAt: "2026-08-17T00:00:00.000Z",
+      patternFrequency: 4,
+    },
+    proposedTool: manifest,
+    requiredCapabilities: manifest.capabilities,
+    sourceCode,
+    createdAt: "2026-08-17T00:00:00.000Z",
+    updatedAt: "2026-08-17T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+/**
+ * Creates a mock Brokered Candidate Revision.
+ */
+export function createMockBrokeredRevision(
+  candidate: EvolutionCandidate,
+  tenant: TenantContext,
+  overrides: Partial<CandidateRevision> = {},
+): CandidateRevision {
+  const manifest = candidate.proposedTool;
+  const sourceCode = candidate.sourceCode || "";
+  const revisionId = overrides.revisionId ?? `rev_${candidate.id}_1`;
+
+  return {
+    revisionId,
+    candidateId: candidate.id,
+    revisionNumber: overrides.revisionNumber || 1,
+    parentRevisionId: overrides.parentRevisionId,
+    artifacts: {
+      plan: {
+        name: manifest.name,
+        description: manifest.description,
+        inputSchema: manifest.parameters,
+        outputSchema: manifest.outputSchema ?? {},
+        capabilities: candidate.requiredCapabilities,
+        steps: [],
+        variableInputs: [],
+        compensationStrategy: "atomic_rollback",
+      },
+      manifest,
+      capabilities: candidate.requiredCapabilities,
+      sourceCode,
+      tests: [
+        {
+          id: "test_brokered_1",
+          name: "should fetch weather successfully with mock broker",
+          description: "Tests happy path network call via mock broker",
+          code: `import { describe, it, expect } from "vitest";
+describe("weather_fetcher", () => {
+  it("should fetch weather", async () => {
+    expect(true).toBe(true);
+  });
+});`,
+          category: "happy_path",
+          timeoutMs: 5000,
+          mockScenario: {
+            net: {
+              routes: {
+                "https://api.weather.com/v1": {
+                  status: 200,
+                  body: { temp: 22, condition: "Sunny" },
+                },
+              },
+            },
+            secrets: {
+              values: { WEATHER_API_KEY: "secret_val_123" },
+            },
+          },
+        },
+      ],
+      generatedAt: "2026-08-17T00:00:00.000Z",
+    },
+    selfReview: {
+      passed: true,
+      issues: [],
+      reviewedAt: "2026-08-17T00:00:00.000Z",
+    },
+    repairHistory: [],
+    createdAt: "2026-08-17T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+/**
+ * Creates a mock Multi-Step Workflow Candidate.
+ */
+export function createMockWorkflowCandidate(
+  tenant: TenantContext,
+  overrides: Partial<EvolutionCandidate> = {},
+): EvolutionCandidate {
+  const candidateId =
+    overrides.id || `cand_workflow_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  const manifest = createMockToolManifest({
+    id: "workflow_weather_summary",
+    name: "weather_summary_workflow",
+    description: "Multi-step workflow fetching weather data and generating analytical summaries",
+    parameters: {
+      type: "object",
+      properties: {
+        city: { type: "string", description: "City name" },
+        emailReport: { type: "boolean", default: false },
+      },
+      required: ["city"],
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        summary: { type: "string", description: "Weather summary" },
+        success: { type: "boolean", description: "Execution status" },
+      },
+      required: ["summary", "success"],
+    },
+    capabilities: {
+      net: {
+        allowOutbound: true,
+        allowedDomains: ["api.weather.com", "reports.internal.net"],
+        allowedHosts: ["api.weather.com", "reports.internal.net"],
+        allowedPorts: [443],
+        allowHttp: false,
+        allowHttps: true,
+      },
+      fs: {
+        allowRead: false,
+        allowWrite: false,
+        readPaths: [],
+        writePaths: [],
+      },
+      exec: {
+        allowExec: false,
+        allowedCommands: [],
+      },
+      env: {
+        allowAll: false,
+        allowEnvPassthrough: [],
+      },
+      limits: {
+        maxConcurrentExecutions: 2,
+        maxCpuUsagePercent: 100,
+        maxMemoryMb: 256,
+        maxExecutionTimeMs: 60000,
+        maxOutputSizeBytes: 2097152,
+      },
+    },
+    ...overrides.proposedTool,
+  });
+
+  const sourceCode =
+    overrides.sourceCode ||
+    `import { defineTool, type ToolContext } from "@tool-evolver/runtime";
+import { z } from "zod";
+
+export const InputSchema = z.object({
+  city: z.string(),
+  emailReport: z.boolean().default(false),
+});
+export type ToolInput = z.infer<typeof InputSchema>;
+
+export const OutputSchema = z.object({
+  summary: z.string(),
+  success: z.boolean(),
+});
+export type ToolOutput = z.infer<typeof OutputSchema>;
+
+export default defineTool<ToolInput, ToolOutput>(async (context: ToolContext<ToolInput>): Promise<ToolOutput> => {
+  const { input, logger, progress, broker } = context;
+  await progress(0, "Starting workflow execution", "init");
+  await logger.info("Workflow execution started", { city: input.city });
+  if (broker) {
+    const b = broker as unknown as { net?: { fetch?: (...args: unknown[]) => Promise<unknown> }; fetch?: (...args: unknown[]) => Promise<unknown> };
+    if (b.net?.fetch) {
+      await b.net.fetch(\`https://api.weather.com/v1?q=\${encodeURIComponent(input.city)}\`);
+    } else if (b.fetch) {
+      await b.fetch(\`https://api.weather.com/v1?q=\${encodeURIComponent(input.city)}\`);
+    }
+  }
+  await progress(100, "Workflow complete", "done");
+  return {
+    summary: \`Weather summary for \${input.city}: 22C Sunny\`,
+    success: true,
+  };
+});`;
+
+  return {
+    id: candidateId,
+    workspaceId: tenant.workspaceId,
+    schemaVersion: "1.0.0",
+    state: "synthesized",
+    trigger: {
+      reason: "repeated_pattern",
+      evidenceEventIds: [`evt_${randomUUID().replace(/-/g, "").slice(0, 12)}`],
+      sessionOccurrences: 6,
+      detectedAt: "2026-08-17T00:00:00.000Z",
+      patternFrequency: 6,
+    },
+    proposedTool: manifest,
+    requiredCapabilities: manifest.capabilities,
+    sourceCode,
+    createdAt: "2026-08-17T00:00:00.000Z",
+    updatedAt: "2026-08-17T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+/**
+ * Creates a mock Multi-Step Workflow Revision.
+ */
+export function createMockWorkflowRevision(
+  candidate: EvolutionCandidate,
+  tenant: TenantContext,
+  overrides: Partial<CandidateRevision> = {},
+): CandidateRevision {
+  const manifest = candidate.proposedTool;
+  const sourceCode = candidate.sourceCode || "";
+  const revisionId = overrides.revisionId ?? `rev_${candidate.id}_1`;
+
+  const workflowDefinition = {
+    id: manifest.id,
+    name: manifest.name,
+    version: manifest.version,
+    description: manifest.description,
+    steps: [
+      {
+        id: "step_1_fetch",
+        name: "Fetch Weather Data",
+        action: "http.get",
+        endpoint: "https://api.weather.com/v1",
+        compensation: {
+          action: "http.delete",
+          endpoint: "https://api.weather.com/v1/session",
+        },
+      },
+      {
+        id: "step_2_aggregate",
+        name: "Aggregate Metrics",
+        action: "compute.transform",
+      },
+    ],
+    compensationPolicy: {
+      strategy: "atomic_rollback",
+      timeoutMs: 15000,
+    },
+  };
+
+  return {
+    revisionId,
+    candidateId: candidate.id,
+    revisionNumber: overrides.revisionNumber || 1,
+    parentRevisionId: overrides.parentRevisionId,
+    artifacts: {
+      plan: {
+        name: manifest.name,
+        description: manifest.description,
+        inputSchema: manifest.parameters,
+        outputSchema: manifest.outputSchema ?? {},
+        capabilities: candidate.requiredCapabilities,
+        steps: [
+          { id: "step_1", description: "Fetch weather data" },
+          { id: "step_2", description: "Aggregate and format summary" },
+        ],
+        variableInputs: [],
+        compensationStrategy: "atomic_rollback",
+      },
+      manifest,
+      capabilities: candidate.requiredCapabilities,
+      sourceCode,
+      workflowDefinition,
+      tests: [
+        {
+          id: "test_workflow_1",
+          name: "should execute all workflow steps and compensate on error",
+          description: "Tests multi-step progression and atomic rollback",
+          code: `import { describe, it, expect } from "vitest";
+describe("weather_summary_workflow", () => {
+  it("should run 2 steps and roll back on error", async () => {
+    expect(true).toBe(true);
+  });
+});`,
+          category: "happy_path",
+          timeoutMs: 10000,
+        },
+      ],
+      generatedAt: "2026-08-17T00:00:00.000Z",
+    },
+    selfReview: {
+      passed: true,
+      issues: [],
+      reviewedAt: "2026-08-17T00:00:00.000Z",
+    },
+    repairHistory: [],
+    createdAt: "2026-08-17T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+/**
  * Creates test environment with real database migrations, object store, outbox, queue, and orchestrator.
  */
 export async function createTestLifecycleEnvironment(

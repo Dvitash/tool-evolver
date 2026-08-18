@@ -169,6 +169,20 @@ export function mapRowToRevision(row: Record<string, unknown>): CandidateRevisio
     manifest: manifest as unknown as ToolManifest,
     capabilities: capabilities as unknown as CapabilityManifest,
     sourceCode,
+    workflowDefinition: row.workflow_definition
+      ? typeof row.workflow_definition === "string"
+        ? JSON.parse(row.workflow_definition)
+        : (row.workflow_definition as Record<string, unknown>)
+      : provenance.workflowDefinition
+        ? (provenance.workflowDefinition as Record<string, unknown>)
+        : undefined,
+    tests: row.tests
+      ? typeof row.tests === "string"
+        ? JSON.parse(row.tests)
+        : (row.tests as GeneratedArtifactSet["tests"])
+      : provenance.tests
+        ? (provenance.tests as GeneratedArtifactSet["tests"])
+        : undefined,
     generatedAt: createdAt,
   };
 
@@ -423,6 +437,8 @@ export class CandidateRepository {
         ...revision.provenance,
         capabilityDiff: revision.capabilityDiff,
         cost: revision.cost,
+        workflowDefinition: revision.artifacts.workflowDefinition,
+        tests: revision.artifacts.tests,
       }),
       JSON.stringify(revision.selfReview),
       JSON.stringify(revision.repairHistory || []),

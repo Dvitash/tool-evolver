@@ -31,6 +31,7 @@ export interface BuildArtifactOptions {
   synthesizerModel?: string;
   extraFiles?: BundleFileInput[];
   compress?: boolean;
+  workflowDefinition?: Record<string, unknown>;
 }
 
 /**
@@ -233,6 +234,16 @@ export class ArtifactBuilder {
       mode: 0o644,
     });
 
+    // 6b. Workflow definition (if available)
+    const workflowDef =
+      options.workflowDefinition ?? options.revision?.artifacts?.workflowDefinition;
+    if (workflowDef) {
+      files.push({
+        path: "workflow.json",
+        content: `${canonicalJson(workflowDef)}\n`,
+        mode: 0o644,
+      });
+    }
     // 7. Extra files (if any)
     if (options.extraFiles) {
       for (const extra of options.extraFiles) {

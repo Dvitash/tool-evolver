@@ -210,4 +210,5 @@ export interface PublishCandidateOptions {
   overrideVersion?: string;
   keyId?: string;
   skipOutbox?: boolean;
+  workflowDefinition?: Record<string, unknown>;
 }

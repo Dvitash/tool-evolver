@@ -52,3 +52,28 @@ CREATE TABLE IF NOT EXISTS candidate_lifecycle_transitions (
 
 CREATE INDEX IF NOT EXISTS idx_lifecycle_transitions_cand ON candidate_lifecycle_transitions(workspace_id, candidate_id);
 CREATE INDEX IF NOT EXISTS idx_lifecycle_transitions_created_at ON candidate_lifecycle_transitions(workspace_id, created_at);
+
+-- 3. Candidate Lifecycle Dead Letter Queue (DLQ) Table
+CREATE TABLE IF NOT EXISTS candidate_lifecycle_dlq (
+  id VARCHAR(64) NOT NULL,
+  account_id VARCHAR(64) NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  workspace_id VARCHAR(64) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  candidate_id VARCHAR(64) NOT NULL,
+  revision_id VARCHAR(64) NOT NULL,
+  stage VARCHAR(32) NOT NULL,
+  error_category VARCHAR(64) NOT NULL,
+  error_message TEXT NOT NULL,
+  retry_classification VARCHAR(32) NOT NULL,
+  attempt_count INT NOT NULL DEFAULT 1,
+  diagnostics JSONB NOT NULL DEFAULT '{}'::jsonb,
+  resumed BOOLEAN NOT NULL DEFAULT FALSE,
+  resumed_at TIMESTAMPTZ,
+  resumed_by VARCHAR(128),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (workspace_id, id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lifecycle_dlq_cand ON candidate_lifecycle_dlq(workspace_id, candidate_id);
+CREATE INDEX IF NOT EXISTS idx_lifecycle_dlq_status ON candidate_lifecycle_dlq(workspace_id, resumed);
+CREATE INDEX IF NOT EXISTS idx_lifecycle_dlq_created_at ON candidate_lifecycle_dlq(workspace_id, created_at);

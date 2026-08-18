@@ -1,4 +1,6 @@
 import {
+  type CapabilityEnvelope,
+  type CapabilityManifest,
   type EvaluationResult,
   type EvolutionCandidate,
   ISOTimestampSchema,
@@ -22,34 +24,49 @@ export const CandidateLifecycleStateSchema = z.enum([
   "replaying",
   "evaluating",
   "eligible",
+  "repairing",
   "published",
   "rejected",
   "failed",
+  "blocked",
+  "quarantined",
+  "dead_letter",
   "superseded",
 ]);
 
 export type CandidateLifecycleState = z.infer<typeof CandidateLifecycleStateSchema>;
 
 /**
- * Categorization of terminal lifecycle failures.
+ * Stages in the evolution candidate pipeline execution.
  */
-export type TerminalReasonCategory =
-  | "validation_failed"
-  | "replay_divergence"
-  | "hard_gate_failed"
-  | "stale_evidence"
-  | "scope_mismatch"
-  | "signing_failed"
-  | "unauthorized"
-  | "infrastructure_error";
+export type LifecycleStage = "draft" | "validate" | "replay" | "evaluate" | "repair" | "publish";
 
 /**
- * Structured terminal failure reason.
+ * Categorization of terminal lifecycle failures.
+ */
+export type TerminalFailureCategory =
+  | "validation_failed"
+  | "replay_divergence"
+  | "evaluation_rejected"
+  | "safety_gate_violation"
+  | "verification_failed"
+  | "stale_evidence"
+  | "capability_broadened"
+  | "quota_exceeded"
+  | "signing_revoked"
+  | "attempts_exhausted"
+  | "malformed_output"
+  | "dlq_terminal"
+  | "infrastructure_exhausted"
+  | "unclassified";
+
+/**
+ * Terminal failure reason details.
  */
 export interface TerminalReason {
   code: string;
   message: string;
-  category?: TerminalReasonCategory;
+  category: TerminalFailureCategory;
   details?: Record<string, unknown>;
 }
 
@@ -59,7 +76,9 @@ export interface TerminalReason {
 export interface EvidenceDigests {
   manifestDigest?: string;
   sourceDigest?: string;
-  schemaDigest?: string;
+  testDigest?: string;
+  workflowDigest?: string;
+  capabilityDigest?: string;
   validationDigest?: string;
   replayDigest?: string;
   evaluationDigest?: string;
@@ -68,7 +87,7 @@ export interface EvidenceDigests {
 }
 
 /**
- * Single step execution attempt log entry.
+ * History of attempts for a lifecycle stage.
  */
 export interface AttemptHistoryEntry {
   attempt: number;
@@ -76,12 +95,13 @@ export interface AttemptHistoryEntry {
   startedAt: string;
   completedAt?: string;
   durationMs?: number;
-  status: "in_progress" | "succeeded" | "failed";
+  status: "succeeded" | "failed" | "diverged" | "retrying";
   error?: string;
+  diagnostics?: Record<string, unknown>;
 }
 
 /**
- * Mutable/persisted entity representing the live lifecycle stage of a candidate.
+ * Complete persisted candidate lifecycle record.
  */
 export interface CandidateLifecycleRecord {
   id: string;
@@ -126,64 +146,183 @@ export interface LifecycleTransitionRecord {
 }
 
 /**
- * Public/Sanitized candidate lifecycle status response for API consumers.
- * Redacts raw transcripts, source code not covered by consent, and internal secrets.
+ * Error categories for explicit lifecycle retry classification.
  */
-export interface CandidateLifecycleStatusResponse {
+export type ErrorCategory =
+  | "provider_outage"
+  | "rate_limit"
+  | "malformed_output"
+  | "queue_delay"
+  | "database_restart"
+  | "object_store_failure"
+  | "signing_failure"
+  | "worker_crash"
+  | "validation_failure"
+  | "replay_divergence"
+  | "evaluation_hard_gate"
+  | "capability_violation"
+  | "attempts_exhausted"
+  | "unknown_error";
+
+/**
+ * Retry classification type.
+ */
+export type RetryClassificationType = "transient" | "terminal" | "repairable";
+
+/**
+ * Retry policy defining budgets and backoff.
+ */
+export interface RetryPolicy {
+  maxRetries: number;
+  initialBackoffMs: number;
+  maxBackoffMs: number;
+  backoffMultiplier: number;
+}
+
+/**
+ * Outcome of classifying an error.
+ */
+export interface RetryClassificationResult {
+  category: ErrorCategory;
+  classification: RetryClassificationType;
+  retryable: boolean;
+  maxRetries: number;
+  backoffMs: number;
+  reason: string;
+}
+
+/**
+ * Tenant-scoped Dead Letter Queue (DLQ) entry for terminal or quarantined lifecycle jobs.
+ */
+export interface CandidateLifecycleDlqRecord {
+  id: string;
+  accountId: string;
+  workspaceId: string;
+  candidateId: string;
+  revisionId: string;
+  stage: LifecycleStage;
+  errorCategory: ErrorCategory;
+  errorMessage: string;
+  retryClassification: RetryClassificationType;
+  attemptCount: number;
+  diagnostics: Record<string, unknown>;
+  resumed: boolean;
+  resumedAt?: string | null;
+  resumedBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Filter options for listing DLQ records.
+ */
+export interface DlqFilter {
+  candidateId?: string;
+  stage?: LifecycleStage;
+  errorCategory?: ErrorCategory;
+  resumed?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * Options for resuming a candidate from DLQ.
+ */
+export interface ResumeFromDlqOptions {
+  resumedBy?: string;
+  targetStage?: LifecycleStage;
+  overridePayload?: Record<string, unknown>;
+  forceReplay?: boolean;
+}
+
+/**
+ * Options for bounded candidate repair.
+ */
+export interface RepairCandidateOptions {
+  maxRepairAttempts?: number;
+  envelope?: CapabilityEnvelope;
+  repairHint?: string;
+  modifiedArtifacts?: {
+    sourceCode?: string;
+    manifest?: ToolManifest;
+    capabilities?: CapabilityManifest;
+    workflowDefinition?: Record<string, unknown>;
+  };
+}
+
+/**
+ * Event payload emitted when lifecycle transitions occur.
+ */
+export interface CandidateLifecycleEventPayload {
   candidateId: string;
   workspaceId: string;
   toolName: string;
   toolVersion: string;
-  currentState: CandidateLifecycleState;
-  activeRevisionId: string;
-  isTerminal: boolean;
-  isEligible: boolean;
-  isPublished: boolean;
-  publishedVersion?: string | null;
-  publicationRecordId?: string | null;
+  fromState: CandidateLifecycleState;
+  toState: CandidateLifecycleState;
+  attempt: number;
+  evidenceDigests: EvidenceDigests;
   terminalReason?: TerminalReason | null;
-  evidenceSummary: {
-    validationPassed?: boolean;
-    typecheckPassed?: boolean;
-    staticFindingsCount?: number;
-    testsPassed?: boolean;
-    replayPassed?: boolean;
-    replaySuccessRate?: number;
-    evaluationVerdict?: string;
-    hardGatesPassed?: boolean;
-    evidenceFreshnessVerified?: boolean;
-    hasSignature?: boolean;
-  };
-  evidenceDigests: Record<string, string>;
-  createdAt: string;
-  updatedAt: string;
-  history: Array<{
-    fromState: CandidateLifecycleState;
-    toState: CandidateLifecycleState;
-    timestamp: string;
-    attempt: number;
-  }>;
+  timestamp: string;
 }
 
 /**
- * Standard Job types used by Outbox and DurableQueue for lifecycle steps.
+ * Async queue job payload for candidate lifecycle transitions.
+ */
+export interface LifecycleJobPayload {
+  candidateId: string;
+  revisionId: string;
+  targetVersion: string;
+  step: "validate" | "replay" | "evaluate" | "publish" | "repair";
+  idempotencyKey: string;
+  attempt: number;
+  scheduledAt: string;
+}
+
+/**
+ * Outbox / Queue job event types for candidate lifecycle progression.
  */
 export const EVOLUTION_LIFECYCLE_JOB_TYPES = {
   VALIDATE_CANDIDATE: "evolution.candidate.validate",
   REPLAY_CANDIDATE: "evolution.candidate.replay",
   EVALUATE_CANDIDATE: "evolution.candidate.evaluate",
   PUBLISH_CANDIDATE: "evolution.candidate.publish",
+  REPAIR_CANDIDATE: "evolution.candidate.repair",
 } as const;
 
 /**
- * Payload schema for lifecycle step jobs.
+ * Sanitized public status response of a candidate lifecycle.
  */
-export interface LifecycleJobPayload {
+export interface CandidateLifecycleStatusResponse {
   candidateId: string;
-  revisionId: string;
-  targetVersion: string;
-  step: "validate" | "replay" | "evaluate" | "publish";
-  idempotencyKey: string;
-  attempt: number;
-  scheduledAt: string;
+  workspaceId: string;
+  toolName?: string;
+  toolVersion?: string;
+  currentState: CandidateLifecycleState;
+  activeRevisionId: string;
+  isTerminal?: boolean;
+  isEligible?: boolean;
+  isPublished?: boolean;
+  publishedVersion?: string | null;
+  publicationRecordId?: string | null;
+  attempt?: number;
+  terminalReason?: TerminalReason | null;
+  evidenceSummary: {
+    validationPassed?: boolean;
+    typecheckPassed?: boolean;
+    staticFindingsCount?: number;
+    replayPassed?: boolean;
+    evaluationVerdict?: string;
+    hardGatesPassed?: boolean;
+    evidenceFreshnessVerified?: boolean;
+    hasSignature?: boolean;
+  };
+  evidenceDigests: Record<string, string> | EvidenceDigests;
+  attemptHistory?: AttemptHistoryEntry[];
+  history: Array<{
+    fromState: CandidateLifecycleState;
+    toState: CandidateLifecycleState;
+    timestamp: string;
+    attempt: number;
+  }>;
 }

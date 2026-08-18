@@ -261,6 +261,8 @@ export class ToolArtifactRegistryService {
         candidate,
         revision: options.revision,
         synthesizerModel: options.synthesizerModel,
+        workflowDefinition:
+          options.workflowDefinition ?? options.revision?.artifacts?.workflowDefinition,
       });
 
       // 6. Cryptographic Signing
@@ -509,6 +511,19 @@ export class ToolArtifactRegistryService {
       digest: toolVersion.artifactDigest,
       filename: `${toolId}-${version}.tar`,
     };
+  }
+
+  /**
+   * Alias for downloadArtifact using TenantContext.
+   */
+  async getArtifactStream(
+    tenant: { accountId?: string; workspaceId: string },
+    toolId: string,
+    version: string,
+  ): Promise<ArtifactStream> {
+    return this.downloadArtifact(toolId, version, tenant.workspaceId, {
+      accountId: tenant.accountId,
+    });
   }
 
   /**

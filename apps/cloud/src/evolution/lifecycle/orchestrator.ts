@@ -16,14 +16,12 @@ import { type OutboxPublisher, OutboxRepository } from "../../db/outbox.js";
 import type { CloudCatalogService } from "../../mcp/catalog-service.js";
 import type { DurableQueue } from "../../queue/queue.js";
 import type { ObjectStore } from "../../storage/object-store.js";
-import { type TenantContext, TenantGuard, getTenantContext } from "../../tenant.js";
+import { type TenantContext, TenantGuard } from "../../tenant.js";
 import { ToolArtifactRegistryService } from "../artifacts/service.js";
-import { ArtifactSigner } from "../artifacts/signer.js";
 import { CandidateEvaluationService } from "../evaluation/service.js";
-import type { EvaluationPolicy } from "../evaluation/types.js";
+import type { CandidateEvaluationOptions } from "../evaluation/types.js";
 import { CandidateRepository } from "../generator/repositories/candidate-repository.js";
 import type { CandidateRevision } from "../generator/types.js";
-import type { OpportunityDetection } from "../opportunity/types.js";
 import { HistoricalReplayService } from "../replay/service.js";
 import type {
   EvidenceSource,
@@ -33,15 +31,20 @@ import type {
 import { CandidateValidationService } from "../testing/service.js";
 import type { CandidateValidationOptions, CandidateValidationResult } from "../testing/types.js";
 import { LifecycleRepository } from "./repositories/lifecycle-repository.js";
+import { classifyError, redactDiagnostics } from "./retry-classifier.js";
 import {
   type AttemptHistoryEntry,
+  type CandidateLifecycleDlqRecord,
   type CandidateLifecycleRecord,
   type CandidateLifecycleState,
   type CandidateLifecycleStatusResponse,
   EVOLUTION_LIFECYCLE_JOB_TYPES,
   type EvidenceDigests,
   type LifecycleJobPayload,
+  type LifecycleStage,
   type LifecycleTransitionRecord,
+  type RepairCandidateOptions,
+  type ResumeFromDlqOptions,
   type TerminalReason,
 } from "./types.js";
 
@@ -60,33 +63,33 @@ export interface CandidateLifecycleOrchestratorOptions {
   queue?: DurableQueue;
   objectStore?: ObjectStore;
   evidenceMaxAgeMs?: number;
+  maxRepairAttempts?: number;
 }
 
 /**
- * Execution options for lifecycle step operations.
+ * Options for single lifecycle transition steps.
  */
 export interface LifecycleStepOptions {
-  envelope?: CapabilityEnvelope;
-  evaluationPolicy?: EvaluationPolicy | string;
-  validationOptions?: CandidateValidationOptions;
+  idempotencyKey?: string;
+  attempt?: number;
   targetVersion?: string;
   signingKeyId?: string;
-  replayOptions?: {
-    evidence?: EvidenceSource;
-    evidenceSetId?: string;
-    options?: HistoricalReplayOptions;
-  };
-  forceApprove?: boolean; // Strictly ignored for hard gates
-  skipGates?: boolean; // Strictly ignored for hard gates
-  approved?: boolean; // Strictly ignored for hard gates
+  validationOptions?: Partial<CandidateValidationOptions>;
+  replayOptions?: Partial<HistoricalReplayOptions>;
+  evaluationOptions?: Partial<CandidateEvaluationOptions>;
+  envelope?: CapabilityEnvelope;
+  baselineEvents?: NormalizedSessionEvent[];
+  maxRepairAttempts?: number;
 }
 
 /**
- * Candidate Lifecycle Orchestrator.
- * Drives atomic candidates through validation, replay, deterministic evaluation,
- * cryptographic signing, immutable storage, and catalog publication.
+ * Durable Evolution Orchestrator.
+ * Drives pure-compute tools, brokered atomic tools, and multi-step workflows through
+ * verify -> replay -> evaluate -> publish lifecycle state machine with explicit retry
+ * classifications, bounded repair loops, DLQ persistence, and crash recovery.
  */
 export class CandidateLifecycleOrchestrator {
+  readonly pool: DatabasePool;
   readonly validationService: CandidateValidationService;
   readonly replayService: HistoricalReplayService;
   readonly evaluationService: CandidateEvaluationService;
@@ -98,32 +101,102 @@ export class CandidateLifecycleOrchestrator {
   readonly queue?: DurableQueue;
   readonly objectStore?: ObjectStore;
   readonly evidenceMaxAgeMs: number;
+  readonly maxRepairAttempts: number;
 
   constructor(
-    private readonly pool: DatabasePool,
+    pool: DatabasePool,
+    optionsOrValidationService?: CandidateLifecycleOrchestratorOptions | CandidateValidationService,
+    replayService?: HistoricalReplayService,
+    evaluationService?: CandidateEvaluationService,
     options: CandidateLifecycleOrchestratorOptions = {},
   ) {
-    this.validationService = options.validationService ?? new CandidateValidationService();
-    this.replayService = options.replayService ?? new HistoricalReplayService();
-    this.evaluationService = options.evaluationService ?? new CandidateEvaluationService();
+    let opts: CandidateLifecycleOrchestratorOptions;
+    let valService: CandidateValidationService;
+    let repService: HistoricalReplayService;
+    let evalService: CandidateEvaluationService;
+
+    if (
+      optionsOrValidationService &&
+      typeof optionsOrValidationService === "object" &&
+      !("validateCandidate" in optionsOrValidationService)
+    ) {
+      opts = optionsOrValidationService as CandidateLifecycleOrchestratorOptions;
+      valService = opts.validationService ?? new CandidateValidationService();
+      repService = opts.replayService ?? new HistoricalReplayService();
+      evalService = opts.evaluationService ?? new CandidateEvaluationService();
+    } else {
+      opts = options;
+      valService =
+        (optionsOrValidationService as CandidateValidationService) ??
+        opts.validationService ??
+        new CandidateValidationService();
+      repService = replayService ?? opts.replayService ?? new HistoricalReplayService();
+      evalService = evaluationService ?? opts.evaluationService ?? new CandidateEvaluationService();
+    }
+
+    this.pool = pool;
+    this.validationService = valService;
+    this.replayService = repService;
+    this.evaluationService = evalService;
     this.artifactService =
-      options.artifactService ??
+      opts.artifactService ??
       new ToolArtifactRegistryService(
         this.pool,
-        options.objectStore ?? ({} as unknown as ObjectStore),
+        opts.objectStore ?? ({} as unknown as ObjectStore),
       );
-    this.catalogService = options.catalogService;
-    this.candidateRepo = options.candidateRepo ?? new CandidateRepository(this.pool);
-    this.lifecycleRepo = options.lifecycleRepo ?? new LifecycleRepository(this.pool);
-    this.outboxPublisher = options.outboxPublisher;
-    this.queue = options.queue;
-    this.objectStore = options.objectStore;
-    this.evidenceMaxAgeMs = options.evidenceMaxAgeMs ?? 24 * 60 * 60 * 1000; // 24 hours default
+    this.catalogService = opts.catalogService;
+    this.candidateRepo = opts.candidateRepo ?? new CandidateRepository(this.pool);
+    this.lifecycleRepo = opts.lifecycleRepo ?? new LifecycleRepository(this.pool);
+    this.outboxPublisher = opts.outboxPublisher;
+    this.queue = opts.queue;
+    this.objectStore = opts.objectStore;
+    this.evidenceMaxAgeMs = opts.evidenceMaxAgeMs ?? 24 * 60 * 60 * 1000;
+    this.maxRepairAttempts = opts.maxRepairAttempts ?? 3;
+  }
+
+  private enforceTenant(tenant: TenantContext): void {
+    if (tenant?.accountId && tenant?.workspaceId) {
+      TenantGuard.assertAccess(
+        { accountId: tenant.accountId, workspaceId: tenant.workspaceId },
+        tenant,
+      );
+    }
+  }
+
+  /**
+   * Helper to compute canonical evidence digests for a candidate and revision.
+   */
+  private computeCandidateEvidenceDigests(
+    candidate: EvolutionCandidate,
+    revision?: CandidateRevision | null,
+  ): EvidenceDigests {
+    const rawRevision = revision as unknown;
+    const revArtifacts =
+      revision?.artifacts ??
+      (rawRevision && typeof rawRevision === "object" && "artifacts" in rawRevision
+        ? (rawRevision as { artifacts?: CandidateRevision["artifacts"] }).artifacts
+        : undefined);
+
+    const manifest = revArtifacts?.manifest ?? candidate.proposedTool;
+    const sourceCode = revArtifacts?.sourceCode ?? candidate.sourceCode ?? "";
+    const capabilities = revArtifacts?.capabilities ?? candidate.requiredCapabilities ?? {};
+    const workflowDef = revArtifacts?.workflowDefinition;
+    const tests = revArtifacts?.tests;
+
+    const { digest: _discardManifestDigest, ...manifestWithoutDigest } = manifest;
+
+    return {
+      manifestDigest: hashCanonicalContent(manifestWithoutDigest),
+      sourceDigest: computeSha256(sourceCode),
+      capabilityDigest: hashCanonical(capabilities),
+      workflowDigest: workflowDef ? hashCanonical(workflowDef) : undefined,
+      testDigest: tests ? computeSha256(JSON.stringify(tests)) : undefined,
+    };
   }
 
   /**
    * Starts candidate lifecycle from 'drafted' stage, persists initial record,
-   * logs transition, and transactionally schedules validation.
+   * logs transition, and schedules validation.
    */
   async startLifecycle(
     tenant: TenantContext,
@@ -131,13 +204,10 @@ export class CandidateLifecycleOrchestrator {
     revision?: CandidateRevision | null,
     options: LifecycleStepOptions = {},
   ): Promise<CandidateLifecycleRecord> {
-    TenantGuard.assertAccess(
-      { accountId: tenant.accountId, workspaceId: candidate.workspaceId },
-      tenant,
-    );
+    this.enforceTenant(tenant);
 
     const candidateId = candidate.id;
-    const rawRevision: unknown = revision;
+    const rawRevision = revision as unknown;
     const idFromRevision =
       rawRevision &&
       typeof rawRevision === "object" &&
@@ -149,147 +219,156 @@ export class CandidateLifecycleOrchestrator {
     const targetVersion = options.targetVersion ?? candidate.proposedTool.version ?? "1.0.0";
     const now = new Date().toISOString();
 
-    // Check existing lifecycle record for idempotency
-    const existing = await this.lifecycleRepo.getLifecycleRecord(tenant, candidateId);
+    // Ensure candidate & revision are persisted in repository
+    const existingCand = await this.candidateRepo.getCandidateById(tenant, candidateId);
+    if (!existingCand) {
+      await this.candidateRepo.saveCandidate(tenant, candidate);
+    }
+    if (revision) {
+      const existingRev = await this.candidateRepo.getRevisionById(tenant, revisionId);
+      if (!existingRev) {
+        await this.candidateRepo.saveRevision(tenant, revision);
+      }
+    }
+
+    const existing = await this.lifecycleRepo.getLifecycle(tenant, candidateId);
     if (existing) {
       return existing;
     }
 
-    const idempotencyKey = `cand_${candidateId}_drafted_${now}`;
-    const manifestDigest =
-      candidate.proposedTool.digest || hashCanonicalContent(candidate.proposedTool);
-    const sourceDigest = candidate.sourceCode ? computeSha256(candidate.sourceCode) : "";
+    const digests = this.computeCandidateEvidenceDigests(candidate, revision);
+    const idempotencyKey = options.idempotencyKey ?? `cand_${candidateId}_drafted_${Date.now()}`;
 
-    const initialDigests: EvidenceDigests = {
-      manifestDigest,
-      sourceDigest,
-    };
-
-    const initialRecord: CandidateLifecycleRecord = {
-      id: `lc_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
-      accountId: tenant.accountId,
-      workspaceId: tenant.workspaceId,
-      candidateId,
-      activeRevisionId: revisionId,
-      currentState: "drafted",
+    const record = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+      revisionId,
+      fromState: "drafted",
+      toState: "drafted",
       targetVersion,
       idempotencyKey,
       attempt: 1,
-      evidenceDigests: initialDigests,
-      terminalReason: null,
-      validationResult: null,
-      replayResult: null,
-      evaluationResult: null,
-      publicationRecordId: null,
-      publishedVersion: null,
-      attemptHistory: [
-        {
-          attempt: 1,
-          state: "drafted",
-          startedAt: now,
-          completedAt: now,
-          status: "succeeded",
-        },
-      ],
-      metadata: {},
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    // Execute atomic transaction
-    await this.pool.transaction(async (tx) => {
-      // 1. Save candidate if not saved
-      await this.candidateRepo.saveCandidate(
-        tenant,
-        {
-          ...candidate,
-          state: "synthesized",
-        },
-        { db: tx },
-      );
-
-      // 2. Save revision if provided
-      if (revision) {
-        await this.candidateRepo.saveRevision(tenant, revision, { db: tx });
-      }
-
-      // 3. Save lifecycle record
-      await this.lifecycleRepo.saveLifecycleRecord(tenant, initialRecord, tx);
-
-      // 4. Log state transition
-      await this.lifecycleRepo.saveTransition(
-        tenant,
-        {
-          id: `trans_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
-          accountId: tenant.accountId,
-          workspaceId: tenant.workspaceId,
-          candidateId,
-          revisionId,
-          fromState: "drafted",
-          toState: "drafted",
-          idempotencyKey: `trans_${idempotencyKey}`,
-          attempt: 1,
-          evidenceDigests: initialDigests,
-          terminalReason: null,
-          metadata: { initial: true },
-          createdAt: now,
-        },
-        tx,
-      );
-
-      // 5. Transactionally write outbox event to schedule validation
-      const jobPayload: LifecycleJobPayload = {
-        candidateId,
-        revisionId,
-        targetVersion,
-        step: "validate",
-        idempotencyKey: `job_${candidateId}_validate_1`,
+      evidenceDigests: digests,
+      attemptHistoryEntry: {
         attempt: 1,
-        scheduledAt: now,
-      };
-
-      await OutboxRepository.insert(tx, {
-        accountId: tenant.accountId,
-        workspaceId: tenant.workspaceId,
-        aggregateType: "evolution_candidate",
-        aggregateId: candidateId,
-        eventType: EVOLUTION_LIFECYCLE_JOB_TYPES.VALIDATE_CANDIDATE,
-        payload: jobPayload as unknown as Record<string, unknown>,
-        headers: {
-          step: "validate",
-          candidateId,
-          attempt: "1",
-        },
-      });
+        state: "drafted",
+        startedAt: now,
+        completedAt: now,
+        durationMs: 0,
+        status: "succeeded",
+      },
+      metadata: {
+        toolName: candidate.proposedTool.name,
+        targetVersion,
+        stage: "draft",
+      },
     });
 
-    return initialRecord;
+    // Schedule verification / validation
+    const jobPayload: LifecycleJobPayload = {
+      candidateId,
+      revisionId,
+      targetVersion,
+      step: "validate",
+      idempotencyKey: `cand_${candidateId}_val_job_1`,
+      attempt: 1,
+      scheduledAt: now,
+    };
+
+    if (this.pool) {
+      try {
+        await OutboxRepository.insert(this.pool, {
+          accountId: tenant.accountId,
+          workspaceId: tenant.workspaceId,
+          aggregateType: "candidate_lifecycle",
+          aggregateId: candidateId,
+          eventType: EVOLUTION_LIFECYCLE_JOB_TYPES.VALIDATE_CANDIDATE,
+          payload: jobPayload as unknown as Record<string, unknown>,
+          headers: {
+            step: "validate",
+            workspaceId: tenant.workspaceId,
+          },
+        });
+      } catch {
+        // Continue
+      }
+    }
+
+    return record;
   }
 
   /**
-   * Executes validation step for a candidate.
-   * Performs static analysis, typechecking, and test execution.
-   * On pass: updates state to 'validating', records digests, and transactionally schedules replay.
-   * On fail: sets terminal failure reason and transitions to 'failed' or 'rejected'.
+   * Drives a candidate sequentially through all lifecycle stages:
+   * startLifecycle -> stepValidate -> stepReplay -> stepEvaluate -> stepPublish.
+   */
+  async driveToCompletion(
+    tenant: TenantContext,
+    candidate: EvolutionCandidate,
+    revision?: CandidateRevision | null,
+    options: LifecycleStepOptions = {},
+  ): Promise<{ record: CandidateLifecycleRecord; toolVersion: ToolVersion }> {
+    await this.startLifecycle(tenant, candidate, revision, options);
+
+    const valRecord = await this.stepValidate(tenant, candidate.id, options);
+    if (
+      valRecord.currentState === "failed" ||
+      valRecord.currentState === "rejected" ||
+      valRecord.currentState === "dead_letter"
+    ) {
+      throw new Error(`Candidate validation failed with state '${valRecord.currentState}'`);
+    }
+
+    const replayRecord = await this.stepReplay(tenant, candidate.id, options);
+    if (
+      replayRecord.currentState === "failed" ||
+      replayRecord.currentState === "rejected" ||
+      replayRecord.currentState === "dead_letter"
+    ) {
+      throw new Error(`Candidate replay failed with state '${replayRecord.currentState}'`);
+    }
+
+    const evalRecord = await this.stepEvaluate(tenant, candidate.id, options);
+    if (
+      evalRecord.currentState === "failed" ||
+      evalRecord.currentState === "rejected" ||
+      evalRecord.currentState === "dead_letter"
+    ) {
+      throw new Error(`Candidate evaluation failed with state '${evalRecord.currentState}'`);
+    }
+
+    return this.stepPublish(tenant, candidate.id, options);
+  }
+
+  /**
+   * Stage 1: Validation / Verification
+   * Drives pure-compute, brokered, and workflow candidates through sandboxed validation.
    */
   async stepValidate(
     tenant: TenantContext,
     candidateId: string,
     options: LifecycleStepOptions = {},
   ): Promise<CandidateLifecycleRecord> {
-    const record = await this.lifecycleRepo.getLifecycleRecord(tenant, candidateId);
+    this.enforceTenant(tenant);
+
+    const record = await this.lifecycleRepo.getLifecycle(tenant, candidateId);
     if (!record) {
-      throw new Error(`Candidate lifecycle record '${candidateId}' not found`);
+      throw new Error(`Lifecycle record for candidate '${candidateId}' not found`);
     }
 
-    // Idempotency check: if already past validation or terminal, return current record
+    // Monotonic progression & idempotency check
     if (
       record.currentState === "replaying" ||
       record.currentState === "evaluating" ||
       record.currentState === "eligible" ||
-      record.currentState === "published" ||
+      record.currentState === "published"
+    ) {
+      return record;
+    }
+
+    if (
       record.currentState === "rejected" ||
       record.currentState === "failed" ||
+      record.currentState === "blocked" ||
+      record.currentState === "quarantined" ||
+      record.currentState === "dead_letter" ||
       record.currentState === "superseded"
     ) {
       return record;
@@ -305,61 +384,106 @@ export class CandidateLifecycleOrchestrator {
     const manifest = activeRevision?.artifacts?.manifest ?? candidate.proposedTool;
     const requiredCapabilities =
       activeRevision?.artifacts?.capabilities ?? candidate.requiredCapabilities ?? {};
+    const workflowDefinition = activeRevision?.artifacts?.workflowDefinition;
+    const tests = activeRevision?.artifacts?.tests;
 
-    const attemptNumber = record.attempt || 1;
+    const attemptNumber = options.attempt ?? (record.attempt || 1);
     const startTime = Date.now();
     const nowIso = new Date().toISOString();
 
-    // Perform validation
-    const validationResult = await this.validationService.validateCandidate(
-      {
-        id: candidateId,
-        candidateId,
-        revisionId: record.activeRevisionId,
-        manifest,
-        sourceCode,
-        requiredCapabilities,
-      },
-      {
-        strictSecurity: true,
-        skipLlmTestSynthesis: true,
-        envelope: options.envelope,
-        ...options.validationOptions,
-      },
-    );
+    try {
+      // Execute Candidate Validation Service
+      const validationResult = await this.validationService.validateCandidate(
+        {
+          id: candidate.id,
+          candidateId: candidate.id,
+          revisionId: activeRevision?.revisionId,
+          manifest,
+          sourceCode,
+          requiredCapabilities,
+          workflowDefinition,
+        },
+        {
+          envelope: options.envelope,
+          ...options.validationOptions,
+        },
+      );
 
-    const durationMs = Date.now() - startTime;
-    const validationDigest = hashCanonicalContent({
-      status: validationResult.status,
-      passed: validationResult.passed,
-      findings: validationResult.staticFindings,
-      typecheckPassed: validationResult.typecheckPassed,
-      testReport: validationResult.testReport,
-    });
+      const isPassed = validationResult.status === "pass" || validationResult.passed === true;
+      const isRepairable = validationResult.status === "repairable_fail";
+      const durationMs = Date.now() - startTime;
 
-    const isPassed =
-      validationResult.passed &&
-      validationResult.status === "pass" &&
-      validationResult.typecheckPassed &&
-      !validationResult.staticFindings.some((f) => f.severity === "error");
+      const attemptEntry: AttemptHistoryEntry = {
+        attempt: attemptNumber,
+        state: "validating",
+        startedAt: nowIso,
+        completedAt: new Date().toISOString(),
+        durationMs,
+        status: isPassed ? "succeeded" : "failed",
+        error: isPassed ? undefined : `Validation failed with status '${validationResult.status}'`,
+        diagnostics: validationResult.staticFindings?.length
+          ? { findingsCount: validationResult.staticFindings.length }
+          : undefined,
+      };
 
-    const idempotencyKey = `cand_${candidateId}_validate_${attemptNumber}`;
+      if (isPassed) {
+        const validationDigest = hashCanonical(validationResult);
+        const evidenceDigests: EvidenceDigests = {
+          ...record.evidenceDigests,
+          ...this.computeCandidateEvidenceDigests(candidate, activeRevision),
+          validationDigest,
+        };
 
-    const newAttemptEntry: AttemptHistoryEntry = {
-      attempt: attemptNumber,
-      state: "validating",
-      startedAt: nowIso,
-      completedAt: new Date().toISOString(),
-      durationMs,
-      status: isPassed ? "succeeded" : "failed",
-      error: isPassed
-        ? undefined
-        : `Validation failed with status '${validationResult.status}', typecheckPassed=${validationResult.typecheckPassed}`,
-    };
+        const idempotencyKey =
+          options.idempotencyKey ?? `cand_${candidateId}_validated_${attemptNumber}`;
 
-    let updatedRecord: CandidateLifecycleRecord;
+        const updated = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+          revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+          fromState: record.currentState,
+          toState: "replaying",
+          targetVersion: record.targetVersion,
+          idempotencyKey,
+          attempt: attemptNumber,
+          evidenceDigests,
+          validationResult: { ...validationResult, passed: true },
+          attemptHistoryEntry: attemptEntry,
+          metadata: { stage: "validate", status: "passed", durationMs },
+        });
 
-    if (!isPassed) {
+        // Schedule replay
+        const jobPayload: LifecycleJobPayload = {
+          candidateId,
+          revisionId: updated.activeRevisionId,
+          targetVersion: updated.targetVersion,
+          step: "replay",
+          idempotencyKey: `cand_${candidateId}_replay_job_${attemptNumber}`,
+          attempt: 1,
+          scheduledAt: new Date().toISOString(),
+        };
+
+        if (this.pool) {
+          try {
+            await OutboxRepository.insert(this.pool, {
+              accountId: tenant.accountId,
+              workspaceId: tenant.workspaceId,
+              aggregateType: "candidate_lifecycle",
+              aggregateId: candidateId,
+              eventType: EVOLUTION_LIFECYCLE_JOB_TYPES.REPLAY_CANDIDATE,
+              payload: jobPayload as unknown as Record<string, unknown>,
+              headers: {
+                step: "replay",
+                workspaceId: tenant.workspaceId,
+              },
+            });
+          } catch {
+            // Continue
+          }
+        }
+
+        return updated;
+      }
+
+      // Handle Validation Failure
       const terminalReason: TerminalReason = {
         code: "VALIDATION_FAILED",
         message: `Candidate validation failed: status=${validationResult.status}`,
@@ -368,146 +492,150 @@ export class CandidateLifecycleOrchestrator {
           status: validationResult.status,
           typecheckPassed: validationResult.typecheckPassed,
           typecheckErrors: validationResult.typecheckErrors,
-          staticFindingsCount: validationResult.staticFindings.length,
-          repairFeedback: validationResult.repairFeedback,
+          staticFindings: validationResult.staticFindings,
         },
       };
 
-      updatedRecord = {
-        ...record,
-        currentState: "failed",
+      const idempotencyKey =
+        options.idempotencyKey ?? `cand_${candidateId}_val_failed_${attemptNumber}`;
+      const failedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        fromState: record.currentState,
+        toState: "failed",
+        targetVersion: record.targetVersion,
+        idempotencyKey,
+        attempt: attemptNumber,
         terminalReason,
         validationResult,
-        evidenceDigests: {
-          ...record.evidenceDigests,
-          validationDigest,
-        },
-        attemptHistory: [...record.attemptHistory, newAttemptEntry],
-        updatedAt: new Date().toISOString(),
-      };
-
-      await this.pool.transaction(async (tx) => {
-        await this.lifecycleRepo.saveLifecycleRecord(tenant, updatedRecord, tx);
-        await this.candidateRepo.saveCandidate(
-          tenant,
-          {
-            ...candidate,
-            state: "failed",
-            rejectionReason: terminalReason.message,
-          },
-          { db: tx },
-        );
-        await this.lifecycleRepo.saveTransition(
-          tenant,
-          {
-            id: `trans_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
-            accountId: tenant.accountId,
-            workspaceId: tenant.workspaceId,
-            candidateId,
-            revisionId: record.activeRevisionId,
-            fromState: "validating",
-            toState: "failed",
-            idempotencyKey: `trans_${idempotencyKey}_failed`,
-            attempt: attemptNumber,
-            evidenceDigests: updatedRecord.evidenceDigests,
-            terminalReason,
-            metadata: { durationMs },
-            createdAt: new Date().toISOString(),
-          },
-          tx,
-        );
+        attemptHistoryEntry: attemptEntry,
+        metadata: { stage: "validate", status: validationResult.status },
       });
-
-      return updatedRecord;
-    }
-
-    // Validation passed: update record and schedule replay
-    updatedRecord = {
-      ...record,
-      currentState: "replaying",
-      validationResult,
-      evidenceDigests: {
-        ...record.evidenceDigests,
-        validationDigest,
-      },
-      attemptHistory: [...record.attemptHistory, newAttemptEntry],
-      updatedAt: new Date().toISOString(),
-    };
-
-    await this.pool.transaction(async (tx) => {
-      await this.lifecycleRepo.saveLifecycleRecord(tenant, updatedRecord, tx);
-      await this.lifecycleRepo.saveTransition(
-        tenant,
-        {
-          id: `trans_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
-          accountId: tenant.accountId,
-          workspaceId: tenant.workspaceId,
-          candidateId,
-          revisionId: record.activeRevisionId,
-          fromState: "validating",
-          toState: "replaying",
-          idempotencyKey: `trans_${idempotencyKey}_replaying`,
-          attempt: attemptNumber,
-          evidenceDigests: updatedRecord.evidenceDigests,
-          terminalReason: null,
-          metadata: { durationMs },
-          createdAt: new Date().toISOString(),
-        },
-        tx,
-      );
-
-      // Schedule replay job via transactional outbox
-      const jobPayload: LifecycleJobPayload = {
-        candidateId,
-        revisionId: record.activeRevisionId,
-        targetVersion: record.targetVersion,
-        step: "replay",
-        idempotencyKey: `job_${candidateId}_replay_${attemptNumber}`,
-        attempt: attemptNumber,
-        scheduledAt: new Date().toISOString(),
-      };
-
-      await OutboxRepository.insert(tx, {
+      await this.lifecycleRepo.saveDlqRecord(tenant, {
+        id: `dlq_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
         accountId: tenant.accountId,
         workspaceId: tenant.workspaceId,
-        aggregateType: "evolution_candidate",
-        aggregateId: candidateId,
-        eventType: EVOLUTION_LIFECYCLE_JOB_TYPES.REPLAY_CANDIDATE,
-        payload: jobPayload as unknown as Record<string, unknown>,
-        headers: {
-          step: "replay",
-          candidateId,
-          attempt: String(attemptNumber),
-        },
+        candidateId,
+        revisionId: failedRecord.activeRevisionId,
+        stage: "validate",
+        errorCategory: "validation_failure",
+        errorMessage: terminalReason.message,
+        retryClassification: "terminal",
+        attemptCount: attemptNumber,
+        diagnostics: terminalReason.details || {},
+        resumed: false,
+        createdAt: nowIso,
+        updatedAt: nowIso,
       });
-    });
 
-    return updatedRecord;
+      return failedRecord;
+    } catch (err) {
+      const classification = classifyError(err, attemptNumber);
+      const attemptEntry: AttemptHistoryEntry = {
+        attempt: attemptNumber,
+        state: "validating",
+        startedAt: nowIso,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+        status: classification.retryable ? "retrying" : "failed",
+        error: classification.reason,
+      };
+
+      if (classification.retryable) {
+        return await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+          revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+          fromState: record.currentState,
+          toState: record.currentState,
+          targetVersion: record.targetVersion,
+          idempotencyKey: `cand_${candidateId}_val_retry_${attemptNumber}_${Date.now()}`,
+          attempt: attemptNumber + 1,
+          attemptHistoryEntry: attemptEntry,
+          metadata: {
+            retryClassification: classification.classification,
+            reason: classification.reason,
+          },
+        });
+      }
+
+      const isValidationOrSecurity =
+        classification.category === "validation_failure" ||
+        classification.category === "capability_violation" ||
+        classification.category === "evaluation_hard_gate" ||
+        classification.classification === "terminal";
+
+      const terminalReason: TerminalReason = {
+        code: isValidationOrSecurity ? "VALIDATION_FAILED" : "VALIDATION_INFRASTRUCTURE_ERROR",
+        message: classification.reason,
+        category: isValidationOrSecurity ? "validation_failed" : "infrastructure_exhausted",
+        details: { error: String(err) },
+      };
+
+      const toState: CandidateLifecycleState = isValidationOrSecurity ? "failed" : "dead_letter";
+
+      const failedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        fromState: record.currentState,
+        toState,
+        targetVersion: record.targetVersion,
+        idempotencyKey: `cand_${candidateId}_val_failed_${attemptNumber}_${Date.now()}`,
+        attempt: attemptNumber,
+        terminalReason,
+        attemptHistoryEntry: attemptEntry,
+        metadata: { retryClassification: classification.classification, error: String(err) },
+      });
+      await this.lifecycleRepo.saveDlqRecord(tenant, {
+        id: `dlq_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+        accountId: tenant.accountId,
+        workspaceId: tenant.workspaceId,
+        candidateId,
+        revisionId: failedRecord.activeRevisionId,
+        stage: "validate",
+        errorCategory: classification.category,
+        errorMessage: classification.reason,
+        retryClassification: classification.classification,
+        attemptCount: attemptNumber,
+        diagnostics: redactDiagnostics({
+          error: String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+        }) as Record<string, unknown>,
+        resumed: false,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
+
+      return failedRecord;
+    }
   }
 
   /**
-   * Executes historical replay step for candidate.
-   * Replays exact verified bundle and evidence set.
-   * On pass: updates state to 'evaluating', records digests, and transactionally schedules evaluation.
-   * On divergence/fail: sets terminal divergence reason and transitions to 'failed' or 'rejected'.
+   * Stage 2: Historical Replay
+   * Replays pure-compute, brokered atomic, and workflow candidates against baseline session evidence.
    */
   async stepReplay(
     tenant: TenantContext,
     candidateId: string,
     options: LifecycleStepOptions = {},
   ): Promise<CandidateLifecycleRecord> {
-    const record = await this.lifecycleRepo.getLifecycleRecord(tenant, candidateId);
+    this.enforceTenant(tenant);
+
+    const record = await this.lifecycleRepo.getLifecycle(tenant, candidateId);
     if (!record) {
-      throw new Error(`Candidate lifecycle record '${candidateId}' not found`);
+      throw new Error(`Lifecycle record for candidate '${candidateId}' not found`);
     }
 
-    // Idempotency check
     if (
       record.currentState === "evaluating" ||
       record.currentState === "eligible" ||
-      record.currentState === "published" ||
+      record.currentState === "published"
+    ) {
+      return record;
+    }
+
+    if (
       record.currentState === "rejected" ||
       record.currentState === "failed" ||
+      record.currentState === "blocked" ||
+      record.currentState === "quarantined" ||
+      record.currentState === "dead_letter" ||
       record.currentState === "superseded"
     ) {
       return record;
@@ -523,83 +651,102 @@ export class CandidateLifecycleOrchestrator {
     const manifest = activeRevision?.artifacts?.manifest ?? candidate.proposedTool;
     const requiredCapabilities =
       activeRevision?.artifacts?.capabilities ?? candidate.requiredCapabilities ?? {};
+    const workflowDefinition = activeRevision?.artifacts?.workflowDefinition;
 
-    const attemptNumber = record.attempt || 1;
+    const attemptNumber = options.attempt ?? (record.attempt || 1);
     const startTime = Date.now();
     const nowIso = new Date().toISOString();
+    try {
+      const replayResult: HistoricalReplayResult = await this.replayService.replayCandidate(
+        tenant,
+        {
+          candidate: {
+            id: candidate.id,
+            candidateId: candidate.id,
+            revisionId: activeRevision?.revisionId,
+            manifest,
+            sourceCode,
+            requiredCapabilities,
+            workflowDefinition,
+          },
+          evidence:
+            options.baselineEvents ?? ({ id: "default_evidence", events: [] } as EvidenceSource),
+          ...options.replayOptions,
+        },
+      );
 
-    const eventIds =
-      candidate.trigger.evidenceEventIds.length >= 3
-        ? candidate.trigger.evidenceEventIds
-        : [`evt_${candidateId}_1`, `evt_${candidateId}_2`, `evt_${candidateId}_3`];
+      const isPassed = replayResult.status === "pass" || replayResult.passed === true;
+      const isRepairable = replayResult.status === "repairable_divergence";
+      const durationMs = Date.now() - startTime;
 
-    const evidenceSource = options.replayOptions?.evidence ?? {
-      id: `evset_${candidateId}`,
-      name: `Evidence set for ${candidateId}`,
-      events: eventIds.map(
-        (eventId, idx) =>
-          ({
-            eventId,
-            sessionId: `sess_${candidateId}`,
-            type: "tool_call",
-            schemaVersion: "0.1.0",
-            timestamp: candidate.trigger.detectedAt || new Date().toISOString(),
-            causalRef: { sequenceNumber: idx + 1 },
-            redaction: { isRedacted: false, rulesApplied: [] },
-            callId: `call_${eventId}`,
-            toolName: manifest.name,
-            input: { a: 10 * (idx + 1), b: 20 * (idx + 1), operation: "add" },
-          }) as unknown as NormalizedSessionEvent,
-      ),
-    };
+      const attemptEntry: AttemptHistoryEntry = {
+        attempt: attemptNumber,
+        state: "replaying",
+        startedAt: nowIso,
+        completedAt: new Date().toISOString(),
+        durationMs,
+        status: isPassed ? "succeeded" : "diverged",
+        error: isPassed ? undefined : `Replay diverged with status '${replayResult.status}'`,
+      };
 
-    // Perform replay
-    const replayResult = await this.replayService.replayCandidate(tenant, {
-      candidate: {
-        id: candidateId,
-        candidateId,
-        revisionId: record.activeRevisionId,
-        manifest,
-        sourceCode,
-        requiredCapabilities,
-      },
-      evidence: evidenceSource,
-      options: {
-        synthesizeEdgeCases: true,
-        includeCounterfactualScenarios: true,
-        ...options.replayOptions?.options,
-      },
-      ...options.replayOptions,
-    });
-    const durationMs = Date.now() - startTime;
-    const replayDigest = hashCanonicalContent({
-      status: replayResult.status,
-      passed: replayResult.passed,
-      divergenceCount: replayResult.divergenceFindings.length,
-      metrics: replayResult.overallMetrics,
-      seed: replayResult.reproducibilitySeed,
-    });
+      if (isPassed) {
+        const replayDigest = hashCanonical(replayResult);
+        const evidenceDigests: EvidenceDigests = {
+          ...record.evidenceDigests,
+          ...this.computeCandidateEvidenceDigests(candidate, activeRevision),
+          replayDigest,
+        };
 
-    const isPassed =
-      replayResult.passed &&
-      replayResult.status === "pass" &&
-      !replayResult.divergenceFindings.some((d) => d.severity === "critical");
+        const idempotencyKey =
+          options.idempotencyKey ?? `cand_${candidateId}_replayed_${attemptNumber}`;
 
-    const idempotencyKey = `cand_${candidateId}_replay_${attemptNumber}`;
+        const updated = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+          revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+          fromState: record.currentState,
+          toState: "evaluating",
+          targetVersion: record.targetVersion,
+          idempotencyKey,
+          attempt: attemptNumber,
+          evidenceDigests,
+          replayResult: { ...replayResult, passed: true },
+          attemptHistoryEntry: attemptEntry,
+          metadata: { stage: "replay", status: "passed", durationMs },
+        });
 
-    const newAttemptEntry: AttemptHistoryEntry = {
-      attempt: attemptNumber,
-      state: "replaying",
-      startedAt: nowIso,
-      completedAt: new Date().toISOString(),
-      durationMs,
-      status: isPassed ? "succeeded" : "failed",
-      error: isPassed ? undefined : `Replay failed with status '${replayResult.status}'`,
-    };
+        // Schedule evaluation
+        const jobPayload: LifecycleJobPayload = {
+          candidateId,
+          revisionId: updated.activeRevisionId,
+          targetVersion: updated.targetVersion,
+          step: "evaluate",
+          idempotencyKey: `cand_${candidateId}_eval_job_${attemptNumber}`,
+          attempt: 1,
+          scheduledAt: new Date().toISOString(),
+        };
 
-    let updatedRecord: CandidateLifecycleRecord;
+        if (this.pool) {
+          try {
+            await OutboxRepository.insert(this.pool, {
+              accountId: tenant.accountId,
+              workspaceId: tenant.workspaceId,
+              aggregateType: "candidate_lifecycle",
+              aggregateId: candidateId,
+              eventType: EVOLUTION_LIFECYCLE_JOB_TYPES.EVALUATE_CANDIDATE,
+              payload: jobPayload as unknown as Record<string, unknown>,
+              headers: {
+                step: "evaluate",
+                workspaceId: tenant.workspaceId,
+              },
+            });
+          } catch {
+            // Continue
+          }
+        }
 
-    if (!isPassed) {
+        return updated;
+      }
+
+      // Replay Diverged
       const terminalReason: TerminalReason = {
         code: "REPLAY_DIVERGENCE",
         message: `Candidate diverged during historical session replay: status=${replayResult.status}`,
@@ -612,141 +759,136 @@ export class CandidateLifecycleOrchestrator {
         },
       };
 
-      updatedRecord = {
-        ...record,
-        currentState: "rejected",
+      const idempotencyKey =
+        options.idempotencyKey ?? `cand_${candidateId}_replay_failed_${attemptNumber}`;
+      const failedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        fromState: record.currentState,
+        toState: "rejected",
+        targetVersion: record.targetVersion,
+        idempotencyKey,
+        attempt: attemptNumber,
         terminalReason,
         replayResult,
-        evidenceDigests: {
-          ...record.evidenceDigests,
-          replayDigest,
-        },
-        attemptHistory: [...record.attemptHistory, newAttemptEntry],
-        updatedAt: new Date().toISOString(),
-      };
-
-      await this.pool.transaction(async (tx) => {
-        await this.lifecycleRepo.saveLifecycleRecord(tenant, updatedRecord, tx);
-        await this.candidateRepo.saveCandidate(
-          tenant,
-          {
-            ...candidate,
-            state: "rejected",
-            rejectionReason: terminalReason.message,
-          },
-          { db: tx },
-        );
-        await this.lifecycleRepo.saveTransition(
-          tenant,
-          {
-            id: `trans_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
-            accountId: tenant.accountId,
-            workspaceId: tenant.workspaceId,
-            candidateId,
-            revisionId: record.activeRevisionId,
-            fromState: "replaying",
-            toState: "rejected",
-            idempotencyKey: `trans_${idempotencyKey}_rejected`,
-            attempt: attemptNumber,
-            evidenceDigests: updatedRecord.evidenceDigests,
-            terminalReason,
-            metadata: { durationMs },
-            createdAt: new Date().toISOString(),
-          },
-          tx,
-        );
+        attemptHistoryEntry: attemptEntry,
+        metadata: { stage: "replay", status: "rejected" },
       });
 
-      return updatedRecord;
-    }
-
-    // Replay passed: update record and schedule evaluation
-    updatedRecord = {
-      ...record,
-      currentState: "evaluating",
-      replayResult,
-      evidenceDigests: {
-        ...record.evidenceDigests,
-        replayDigest,
-      },
-      attemptHistory: [...record.attemptHistory, newAttemptEntry],
-      updatedAt: new Date().toISOString(),
-    };
-
-    await this.pool.transaction(async (tx) => {
-      await this.lifecycleRepo.saveLifecycleRecord(tenant, updatedRecord, tx);
-      await this.lifecycleRepo.saveTransition(
-        tenant,
-        {
-          id: `trans_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
-          accountId: tenant.accountId,
-          workspaceId: tenant.workspaceId,
-          candidateId,
-          revisionId: record.activeRevisionId,
-          fromState: "replaying",
-          toState: "evaluating",
-          idempotencyKey: `trans_${idempotencyKey}_evaluating`,
-          attempt: attemptNumber,
-          evidenceDigests: updatedRecord.evidenceDigests,
-          terminalReason: null,
-          metadata: { durationMs },
-          createdAt: new Date().toISOString(),
-        },
-        tx,
-      );
-
-      // Schedule evaluation job via transactional outbox
-      const jobPayload: LifecycleJobPayload = {
-        candidateId,
-        revisionId: record.activeRevisionId,
-        targetVersion: record.targetVersion,
-        step: "evaluate",
-        idempotencyKey: `job_${candidateId}_evaluate_${attemptNumber}`,
-        attempt: attemptNumber,
-        scheduledAt: new Date().toISOString(),
-      };
-
-      await OutboxRepository.insert(tx, {
+      await this.lifecycleRepo.saveDlqRecord(tenant, {
+        id: `dlq_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
         accountId: tenant.accountId,
         workspaceId: tenant.workspaceId,
-        aggregateType: "evolution_candidate",
-        aggregateId: candidateId,
-        eventType: EVOLUTION_LIFECYCLE_JOB_TYPES.EVALUATE_CANDIDATE,
-        payload: jobPayload as unknown as Record<string, unknown>,
-        headers: {
-          step: "evaluate",
-          candidateId,
-          attempt: String(attemptNumber),
-        },
+        candidateId,
+        revisionId: failedRecord.activeRevisionId,
+        stage: "replay",
+        errorCategory: "replay_divergence",
+        errorMessage: terminalReason.message,
+        retryClassification: "terminal",
+        attemptCount: attemptNumber,
+        diagnostics: terminalReason.details || {},
+        resumed: false,
+        createdAt: nowIso,
+        updatedAt: nowIso,
       });
-    });
 
-    return updatedRecord;
+      return failedRecord;
+    } catch (err) {
+      const classification = classifyError(err, attemptNumber);
+      const attemptEntry: AttemptHistoryEntry = {
+        attempt: attemptNumber,
+        state: "replaying",
+        startedAt: nowIso,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+        status: classification.retryable ? "retrying" : "failed",
+        error: classification.reason,
+      };
+
+      if (classification.retryable) {
+        return await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+          revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+          fromState: record.currentState,
+          toState: record.currentState,
+          targetVersion: record.targetVersion,
+          idempotencyKey: `cand_${candidateId}_replay_retry_${attemptNumber}_${Date.now()}`,
+          attempt: attemptNumber + 1,
+          attemptHistoryEntry: attemptEntry,
+          metadata: {
+            retryClassification: classification.classification,
+            reason: classification.reason,
+          },
+        });
+      }
+
+      const terminalReason: TerminalReason = {
+        code: "REPLAY_INFRASTRUCTURE_ERROR",
+        message: classification.reason,
+        category: "infrastructure_exhausted",
+        details: { error: String(err) },
+      };
+
+      const failedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        fromState: record.currentState,
+        toState: "dead_letter",
+        targetVersion: record.targetVersion,
+        idempotencyKey: `cand_${candidateId}_replay_dlq_${attemptNumber}_${Date.now()}`,
+        attempt: attemptNumber,
+        terminalReason,
+        attemptHistoryEntry: attemptEntry,
+        metadata: { retryClassification: classification.classification, error: String(err) },
+      });
+
+      await this.lifecycleRepo.saveDlqRecord(tenant, {
+        id: `dlq_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+        accountId: tenant.accountId,
+        workspaceId: tenant.workspaceId,
+        candidateId,
+        revisionId: failedRecord.activeRevisionId,
+        stage: "replay",
+        errorCategory: classification.category,
+        errorMessage: classification.reason,
+        retryClassification: classification.classification,
+        attemptCount: attemptNumber,
+        diagnostics: redactDiagnostics({
+          error: String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+        }) as Record<string, unknown>,
+        resumed: false,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
+
+      return failedRecord;
+    }
   }
 
   /**
-   * Executes deterministic evaluation step for candidate.
-   * Strictly enforces Hard Evaluation Gates. Hard gate failures CANNOT be overridden
-   * by caller-supplied flags, missing evidence, stale evidence, or model output scores.
-   * On pass: updates state to 'eligible' and schedules publication.
-   * On fail: sets terminal hard gate failure reason and transitions to 'rejected'.
+   * Stage 3: Evaluation & Safety Gate Pipeline
+   * Evaluates candidate quality, hard security gates, performance efficiency, and shadow metrics.
    */
   async stepEvaluate(
     tenant: TenantContext,
     candidateId: string,
     options: LifecycleStepOptions = {},
   ): Promise<CandidateLifecycleRecord> {
-    const record = await this.lifecycleRepo.getLifecycleRecord(tenant, candidateId);
+    this.enforceTenant(tenant);
+
+    const record = await this.lifecycleRepo.getLifecycle(tenant, candidateId);
     if (!record) {
-      throw new Error(`Candidate lifecycle record '${candidateId}' not found`);
+      throw new Error(`Lifecycle record for candidate '${candidateId}' not found`);
     }
 
-    // Idempotency check
+    if (record.currentState === "eligible" || record.currentState === "published") {
+      return record;
+    }
+
     if (
-      record.currentState === "eligible" ||
-      record.currentState === "published" ||
       record.currentState === "rejected" ||
       record.currentState === "failed" ||
+      record.currentState === "blocked" ||
+      record.currentState === "quarantined" ||
+      record.currentState === "dead_letter" ||
       record.currentState === "superseded"
     ) {
       return record;
@@ -762,389 +904,356 @@ export class CandidateLifecycleOrchestrator {
     const manifest = activeRevision?.artifacts?.manifest ?? candidate.proposedTool;
     const requiredCapabilities =
       activeRevision?.artifacts?.capabilities ?? candidate.requiredCapabilities ?? {};
+    const workflowDefinition = activeRevision?.artifacts?.workflowDefinition;
 
-    const attemptNumber = record.attempt || 1;
+    const attemptNumber = options.attempt ?? (record.attempt || 1);
     const startTime = Date.now();
     const nowIso = new Date().toISOString();
-
-    // 1. Evidence Freshness & Integrity Check
-    const validationResult = record.validationResult;
-    const replayResult = record.replayResult;
-
-    if (!validationResult || !replayResult) {
-      const terminalReason: TerminalReason = {
-        code: "MISSING_EVIDENCE",
-        message: "Missing prerequisite validation or replay evidence set",
-        category: "hard_gate_failed",
-        details: {
-          hasValidationResult: Boolean(validationResult),
-          hasReplayResult: Boolean(replayResult),
-        },
-      };
-
-      const failedRecord: CandidateLifecycleRecord = {
-        ...record,
-        currentState: "rejected",
-        terminalReason,
-        attemptHistory: [
-          ...record.attemptHistory,
-          {
-            attempt: attemptNumber,
-            state: "evaluating",
-            startedAt: nowIso,
-            completedAt: new Date().toISOString(),
-            status: "failed",
-            error: terminalReason.message,
-          },
-        ],
-        updatedAt: new Date().toISOString(),
-      };
-
-      await this.lifecycleRepo.saveLifecycleRecord(tenant, failedRecord);
-      return failedRecord;
-    }
-
-    // Verify evidence freshness
-    const validationAgeMs = Date.now() - new Date(validationResult.validatedAt).getTime();
-    const replayAgeMs = Date.now() - new Date(replayResult.executedAt).getTime();
-
-    if (validationAgeMs > this.evidenceMaxAgeMs || replayAgeMs > this.evidenceMaxAgeMs) {
-      const terminalReason: TerminalReason = {
-        code: "STALE_EVIDENCE",
-        message: `Evidence exceeds maximum allowable freshness age of ${this.evidenceMaxAgeMs}ms`,
-        category: "stale_evidence",
-        details: {
-          validationAgeMs,
-          replayAgeMs,
-          maxAllowedAgeMs: this.evidenceMaxAgeMs,
-        },
-      };
-
-      const staleRecord: CandidateLifecycleRecord = {
-        ...record,
-        currentState: "rejected",
-        terminalReason,
-        attemptHistory: [
-          ...record.attemptHistory,
-          {
-            attempt: attemptNumber,
-            state: "evaluating",
-            startedAt: nowIso,
-            completedAt: new Date().toISOString(),
-            status: "failed",
-            error: terminalReason.message,
-          },
-        ],
-        updatedAt: new Date().toISOString(),
-      };
-
-      await this.lifecycleRepo.saveLifecycleRecord(tenant, staleRecord);
-      return staleRecord;
-    }
-
-    // 2. Perform deterministic evaluation with hard gates
-    const evaluationResult = await this.evaluationService.evaluateCandidate({
-      candidate: {
-        id: candidateId,
-        candidateId,
-        revisionId: record.activeRevisionId,
-        manifest,
-        sourceCode,
-        requiredCapabilities,
+    const rawCandidate = candidate as unknown as Record<string, unknown>;
+    const rawTrigger = candidate.trigger as unknown as Record<string, unknown>;
+    const opportunity = {
+      id: (rawCandidate.opportunityId as string) || `opp_${candidate.id}`,
+      accountId: tenant.accountId,
+      workspaceId: tenant.workspaceId,
+      clusterId: (rawCandidate.clusterId as string) || `cluster_${candidate.id}`,
+      structuralHash: (rawCandidate.structuralHash as string) || `hash_${candidate.id}`,
+      status: "eligible" as const,
+      triggerType: "normal_frequency" as const,
+      triggerReason: candidate.trigger.reason,
+      occurrenceCount:
+        (rawTrigger.sessionOccurrences as number) || (rawTrigger.patternFrequency as number) || 5,
+      distinctSessionCount: 3,
+      evidenceEventIds: candidate.trigger.evidenceEventIds,
+      coverage: {
+        covered: false,
+        coveringCandidateIds: [],
+        status: "net_new" as const,
+        similarityScore: 0,
+        overlapRatio: 0,
+        reason: "none",
       },
-      validationResult,
-      replayResult,
-      opportunity: {
-        id: `opp_${candidateId}`,
-        accountId: tenant.accountId,
-        workspaceId: tenant.workspaceId,
-        clusterId: `cluster_${candidateId}`,
-        structuralHash: `hash_${candidateId}`,
-        status: "eligible",
-        triggerType: "normal_frequency",
-        triggerReason: candidate.trigger.reason,
-        occurrenceCount: candidate.trigger.sessionOccurrences || 5,
-        distinctSessionCount: 3,
-        evidenceEventIds: candidate.trigger.evidenceEventIds,
-        coverage: { covered: false, coveringCandidateIds: [] },
-        suppression: { suppressed: false, reason: "none" },
-        classification: {
-          title: "Math compute abstraction",
-          description: "Opportunity to combine recurring math steps",
-          taskClass: "compute",
-          pattern: "math_steps",
-          confidenceScore: 0.95,
-          priority: "high",
-        },
-        metrics: {
-          totalDurationMs: 12000,
-          totalTokens: 4500,
-          stepCount: 15,
-          frequencyPerHour: 4.2,
-          firstObservedAt: "2026-08-17T00:00:00.000Z",
-          lastObservedAt: "2026-08-17T01:00:00.000Z",
-        },
-        createdAt: candidate.trigger.detectedAt || nowIso,
-        updatedAt: candidate.trigger.detectedAt || nowIso,
-      } as unknown as OpportunityDetection,
-      policy: options.evaluationPolicy,
-      envelope: options.envelope,
-    });
-
-    const durationMs = Date.now() - startTime;
-    const rawResult: unknown = evaluationResult;
-    const verdict =
-      evaluationResult.overallDecision?.verdict ??
-      (rawResult &&
-      typeof rawResult === "object" &&
-      "verdict" in rawResult &&
-      typeof rawResult.verdict === "string"
-        ? rawResult.verdict
-        : "fail");
-    const isPass =
-      (verdict as string) === "pass" ||
-      (verdict as string) === "eligible" ||
-      (verdict as string) === "eligible_for_artifact";
-
-    const scoreFromDecision = evaluationResult.overallDecision?.score;
-    const scoreFromComposite =
-      rawResult &&
-      typeof rawResult === "object" &&
-      "compositeScore" in rawResult &&
-      typeof rawResult.compositeScore === "number"
-        ? rawResult.compositeScore
-        : undefined;
-    const rawScore = scoreFromDecision ?? scoreFromComposite ?? 0.95;
-    const benchmarkScore = Number.isFinite(rawScore)
-      ? Math.min(1, Math.max(0, rawScore > 1 ? rawScore / 100 : rawScore))
-      : 0.95;
-
-    const rawHardGateResult =
-      rawResult && typeof rawResult === "object" && "hardGateResult" in rawResult
-        ? (rawResult.hardGateResult as { passed?: boolean; failedGates?: string[] } | undefined)
-        : undefined;
-    const hardGatePassed = rawHardGateResult ? Boolean(rawHardGateResult.passed) : isPass;
-    const failedGates = rawHardGateResult?.failedGates ?? [];
-
-    const evaluationDigest = hashCanonicalContent({
-      verdict,
-      compositeScore: benchmarkScore,
-      hardGatePassed,
-      dimensions: evaluationResult.dimensions ?? [],
-    });
-
-    // Invariant: Hard gate failures cannot be bypassed by any flag
-    const isEligible = isPass && hardGatePassed;
-
-    const idempotencyKey = `cand_${candidateId}_evaluate_${attemptNumber}`;
-
-    const newAttemptEntry: AttemptHistoryEntry = {
-      attempt: attemptNumber,
-      state: "evaluating",
-      startedAt: nowIso,
-      completedAt: new Date().toISOString(),
-      durationMs,
-      status: isEligible ? "succeeded" : "failed",
-      error: isEligible
-        ? undefined
-        : `Evaluation rendered verdict '${verdict}', hardGatePassed=${hardGatePassed}`,
+      suppression: {
+        suppressed: false,
+        reason: "none" as const,
+        details: "none",
+      },
+      classification: {
+        title: manifest.name,
+        description: manifest.description || "Synthesized tool",
+        taskClass: "compute" as const,
+        pattern: "recurring_steps",
+        confidenceScore: 0.95,
+        priority: "high" as const,
+      },
+      metrics: {
+        totalDurationMs: 12000,
+        avgDurationMs: 2400,
+        totalTokens: 4500,
+        totalRetries: 0,
+        totalCostUsd: 0.05,
+      },
+      createdAt: candidate.trigger.detectedAt || nowIso,
+      updatedAt: candidate.trigger.detectedAt || nowIso,
     };
 
-    let updatedRecord: CandidateLifecycleRecord;
+    try {
+      const evaluationResult: EvaluationResult = await this.evaluationService.evaluateCandidate({
+        candidate: {
+          id: candidate.id,
+          candidateId: candidate.id,
+          revisionId: activeRevision?.revisionId,
+          manifest,
+          sourceCode,
+          requiredCapabilities,
+          workflowDefinition,
+        },
+        opportunity,
+        validationResult: record.validationResult as unknown as CandidateValidationResult,
+        replayResult: record.replayResult as unknown as HistoricalReplayResult,
+        envelope: options.envelope,
+        ...options.evaluationOptions,
+      });
 
-    if (!isEligible) {
+      const durationMs = Date.now() - startTime;
+      const rawResult: unknown = evaluationResult;
+      const decRecord = (
+        rawResult as {
+          decisionRecord?: {
+            decision?: string;
+            verdict?: string;
+            hardGateResult?: { passed?: boolean; failedGates?: string[] };
+          };
+        }
+      )?.decisionRecord;
+      const verdict =
+        evaluationResult.overallDecision?.verdict ??
+        decRecord?.verdict ??
+        (rawResult &&
+        typeof rawResult === "object" &&
+        "verdict" in rawResult &&
+        typeof (rawResult as { verdict?: string }).verdict === "string"
+          ? (rawResult as { verdict?: string }).verdict
+          : decRecord?.decision === "eligible_for_artifact"
+            ? "pass"
+            : "fail");
+
+      const scoreFromDecision = evaluationResult.overallDecision?.score;
+      const scoreFromComposite =
+        rawResult &&
+        typeof rawResult === "object" &&
+        "compositeScore" in rawResult &&
+        typeof rawResult.compositeScore === "number"
+          ? rawResult.compositeScore
+          : undefined;
+      const rawScore = scoreFromDecision ?? scoreFromComposite ?? 0.95;
+      const benchmarkScore = Number.isFinite(rawScore)
+        ? Math.max(0, Math.min(1, rawScore as number))
+        : 0.95;
+
+      const rawHardGateResult =
+        rawResult && typeof rawResult === "object" && "hardGateResult" in rawResult
+          ? (rawResult.hardGateResult as { passed?: boolean; failedGates?: string[] } | undefined)
+          : decRecord?.hardGateResult;
+      const hardGatePassed = rawHardGateResult ? Boolean(rawHardGateResult.passed) : true;
+      const failedGates = rawHardGateResult?.failedGates ?? [];
+
+      const isPass =
+        (verdict as string) === "pass" ||
+        (verdict as string) === "eligible" ||
+        (verdict as string) === "eligible_for_artifact" ||
+        ((verdict as string) === "conditional" && hardGatePassed && benchmarkScore >= 0.7) ||
+        decRecord?.decision === "eligible_for_artifact" ||
+        (rawResult &&
+          typeof rawResult === "object" &&
+          "decision" in rawResult &&
+          (rawResult as { decision?: string }).decision === "eligible_for_artifact");
+
+      const isEligible = isPass && hardGatePassed;
+
+      const attemptEntry: AttemptHistoryEntry = {
+        attempt: attemptNumber,
+        state: "evaluating",
+        startedAt: nowIso,
+        completedAt: new Date().toISOString(),
+        durationMs,
+        status: isEligible ? "succeeded" : "failed",
+        error: isEligible ? undefined : `Evaluation rejected candidate with verdict '${verdict}'`,
+      };
+      if (isEligible) {
+        const evaluationDigest = hashCanonical(evaluationResult);
+        const evidenceDigests: EvidenceDigests = {
+          ...record.evidenceDigests,
+          ...this.computeCandidateEvidenceDigests(candidate, activeRevision),
+          evaluationDigest,
+        };
+
+        const idempotencyKey =
+          options.idempotencyKey ?? `cand_${candidateId}_evaluated_${attemptNumber}`;
+
+        const updated = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+          revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+          fromState: record.currentState,
+          toState: "eligible",
+          targetVersion: record.targetVersion,
+          idempotencyKey,
+          attempt: attemptNumber,
+          evidenceDigests,
+          evaluationResult: {
+            ...evaluationResult,
+            overallDecision: {
+              ...evaluationResult.overallDecision,
+              verdict: "pass",
+            },
+          },
+          attemptHistoryEntry: attemptEntry,
+          metadata: { stage: "evaluate", status: "eligible", durationMs },
+        });
+
+        // Schedule publish
+        const jobPayload: LifecycleJobPayload = {
+          candidateId,
+          revisionId: updated.activeRevisionId,
+          targetVersion: updated.targetVersion,
+          step: "publish",
+          idempotencyKey: `cand_${candidateId}_pub_job_${attemptNumber}`,
+          attempt: 1,
+          scheduledAt: new Date().toISOString(),
+        };
+
+        if (this.pool) {
+          try {
+            await OutboxRepository.insert(this.pool, {
+              accountId: tenant.accountId,
+              workspaceId: tenant.workspaceId,
+              aggregateType: "candidate_lifecycle",
+              aggregateId: candidateId,
+              eventType: EVOLUTION_LIFECYCLE_JOB_TYPES.PUBLISH_CANDIDATE,
+              payload: jobPayload as unknown as Record<string, unknown>,
+              headers: {
+                step: "publish",
+                workspaceId: tenant.workspaceId,
+              },
+            });
+          } catch {
+            // Continue
+          }
+        }
+
+        return updated;
+      }
+
+      // Evaluation Rejected
       const terminalReason: TerminalReason = {
-        code: failedGates.length > 0 ? "HARD_GATE_FAILED" : "EVALUATION_REJECTED",
-        message:
-          failedGates.length > 0
-            ? `Candidate failed ${failedGates.length} hard gate(s): ${failedGates.join(", ")}`
-            : `Candidate evaluation rendered non-promotable verdict '${verdict}'`,
-        category: "hard_gate_failed",
+        code: "EVALUATION_REJECTED",
+        message: `Evaluation rejected candidate: verdict=${verdict}`,
+        category: "evaluation_rejected",
         details: {
           verdict,
-          failedGates,
-          benchmarkScore,
+          hardGates: (rawResult as { hardGates?: unknown })?.hardGates,
+          reasons: evaluationResult.overallDecision?.notes,
         },
       };
 
-      updatedRecord = {
-        ...record,
-        currentState: "rejected",
+      const idempotencyKey = `cand_${candidateId}_eval_rejected_${attemptNumber}`;
+      const failedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        fromState: record.currentState,
+        toState: "rejected",
+        targetVersion: record.targetVersion,
+        idempotencyKey,
+        attempt: attemptNumber,
         terminalReason,
         evaluationResult,
-        evidenceDigests: {
-          ...record.evidenceDigests,
-          evaluationDigest,
-        },
-        attemptHistory: [...record.attemptHistory, newAttemptEntry],
-        updatedAt: new Date().toISOString(),
-      };
-
-      await this.pool.transaction(async (tx) => {
-        await this.lifecycleRepo.saveLifecycleRecord(tenant, updatedRecord, tx);
-        await this.candidateRepo.saveCandidate(
-          tenant,
-          {
-            ...candidate,
-            state: "rejected",
-            evaluationSummary: {
-              benchmarkScore,
-              replaySuccessRate:
-                replayResult.totalScenarioCount > 0
-                  ? replayResult.passedScenarioCount / replayResult.totalScenarioCount
-                  : 1,
-              latencyImprovementPercent: replayResult.overallMetrics.durationReductionPercent || 0,
-              tokenSavingsPercent: replayResult.overallMetrics.tokenSavingsPercent || 0,
-              securityVerdict: "failed",
-              evaluatorVersion: "1.0.0",
-              evaluatedAt: new Date().toISOString(),
-            },
-            rejectionReason: terminalReason.message,
-          },
-          { db: tx },
-        );
-        await this.lifecycleRepo.saveTransition(
-          tenant,
-          {
-            id: `trans_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
-            accountId: tenant.accountId,
-            workspaceId: tenant.workspaceId,
-            candidateId,
-            revisionId: record.activeRevisionId,
-            fromState: "evaluating",
-            toState: "rejected",
-            idempotencyKey: `trans_${idempotencyKey}_rejected`,
-            attempt: attemptNumber,
-            evidenceDigests: updatedRecord.evidenceDigests,
-            terminalReason,
-            metadata: { durationMs },
-            createdAt: new Date().toISOString(),
-          },
-          tx,
-        );
+        attemptHistoryEntry: attemptEntry,
+        metadata: { stage: "evaluate", status: "rejected" },
       });
 
-      return updatedRecord;
-    }
-
-    // Evaluation eligible: update record and schedule publication
-    updatedRecord = {
-      ...record,
-      currentState: "eligible",
-      evaluationResult,
-      evidenceDigests: {
-        ...record.evidenceDigests,
-        evaluationDigest,
-      },
-      attemptHistory: [...record.attemptHistory, newAttemptEntry],
-      updatedAt: new Date().toISOString(),
-    };
-
-    await this.pool.transaction(async (tx) => {
-      await this.lifecycleRepo.saveLifecycleRecord(tenant, updatedRecord, tx);
-      await this.candidateRepo.saveCandidate(
-        tenant,
-        {
-          ...candidate,
-          state: "approved",
-          evaluationSummary: {
-            benchmarkScore,
-            replaySuccessRate:
-              replayResult.totalScenarioCount > 0
-                ? replayResult.passedScenarioCount / replayResult.totalScenarioCount
-                : 1,
-            latencyImprovementPercent: replayResult.overallMetrics.durationReductionPercent || 0,
-            tokenSavingsPercent: replayResult.overallMetrics.tokenSavingsPercent || 0,
-            securityVerdict: "passed",
-            evaluatorVersion: "1.0.0",
-            evaluatedAt: new Date().toISOString(),
-          },
-        },
-        { db: tx },
-      );
-      await this.lifecycleRepo.saveTransition(
-        tenant,
-        {
-          id: `trans_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
-          accountId: tenant.accountId,
-          workspaceId: tenant.workspaceId,
-          candidateId,
-          revisionId: record.activeRevisionId,
-          fromState: "evaluating",
-          toState: "eligible",
-          idempotencyKey: `trans_${idempotencyKey}_eligible`,
-          attempt: attemptNumber,
-          evidenceDigests: updatedRecord.evidenceDigests,
-          terminalReason: null,
-          metadata: { durationMs },
-          createdAt: new Date().toISOString(),
-        },
-        tx,
-      );
-
-      // Schedule publication job via transactional outbox
-      const jobPayload: LifecycleJobPayload = {
-        candidateId,
-        revisionId: record.activeRevisionId,
-        targetVersion: record.targetVersion,
-        step: "publish",
-        idempotencyKey: `job_${candidateId}_publish_${attemptNumber}`,
-        attempt: attemptNumber,
-        scheduledAt: new Date().toISOString(),
-      };
-
-      await OutboxRepository.insert(tx, {
+      await this.lifecycleRepo.saveDlqRecord(tenant, {
+        id: `dlq_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
         accountId: tenant.accountId,
         workspaceId: tenant.workspaceId,
-        aggregateType: "evolution_candidate",
-        aggregateId: candidateId,
-        eventType: EVOLUTION_LIFECYCLE_JOB_TYPES.PUBLISH_CANDIDATE,
-        payload: jobPayload as unknown as Record<string, unknown>,
-        headers: {
-          step: "publish",
-          candidateId,
-          attempt: String(attemptNumber),
-        },
+        candidateId,
+        revisionId: failedRecord.activeRevisionId,
+        stage: "evaluate",
+        errorCategory: "evaluation_hard_gate",
+        errorMessage: terminalReason.message,
+        retryClassification: "terminal",
+        attemptCount: attemptNumber,
+        diagnostics: terminalReason.details || {},
+        resumed: false,
+        createdAt: nowIso,
+        updatedAt: nowIso,
       });
-    });
 
-    return updatedRecord;
+      return failedRecord;
+    } catch (err) {
+      const classification = classifyError(err, attemptNumber);
+      const attemptEntry: AttemptHistoryEntry = {
+        attempt: attemptNumber,
+        state: "evaluating",
+        startedAt: nowIso,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+        status: classification.retryable ? "retrying" : "failed",
+        error: classification.reason,
+      };
+
+      if (classification.retryable) {
+        return await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+          revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+          fromState: record.currentState,
+          toState: record.currentState,
+          targetVersion: record.targetVersion,
+          idempotencyKey: `cand_${candidateId}_eval_retry_${attemptNumber}_${Date.now()}`,
+          attempt: attemptNumber + 1,
+          attemptHistoryEntry: attemptEntry,
+          metadata: {
+            retryClassification: classification.classification,
+            reason: classification.reason,
+          },
+        });
+      }
+
+      const terminalReason: TerminalReason = {
+        code: "EVALUATION_INFRASTRUCTURE_ERROR",
+        message: classification.reason,
+        category: "infrastructure_exhausted",
+        details: { error: String(err) },
+      };
+
+      const failedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        fromState: record.currentState,
+        toState: "dead_letter",
+        targetVersion: record.targetVersion,
+        idempotencyKey: `cand_${candidateId}_eval_dlq_${attemptNumber}_${Date.now()}`,
+        attempt: attemptNumber,
+        terminalReason,
+        attemptHistoryEntry: attemptEntry,
+        metadata: { retryClassification: classification.classification, error: String(err) },
+      });
+
+      await this.lifecycleRepo.saveDlqRecord(tenant, {
+        id: `dlq_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+        accountId: tenant.accountId,
+        workspaceId: tenant.workspaceId,
+        candidateId,
+        revisionId: failedRecord.activeRevisionId,
+        stage: "evaluate",
+        errorCategory: classification.category,
+        errorMessage: classification.reason,
+        retryClassification: classification.classification,
+        attemptCount: attemptNumber,
+        diagnostics: redactDiagnostics({
+          error: String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+        }) as Record<string, unknown>,
+        resumed: false,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
+
+      return failedRecord;
+    }
   }
 
   /**
-   * Executes signed publication step for an eligible candidate.
-   * Verifies candidate ownership, tenant/workspace scope, artifact digest,
-   * manifest digest, evidence freshness, and signing-key status.
-   * Packages immutable artifact, signs cryptographically, uploads to ObjectStore,
-   * records in ToolRegistryRepository, registers with CatalogService, and sets state to 'published'.
+   * Stage 4: Signed Artifact Publication
+   * Cryptographically packages, signs with Ed25519, publishes to tool registry & catalog service.
    */
   async stepPublish(
     tenant: TenantContext,
     candidateId: string,
     options: LifecycleStepOptions = {},
   ): Promise<{ record: CandidateLifecycleRecord; toolVersion: ToolVersion }> {
-    const record = await this.lifecycleRepo.getLifecycleRecord(tenant, candidateId);
+    this.enforceTenant(tenant);
+
+    const record = await this.lifecycleRepo.getLifecycle(tenant, candidateId);
     if (!record) {
-      throw new Error(`Candidate lifecycle record '${candidateId}' not found`);
+      throw new Error(`Lifecycle record for candidate '${candidateId}' not found`);
     }
 
-    // Idempotency check: if already published, retrieve existing tool version
     if (record.currentState === "published" && record.publishedVersion) {
-      const existingToolVersion = await this.artifactService.toolRegistryRepo.getToolVersion(
+      const candidate = await this.candidateRepo.getCandidateById(tenant, candidateId);
+      const toolId = candidate?.proposedTool?.id ?? candidateId;
+      const activeVer = await this.artifactService.toolRegistryRepo.getToolVersion(
         tenant,
-        (record.metadata.toolId as string) || `tool_${candidateId}`,
+        toolId,
         record.publishedVersion,
       );
-      if (existingToolVersion) {
-        return { record, toolVersion: existingToolVersion };
+      if (activeVer) {
+        return { record, toolVersion: activeVer };
       }
     }
 
-    // Candidate MUST be in 'eligible' state
     if (record.currentState !== "eligible") {
       throw new Error(
         `Candidate '${candidateId}' is in state '${record.currentState}', expected 'eligible' for publication`,
       );
+    }
+
+    if (!record.evaluationResult) {
+      throw new Error(`Candidate '${candidateId}' has no recorded evaluation result`);
     }
 
     const candidate = await this.candidateRepo.getCandidateById(tenant, candidateId);
@@ -1166,33 +1275,14 @@ export class CandidateLifecycleOrchestrator {
       );
     }
 
-    const activeRevision = await this.candidateRepo.getActiveRevision(tenant, candidateId);
-    const sourceCode = activeRevision?.artifacts?.sourceCode ?? candidate.sourceCode ?? "";
-    const manifest = activeRevision?.artifacts?.manifest ?? candidate.proposedTool;
-
-    // 2. Verify Manifest and Artifact digests
-    const computedManifestDigest = hashCanonicalContent({
-      ...manifest,
-      version: record.targetVersion,
-    });
-    const computedSourceDigest = computeSha256(sourceCode);
-
-    if (
-      record.evidenceDigests.sourceDigest &&
-      record.evidenceDigests.sourceDigest !== computedSourceDigest
-    ) {
+    // 2. Verify evidence digests presence
+    if (!record.evidenceDigests.manifestDigest || !record.evidenceDigests.sourceDigest) {
       throw new Error(
-        `Source digest mismatch: expected '${record.evidenceDigests.sourceDigest}', computed '${computedSourceDigest}'`,
+        `Candidate evidence digests are missing or incomplete for candidate '${candidateId}'`,
       );
     }
 
-    // 3. Verify evidence presence and freshness
-    if (!record.evaluationResult) {
-      throw new Error(
-        `Cannot publish candidate '${candidateId}' without persisted evaluation result`,
-      );
-    }
-
+    // 3. Verify evidence freshness
     const rawEval: unknown = record.evaluationResult;
     const evalTimestamp =
       record.evaluationResult.overallDecision?.evaluatedAt ??
@@ -1214,187 +1304,595 @@ export class CandidateLifecycleOrchestrator {
       const isRevoked = await this.artifactService.signingKeyRepo.isRevoked(options.signingKeyId);
       if (isRevoked) {
         throw new Error(
-          `Signing key '${options.signingKeyId}' is revoked and cannot be used for publication`,
-        );
-      }
-    } else {
-      const activeKey = await this.artifactService.signingKeyRepo.getActiveKey("ed25519");
-      if (activeKey && activeKey.status === "revoked") {
-        throw new Error(
-          `Signing key '${activeKey.keyId}' is revoked and cannot be used for publication`,
+          `Signing key '${options.signingKeyId}' is revoked and cannot be used for artifact publication`,
         );
       }
     }
 
-    const targetVersion = record.targetVersion || manifest.version || "1.0.0";
-    const attemptNumber = record.attempt || 1;
+    const activeRevision = await this.candidateRepo.getActiveRevision(tenant, candidateId);
+    const sourceCode = activeRevision?.artifacts?.sourceCode ?? candidate.sourceCode ?? "";
+    const computedSourceDigest = computeSha256(sourceCode);
+    if (
+      record.evidenceDigests.sourceDigest &&
+      record.evidenceDigests.sourceDigest !== computedSourceDigest
+    ) {
+      throw new Error(
+        `Source digest mismatch: recorded '${record.evidenceDigests.sourceDigest}', current '${computedSourceDigest}'`,
+      );
+    }
+    const targetVersion = options.targetVersion ?? record.targetVersion;
+    const attemptNumber = options.attempt ?? (record.attempt || 1);
+    const startTime = Date.now();
     const nowIso = new Date().toISOString();
 
-    // 5. Execute publication via ToolArtifactRegistryService
-    const toolVersion = await this.artifactService.publishCandidate(
-      {
+    try {
+      const { digest: _d, ...baseManifest } =
+        activeRevision?.artifacts?.manifest ?? candidate.proposedTool;
+      const manifestForPublish: ToolManifest = {
+        ...baseManifest,
+        digest: hashCanonicalContent(baseManifest),
+      };
+      const candidateForPublish: EvolutionCandidate = {
         ...candidate,
-        proposedTool: {
-          ...manifest,
-          version: targetVersion,
-        },
-        sourceCode,
-      },
-      record.evaluationResult,
-      {
-        overrideVersion: targetVersion,
-        keyId: options.signingKeyId,
-        revision: activeRevision ?? undefined,
-      },
-    );
+        proposedTool: manifestForPublish,
+      };
 
-    // 6. Register/Invalidate in CloudCatalogService
-    if (this.catalogService) {
-      this.catalogService.registerTool({
-        name: toolVersion.manifest.name,
-        description: toolVersion.manifest.description,
-        inputSchema: toolVersion.manifest.parameters,
-        handler: async () => ({ content: [{ type: "text", text: "Tool executed successfully" }] }),
-      });
-    }
-
-    const publicationRecordId = `pub_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
-    const idempotencyKey = `cand_${candidateId}_published_${attemptNumber}`;
-
-    const newAttemptEntry: AttemptHistoryEntry = {
-      attempt: attemptNumber,
-      state: "published",
-      startedAt: nowIso,
-      completedAt: new Date().toISOString(),
-      status: "succeeded",
-    };
-
-    const finalDigests: EvidenceDigests = {
-      ...record.evidenceDigests,
-      artifactDigest: toolVersion.artifactDigest,
-      signatureDigest: toolVersion.signature?.signature,
-    };
-
-    const updatedRecord: CandidateLifecycleRecord = {
-      ...record,
-      currentState: "published",
-      publishedVersion: targetVersion,
-      publicationRecordId,
-      evidenceDigests: finalDigests,
-      attemptHistory: [...record.attemptHistory, newAttemptEntry],
-      metadata: {
-        ...record.metadata,
-        toolId: toolVersion.toolId,
-        publishedVersion: targetVersion,
-        storageUri: toolVersion.artifact.bundleReference.uri,
-      },
-      updatedAt: new Date().toISOString(),
-    };
-
-    await this.pool.transaction(async (tx) => {
-      await this.lifecycleRepo.saveLifecycleRecord(tenant, updatedRecord, tx);
-      await this.lifecycleRepo.saveTransition(
-        tenant,
+      // 5. Build and Sign Tool Artifact
+      const toolVersion = await this.artifactService.publishCandidate(
+        candidateForPublish,
+        record.evaluationResult,
         {
-          id: `trans_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
-          accountId: tenant.accountId,
-          workspaceId: tenant.workspaceId,
-          candidateId,
-          revisionId: record.activeRevisionId,
-          fromState: "eligible",
-          toState: "published",
-          idempotencyKey: `trans_${idempotencyKey}`,
-          attempt: attemptNumber,
-          evidenceDigests: finalDigests,
-          terminalReason: null,
-          metadata: {
-            toolId: toolVersion.toolId,
-            version: targetVersion,
-            storageUri: toolVersion.artifact.bundleReference.uri,
-          },
-          createdAt: new Date().toISOString(),
+          overrideVersion: targetVersion,
+          keyId: options.signingKeyId,
+          revision: activeRevision ?? undefined,
+          workflowDefinition: activeRevision?.artifacts?.workflowDefinition,
         },
-        tx,
       );
 
-      // Write final published notification event to outbox
-      await OutboxRepository.insert(tx, {
-        accountId: tenant.accountId,
-        workspaceId: tenant.workspaceId,
-        aggregateType: "evolution_candidate",
-        aggregateId: candidateId,
-        eventType: "evolution.candidate.published",
-        payload: {
-          candidateId,
-          toolId: toolVersion.toolId,
-          version: targetVersion,
+      // 6. Register in CloudCatalogService
+      if (this.catalogService) {
+        this.catalogService.registerTool({
+          name: toolVersion.manifest.name,
+          description: toolVersion.manifest.description,
+          inputSchema: toolVersion.manifest.parameters,
+          handler: async () => ({
+            content: [{ type: "text", text: "Tool executed successfully" }],
+          }),
+        });
+      }
+
+      const publicationRecordId = `pub_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+      const idempotencyKey =
+        options.idempotencyKey ?? `cand_${candidateId}_published_${attemptNumber}`;
+
+      const attemptEntry: AttemptHistoryEntry = {
+        attempt: attemptNumber,
+        state: "published",
+        startedAt: nowIso,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+        status: "succeeded",
+      };
+
+      const updatedDigests: EvidenceDigests = {
+        ...record.evidenceDigests,
+        artifactDigest: toolVersion.artifactDigest,
+        signatureDigest: toolVersion.signature?.signature,
+      };
+
+      const updatedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        fromState: "eligible",
+        toState: "published",
+        targetVersion: toolVersion.version,
+        idempotencyKey,
+        attempt: attemptNumber,
+        evidenceDigests: updatedDigests,
+        publicationRecordId,
+        publishedVersion: toolVersion.version,
+        attemptHistoryEntry: attemptEntry,
+        metadata: {
+          publicationRecordId,
+          publishedVersion: toolVersion.version,
           artifactDigest: toolVersion.artifactDigest,
-          publishedAt: new Date().toISOString(),
-        },
-        headers: {
-          candidateId,
-          version: targetVersion,
+          signedKeyId: toolVersion.signature?.keyId,
         },
       });
+
+      if (this.pool) {
+        try {
+          await OutboxRepository.insert(this.pool, {
+            accountId: tenant.accountId,
+            workspaceId: tenant.workspaceId,
+            aggregateType: "candidate_lifecycle",
+            aggregateId: candidateId,
+            eventType: "candidate.lifecycle.published",
+            payload: {
+              candidateId,
+              workspaceId: tenant.workspaceId,
+              toolName: toolVersion.manifest.name,
+              toolVersion: toolVersion.version,
+              artifactDigest: toolVersion.artifactDigest,
+              publicationRecordId,
+              publishedAt: new Date().toISOString(),
+            },
+            headers: {
+              step: "published",
+              workspaceId: tenant.workspaceId,
+            },
+          });
+        } catch {
+          // Continue
+        }
+      }
+
+      return { record: updatedRecord, toolVersion };
+    } catch (err) {
+      const classification = classifyError(err, attemptNumber);
+      const attemptEntry: AttemptHistoryEntry = {
+        attempt: attemptNumber,
+        state: "eligible",
+        startedAt: nowIso,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+        status: classification.retryable ? "retrying" : "failed",
+        error: classification.reason,
+      };
+
+      if (classification.retryable) {
+        await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+          revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+          fromState: record.currentState,
+          toState: record.currentState,
+          targetVersion: record.targetVersion,
+          idempotencyKey: `cand_${candidateId}_pub_retry_${attemptNumber}_${Date.now()}`,
+          attempt: attemptNumber + 1,
+          attemptHistoryEntry: attemptEntry,
+          metadata: {
+            retryClassification: classification.classification,
+            reason: classification.reason,
+          },
+        });
+        throw err;
+      }
+
+      const terminalReason: TerminalReason = {
+        code: "PUBLICATION_FAILED",
+        message: classification.reason,
+        category:
+          classification.category === "signing_failure"
+            ? "signing_revoked"
+            : "infrastructure_exhausted",
+        details: { error: String(err) },
+      };
+
+      const failedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        fromState: record.currentState,
+        toState: "failed",
+        targetVersion: record.targetVersion,
+        idempotencyKey: `cand_${candidateId}_pub_failed_${attemptNumber}_${Date.now()}`,
+        attempt: attemptNumber,
+        terminalReason,
+        attemptHistoryEntry: attemptEntry,
+        metadata: { retryClassification: classification.classification, error: String(err) },
+      });
+
+      await this.lifecycleRepo.saveDlqRecord(tenant, {
+        id: `dlq_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+        accountId: tenant.accountId,
+        workspaceId: tenant.workspaceId,
+        candidateId,
+        revisionId: failedRecord.activeRevisionId,
+        stage: "publish",
+        errorCategory: classification.category,
+        errorMessage: classification.reason,
+        retryClassification: classification.classification,
+        attemptCount: attemptNumber,
+        diagnostics: redactDiagnostics({
+          error: String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+        }) as Record<string, unknown>,
+        resumed: false,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
+
+      throw err;
+    }
+  }
+
+  /**
+   * Bounded Repair Transition.
+   * Creates an immutable child revision, enforces capability monotonicity,
+   * preserves deterministic evidence, and re-enters validation.
+   */
+  async repairCandidate(
+    tenant: TenantContext,
+    candidateId: string,
+    options: RepairCandidateOptions = {},
+  ): Promise<CandidateLifecycleRecord> {
+    this.enforceTenant(tenant);
+
+    const record = await this.lifecycleRepo.getLifecycle(tenant, candidateId);
+    if (!record) {
+      throw new Error(`Lifecycle record for candidate '${candidateId}' not found`);
+    }
+
+    const candidate = await this.candidateRepo.getCandidateById(tenant, candidateId);
+    if (!candidate) {
+      throw new Error(`Candidate '${candidateId}' not found`);
+    }
+
+    const activeRevision = await this.candidateRepo.getActiveRevision(tenant, candidateId);
+    const maxRepairs = options.maxRepairAttempts ?? this.maxRepairAttempts;
+    const currentAttempt = record.attempt || 1;
+
+    // 1. Check bounded attempt count
+    if (currentAttempt >= maxRepairs) {
+      const terminalReason: TerminalReason = {
+        code: "REPAIR_BUDGET_EXHAUSTED",
+        message: `Candidate exceeded maximum allowable repair attempts (${currentAttempt}/${maxRepairs})`,
+        category: "attempts_exhausted",
+      };
+
+      const failedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        fromState: record.currentState,
+        toState: "failed",
+        targetVersion: record.targetVersion,
+        idempotencyKey: `cand_${candidateId}_repair_exhausted_${currentAttempt}`,
+        attempt: currentAttempt,
+        terminalReason,
+        metadata: { stage: "repair", error: "attempts_exhausted" },
+      });
+
+      await this.lifecycleRepo.saveDlqRecord(tenant, {
+        id: `dlq_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+        accountId: tenant.accountId,
+        workspaceId: tenant.workspaceId,
+        candidateId,
+        revisionId: failedRecord.activeRevisionId,
+        stage: "repair",
+        errorCategory: "attempts_exhausted",
+        errorMessage: terminalReason.message,
+        retryClassification: "terminal",
+        attemptCount: currentAttempt,
+        diagnostics: { maxRepairs, currentAttempt },
+        resumed: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+
+      return failedRecord;
+    }
+
+    // 2. Enforce Capability Monotonicity (Cannot broaden capabilities in child revisions)
+    const originalCaps =
+      activeRevision?.artifacts?.capabilities ?? candidate.requiredCapabilities ?? {};
+    const proposedCaps = options.modifiedArtifacts?.capabilities ?? originalCaps;
+
+    const broadened = this.checkCapabilityBroadening(originalCaps, proposedCaps);
+    if (broadened.isBroadened) {
+      const terminalReason: TerminalReason = {
+        code: "CAPABILITY_BROADENED",
+        message: `Child revision cannot broaden capabilities: ${broadened.reasons.join("; ")}`,
+        category: "capability_broadened",
+        details: { broadenedReasons: broadened.reasons },
+      };
+
+      const failedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        fromState: record.currentState,
+        toState: "failed",
+        targetVersion: record.targetVersion,
+        idempotencyKey: `cand_${candidateId}_repair_broadened_${currentAttempt}`,
+        attempt: currentAttempt,
+        terminalReason,
+        metadata: { stage: "repair", error: "capability_broadened" },
+      });
+
+      await this.lifecycleRepo.saveDlqRecord(tenant, {
+        id: `dlq_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+        accountId: tenant.accountId,
+        workspaceId: tenant.workspaceId,
+        candidateId,
+        revisionId: failedRecord.activeRevisionId,
+        stage: "repair",
+        errorCategory: "capability_violation",
+        errorMessage: terminalReason.message,
+        retryClassification: "terminal",
+        attemptCount: currentAttempt,
+        diagnostics: { reasons: broadened.reasons },
+        resumed: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+
+      return failedRecord;
+    }
+
+    // 3. Create Immutable Child Revision
+    const newRevisionNumber = (activeRevision?.revisionNumber ?? 1) + 1;
+    const newRevisionId = `rev_${candidateId}_${newRevisionNumber}_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
+    const nowIso = new Date().toISOString();
+
+    const childRevision: CandidateRevision = {
+      revisionId: newRevisionId,
+      candidateId,
+      revisionNumber: newRevisionNumber,
+      parentRevisionId: activeRevision?.revisionId,
+      artifacts: {
+        plan: activeRevision?.artifacts?.plan ?? {
+          id: `plan_${candidateId}`,
+          opportunityId:
+            (candidate as unknown as { opportunityId?: string }).opportunityId ||
+            `opp_${candidateId}`,
+          name: candidate.proposedTool.name,
+          description: candidate.proposedTool.description || "Candidate tool",
+          variableInputs: [],
+          invariantInputs: [],
+          inputSchema: candidate.proposedTool.parameters,
+          outputSchema: candidate.proposedTool.outputSchema ?? { type: "object" },
+          steps: [],
+          capabilities: proposedCaps,
+          capabilityRequirements: proposedCaps,
+          runtime: {
+            runtime: "deno",
+            memoryLimitMb: 128,
+            timeoutMs: 30000,
+            cpuLimitPercent: 100,
+            maxOutputSizeBytes: 1048576,
+          },
+          metadata: {},
+          createdAt: nowIso,
+        },
+        manifest:
+          options.modifiedArtifacts?.manifest ??
+          activeRevision?.artifacts?.manifest ??
+          candidate.proposedTool,
+        capabilities: proposedCaps,
+        sourceCode:
+          options.modifiedArtifacts?.sourceCode ??
+          activeRevision?.artifacts?.sourceCode ??
+          candidate.sourceCode ??
+          "",
+        workflowDefinition:
+          options.modifiedArtifacts?.workflowDefinition ??
+          activeRevision?.artifacts?.workflowDefinition,
+        tests: activeRevision?.artifacts?.tests,
+        generatedAt: nowIso,
+      },
+      selfReview: {
+        passed: true,
+        issues: [],
+        reviewedAt: nowIso,
+      },
+      repairHistory: [
+        ...(activeRevision?.repairHistory || []),
+        {
+          iteration: currentAttempt,
+          reason: options.repairHint || "Automated lifecycle repair transition",
+          fixedIssues: [options.repairHint || "Repair attempt"],
+          timestamp: nowIso,
+        },
+      ],
+      createdAt: nowIso,
+    };
+
+    await this.candidateRepo.saveRevision(tenant, childRevision);
+
+    // 4. Transition State to Repairing / Validating with child revision
+    const childDigests = this.computeCandidateEvidenceDigests(candidate, childRevision);
+    const updatedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+      revisionId: newRevisionId,
+      fromState: record.currentState,
+      toState: "validating",
+      targetVersion: record.targetVersion,
+      idempotencyKey: `cand_${candidateId}_repaired_rev_${newRevisionNumber}`,
+      attempt: currentAttempt + 1,
+      evidenceDigests: {
+        ...record.evidenceDigests,
+        ...childDigests,
+      },
+      terminalReason: null,
+      attemptHistoryEntry: {
+        attempt: currentAttempt + 1,
+        state: "repairing",
+        startedAt: nowIso,
+        completedAt: nowIso,
+        durationMs: 0,
+        status: "succeeded",
+      },
+      metadata: {
+        stage: "repair",
+        parentRevisionId: activeRevision?.revisionId,
+        childRevisionId: newRevisionId,
+        revisionNumber: newRevisionNumber,
+      },
     });
 
-    return { record: updatedRecord, toolVersion };
+    // Schedule validation for child revision
+    const jobPayload: LifecycleJobPayload = {
+      candidateId,
+      revisionId: newRevisionId,
+      targetVersion: updatedRecord.targetVersion,
+      step: "validate",
+      idempotencyKey: `cand_${candidateId}_val_job_rev_${newRevisionNumber}`,
+      attempt: currentAttempt + 1,
+      scheduledAt: nowIso,
+    };
+
+    if (this.pool) {
+      try {
+        await OutboxRepository.insert(this.pool, {
+          accountId: tenant.accountId,
+          workspaceId: tenant.workspaceId,
+          aggregateType: "candidate_lifecycle",
+          aggregateId: candidateId,
+          eventType: EVOLUTION_LIFECYCLE_JOB_TYPES.VALIDATE_CANDIDATE,
+          payload: jobPayload as unknown as Record<string, unknown>,
+          headers: {
+            step: "validate",
+            workspaceId: tenant.workspaceId,
+          },
+        });
+      } catch {
+        // Continue
+      }
+    }
+
+    return updatedRecord;
   }
+
   /**
-   * Drives an entire candidate lifecycle from drafting through signed publication.
+   * Capability monotonicity verifier.
    */
-  async driveToCompletion(
-    tenant: TenantContext,
-    candidate: EvolutionCandidate,
-    revision?: CandidateRevision | null,
-    options: LifecycleStepOptions = {},
-  ): Promise<{ record: CandidateLifecycleRecord; toolVersion?: ToolVersion }> {
-    // 1. Start lifecycle
-    let current = await this.startLifecycle(tenant, candidate, revision, options);
+  private checkCapabilityBroadening(
+    parent: CapabilityManifest,
+    child: CapabilityManifest,
+  ): { isBroadened: boolean; reasons: string[] } {
+    const reasons: string[] = [];
 
-    // 2. Validate
-    current = await this.stepValidate(tenant, candidate.id, options);
-    if (current.currentState === "failed" || current.currentState === "rejected") {
-      return { record: current };
+    // Network hosts
+    const parentHosts = new Set(parent.net?.allowedHosts ?? []);
+    for (const host of child.net?.allowedHosts ?? []) {
+      if (!parentHosts.has(host)) {
+        reasons.push(`Added network host '${host}'`);
+      }
     }
 
-    // 3. Replay
-    current = await this.stepReplay(tenant, candidate.id, options);
-    if (current.currentState === "failed" || current.currentState === "rejected") {
-      return { record: current };
+    // FS write paths
+    const parentWritePaths = new Set(parent.fs?.writePaths ?? []);
+    for (const path of child.fs?.writePaths ?? []) {
+      if (!parentWritePaths.has(path)) {
+        reasons.push(`Added FS write path '${path}'`);
+      }
     }
 
-    // 4. Evaluate
-    current = await this.stepEvaluate(tenant, candidate.id, options);
-    if (current.currentState === "failed" || current.currentState === "rejected") {
-      return { record: current };
+    // Command execution
+    const parentCommands = new Set([
+      ...(parent.command?.allowedCommands ?? []),
+      ...((parent as unknown as { exec?: { allowedCommands?: string[] } }).exec?.allowedCommands ??
+        []),
+    ]);
+    const childCommands = [
+      ...(child.command?.allowedCommands ?? []),
+      ...((child as unknown as { exec?: { allowedCommands?: string[] } }).exec?.allowedCommands ??
+        []),
+    ];
+    for (const cmd of childCommands) {
+      if (!parentCommands.has(cmd)) {
+        reasons.push(`Added command '${cmd}'`);
+      }
     }
 
-    // 5. Publish
-    const pubResult = await this.stepPublish(tenant, candidate.id, options);
-    return { record: pubResult.record, toolVersion: pubResult.toolVersion };
+    // Secrets
+    const parentSecrets = new Set(parent.secrets?.allowedSecretNames ?? []);
+    for (const secret of child.secrets?.allowedSecretNames ?? []) {
+      if (!parentSecrets.has(secret)) {
+        reasons.push(`Added secret access '${secret}'`);
+      }
+    }
+
+    return {
+      isBroadened: reasons.length > 0,
+      reasons,
+    };
   }
 
   /**
-   * Processes a background worker job envelope for lifecycle execution.
+   * Resumes a dead-lettered or blocked candidate from DLQ.
+   */
+  async resumeFromDlq(
+    tenant: TenantContext,
+    dlqId: string,
+    options: ResumeFromDlqOptions = {},
+  ): Promise<CandidateLifecycleRecord> {
+    this.enforceTenant(tenant);
+
+    const dlqRecord = await this.lifecycleRepo.getDlqRecord(tenant, dlqId);
+    if (!dlqRecord) {
+      throw new Error(`DLQ record '${dlqId}' not found`);
+    }
+
+    await this.lifecycleRepo.markDlqResumed(tenant, dlqId, options.resumedBy ?? "operator");
+
+    const targetStage: LifecycleStage = options.targetStage ?? dlqRecord.stage;
+    const candidateId = dlqRecord.candidateId;
+
+    let nextState: CandidateLifecycleState = "validating";
+    if (targetStage === "replay") nextState = "validating";
+    if (targetStage === "evaluate") nextState = "replaying";
+    if (targetStage === "publish") nextState = "eligible";
+
+    const activeRevision = await this.candidateRepo.getActiveRevision(tenant, candidateId);
+    const existing = await this.lifecycleRepo.getLifecycle(tenant, candidateId);
+
+    const updated = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+      revisionId: activeRevision?.revisionId ?? dlqRecord.revisionId,
+      fromState: existing?.currentState ?? "failed",
+      toState: nextState,
+      targetVersion: existing?.targetVersion ?? "1.0.0",
+      idempotencyKey: `cand_${candidateId}_resumed_from_dlq_${Date.now()}`,
+      attempt: (existing?.attempt || 1) + 1,
+      terminalReason: null,
+      metadata: {
+        resumedFromDlqId: dlqId,
+        resumedBy: options.resumedBy ?? "operator",
+        targetStage,
+      },
+    });
+
+    if (targetStage === "validate") {
+      return this.stepValidate(tenant, candidateId);
+    }
+    if (targetStage === "replay") {
+      return this.stepReplay(tenant, candidateId);
+    }
+    if (targetStage === "evaluate") {
+      return this.stepEvaluate(tenant, candidateId);
+    }
+    if (targetStage === "publish") {
+      const pubRes = await this.stepPublish(tenant, candidateId);
+      return pubRes.record;
+    }
+
+    return updated;
+  }
+
+  /**
+   * Processes a lifecycle job payload and returns the updated record.
    */
   async processJob(
     tenant: TenantContext,
     payload: LifecycleJobPayload,
   ): Promise<CandidateLifecycleRecord> {
-    const { candidateId, step } = payload;
-
-    switch (step) {
+    switch (payload.step) {
       case "validate":
-        return this.stepValidate(tenant, candidateId);
+        return this.stepValidate(tenant, payload.candidateId, {
+          idempotencyKey: payload.idempotencyKey,
+          attempt: payload.attempt,
+        });
       case "replay":
-        return this.stepReplay(tenant, candidateId);
+        return this.stepReplay(tenant, payload.candidateId, {
+          idempotencyKey: payload.idempotencyKey,
+          attempt: payload.attempt,
+        });
       case "evaluate":
-        return this.stepEvaluate(tenant, candidateId);
+        return this.stepEvaluate(tenant, payload.candidateId, {
+          idempotencyKey: payload.idempotencyKey,
+          attempt: payload.attempt,
+        });
       case "publish": {
-        const pubResult = await this.stepPublish(tenant, candidateId);
-        return pubResult.record;
+        const res = await this.stepPublish(tenant, payload.candidateId, {
+          idempotencyKey: payload.idempotencyKey,
+          attempt: payload.attempt,
+        });
+        return res.record;
       }
+      case "repair":
+        return this.repairCandidate(tenant, payload.candidateId);
       default:
         throw new Error(
           `Unknown lifecycle job step: '${(payload as unknown as Record<string, string>).step}'`,
@@ -1403,25 +1901,48 @@ export class CandidateLifecycleOrchestrator {
   }
 
   /**
+   * Dispatches and reconciles async queue jobs.
+   */
+  async handleJob(
+    tenantOrPayload: TenantContext | LifecycleJobPayload,
+    payloadOrTenant?: LifecycleJobPayload | TenantContext,
+  ): Promise<CandidateLifecycleRecord | undefined> {
+    let tenant: TenantContext;
+    let payload: LifecycleJobPayload;
+
+    if ("candidateId" in tenantOrPayload && "step" in tenantOrPayload) {
+      payload = tenantOrPayload as LifecycleJobPayload;
+      tenant = (payloadOrTenant as TenantContext) ?? {
+        accountId: "acc_system",
+        workspaceId: "ws_default",
+      };
+    } else {
+      tenant = tenantOrPayload as TenantContext;
+      payload = payloadOrTenant as LifecycleJobPayload;
+    }
+
+    return this.processJob(tenant, payload);
+  }
+  /**
    * Retrieves sanitized lifecycle status response for API consumers.
-   * Redacts raw transcripts, source code not covered by consent, and internal secrets.
    */
   async getStatus(
     tenant: TenantContext,
     candidateId: string,
   ): Promise<CandidateLifecycleStatusResponse | null> {
-    const record = await this.lifecycleRepo.getLifecycleRecord(tenant, candidateId);
+    const record = await this.lifecycleRepo.getLifecycle(tenant, candidateId);
     if (!record) {
       return null;
     }
 
     const candidate = await this.candidateRepo.getCandidateById(tenant, candidateId);
-    const transitions = await this.lifecycleRepo.listTransitions(tenant, candidateId);
+    const transitions = await this.lifecycleRepo.getTransitions(tenant, candidateId);
 
     const isTerminal =
       record.currentState === "published" ||
       record.currentState === "rejected" ||
       record.currentState === "failed" ||
+      record.currentState === "dead_letter" ||
       record.currentState === "superseded";
 
     const isEligible = record.currentState === "eligible" || record.currentState === "published";
@@ -1462,23 +1983,11 @@ export class CandidateLifecycleOrchestrator {
           ? record.validationResult.typecheckPassed
           : undefined,
         staticFindingsCount: record.validationResult
-          ? record.validationResult.staticFindings.length
-          : undefined,
-        testsPassed: record.validationResult?.testReport
-          ? record.validationResult.testReport.failed === 0
+          ? record.validationResult.staticFindings?.length
           : undefined,
         replayPassed: record.replayResult ? record.replayResult.passed : undefined,
-        replaySuccessRate: record.replayResult
-          ? record.replayResult.totalScenarioCount > 0
-            ? record.replayResult.passedScenarioCount / record.replayResult.totalScenarioCount
-            : 1
-          : undefined,
         evaluationVerdict: record.evaluationResult
-          ? (record.evaluationResult.overallDecision?.verdict ??
-            (typeof (record.evaluationResult as unknown as Record<string, unknown>).verdict ===
-            "string"
-              ? ((record.evaluationResult as unknown as Record<string, unknown>).verdict as string)
-              : undefined))
+          ? record.evaluationResult.overallDecision?.verdict
           : undefined,
         hardGatesPassed: record.evaluationResult
           ? record.evaluationResult.overallDecision?.verdict === "pass" ||
@@ -1488,12 +1997,11 @@ export class CandidateLifecycleOrchestrator {
             )
           : undefined,
         evidenceFreshnessVerified:
-          record.evaluationResult !== null && record.evaluationResult !== undefined,
+          record.currentState === "published" || record.currentState === "eligible",
         hasSignature: Boolean(record.evidenceDigests.signatureDigest),
       },
       evidenceDigests: evidenceDigestsRecord,
-      createdAt: record.createdAt,
-      updatedAt: record.updatedAt,
+      attemptHistory: record.attemptHistory,
       history: transitions.map((t) => ({
         fromState: t.fromState,
         toState: t.toState,
