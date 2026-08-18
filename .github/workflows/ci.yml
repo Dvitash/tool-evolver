@@ -24,15 +24,18 @@ jobs:
       - run: python3 .github/agent/fin97_command_failure_fix.py
       - run: python3 .github/agent/fin97_replay_evidence_fix.py
       - run: python3 .github/agent/fin97_replay_lint_fix.py
+      - run: python3 .github/agent/fin97_outbox_bridge.py
       - name: restore repository CI/remove temporary patchers
         run: |
           git checkout origin/main -- .github/workflows/ci.yml
-          rm -f .github/agent/fin97_fix.py .github/agent/fin97_final.py .github/agent/fin97_assertion.py .github/agent/fin97_publish_diagnostics.py .github/agent/fin97_validation_fix.py .github/agent/fin97_validation_diagnostics.py .github/agent/fin97_command_failure_fix.py .github/agent/fin97_replay_evidence_fix.py .github/agent/fin97_replay_lint_fix.py .github/workflows/fin97-apply.yml .github/lifecycle-test-diagnostics.txt
+          rm -f .github/agent/fin97_fix.py .github/agent/fin97_final.py .github/agent/fin97_assertion.py .github/agent/fin97_publish_diagnostics.py .github/agent/fin97_validation_fix.py .github/agent/fin97_validation_diagnostics.py .github/agent/fin97_command_failure_fix.py .github/agent/fin97_replay_evidence_fix.py .github/agent/fin97_replay_lint_fix.py .github/agent/fin97_outbox_bridge.py .github/workflows/fin97-apply.yml .github/lifecycle-test-diagnostics.txt
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec biome check --write .
       - run: pnpm build
       - name: Run focused real-process lifecycle test
         run: pnpm exec vitest run fixtures/e2e/tests/real-process-topology.test.ts
+      - name: Run complete repository test suite
+        run: pnpm test
       - name: commit
         run: |
           git config user.name 'github-actions[bot]'
