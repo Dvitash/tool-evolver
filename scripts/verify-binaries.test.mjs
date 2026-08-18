@@ -13,7 +13,7 @@ describe("verify-binaries", () => {
       expect(BINARY_SPECS).toHaveLength(4);
 
       const packageNames = BINARY_SPECS.map((s) => s.packageName);
-      expect(packageNames).toContain("@tool-evolver/cli");
+      expect(packageNames).toContain("tool-evolver");
       expect(packageNames).toContain("@tool-evolver/observer");
       expect(packageNames).toContain("@tool-evolver/gateway");
       expect(packageNames).toContain("@tool-evolver/test-fixtures");

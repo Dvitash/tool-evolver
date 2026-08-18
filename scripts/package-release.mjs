@@ -94,7 +94,7 @@ export const WORKSPACE_PACKAGES = [
     type: "package",
   },
   {
-    name: "@tool-evolver/cli",
+    name: "tool-evolver",
     path: "apps/cli",
     entry: "dist/index.js",
     bin: "dist/bin/cli.js",

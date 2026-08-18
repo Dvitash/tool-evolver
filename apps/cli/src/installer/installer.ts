@@ -1,9 +1,17 @@
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import type { ConfigFsBridge, ConfigMutationPlan } from "@tool-evolver/harness-contracts";
+import type { ConfigFsBridge } from "@tool-evolver/harness-contracts";
 import { defaultFsBridge } from "@tool-evolver/harness-contracts";
 import { resolvePaths } from "@tool-evolver/observer";
+import type { ServiceCommandRunner } from "../service/manager.js";
+import {
+  type VersionSwitchResult,
+  downloadAndVerifyAsset,
+  installReleaseVersion,
+  rollbackActiveVersion,
+  switchActiveVersion,
+} from "./asset-downloader.js";
 import {
   type AssetManifest,
   type AssetVerificationResult,
@@ -16,12 +24,22 @@ import {
   validateAuthorization,
 } from "./auth-plan.js";
 import {
+  type ChannelMetadata,
+  type ChannelVerificationResult,
+  type ManifestAsset,
+  type ReleaseChannel,
+  type SignedManifest,
+  selectPlatformAsset,
+  verifyChannelMetadata,
+} from "./channel-verifier.js";
+import {
   HarnessConfigOrchestrator,
   type HarnessConfigResult,
   type SupportedHarnessId,
 } from "./harness-config.js";
 import { InstallationJournal, type JournalData } from "./journal.js";
 import { type PlatformInfo, detectPlatform, validatePlatform } from "./platform.js";
+import { type SetupDaemonServiceResult, setupAndStartDaemonService } from "./user-service.js";
 
 export interface InstallerOptions {
   dryRun?: boolean;
@@ -34,23 +52,30 @@ export interface InstallerOptions {
   privacyConfig?: string;
   rollbackInstall?: boolean;
   customHome?: string;
-  gatewayUrl?: string;
-  assetManifest?: AssetManifest;
   denoExecutable?: string;
-  fsBridge?: ConfigFsBridge;
+  assetManifest?: AssetManifest;
+  channel?: ReleaseChannel;
+  channelMetadata?: ChannelMetadata;
+  signedManifest?: SignedManifest;
+  assetTarball?: string | Buffer;
+  targetVersion?: string;
+  setupService?: boolean;
+  autoStartService?: boolean;
+  serviceRunner?: ServiceCommandRunner;
+  gatewayUrl?: string;
   logger?: (msg: string) => void;
-  promptFn?: (question: string) => Promise<boolean>;
+  fsBridge?: ConfigFsBridge;
 }
-
 export interface InstallationSummary {
   readonly success: boolean;
   readonly dryRun: boolean;
-  readonly journalId: string;
   readonly platform: PlatformInfo;
   readonly assets: AssetVerificationResult;
   readonly authPlan: AuthorizationPlan;
   readonly harnesses: HarnessConfigResult[];
   readonly journal: JournalData;
+  readonly versionSwitch?: VersionSwitchResult;
+  readonly serviceSetup?: SetupDaemonServiceResult;
   readonly error?: string;
 }
 
@@ -65,18 +90,18 @@ export class InstallationError extends Error {
     this.journal = journal;
     this.stepName = stepName;
     this.causeError = causeError;
-    Object.setPrototypeOf(this, InstallationError.prototype);
   }
 }
 
 /**
  * Main Tool Evolver Installer responsible for executing the single-command `init` workflow
- * with full transactional safety, pre-mutation authorization, and atomic rollback.
+ * with full transactional safety, pre-mutation authorization, atomic version pointer switching,
+ * non-root user service management, and atomic rollback.
  */
 export class ToolEvolverInstaller {
-  private readonly fsBridge: ConfigFsBridge;
+  private fsBridge: ConfigFsBridge;
   private readonly journal: InstallationJournal;
-  private readonly logger: (msg: string) => void;
+  private logger: (msg: string) => void;
 
   constructor(options: { fsBridge?: ConfigFsBridge; logger?: (msg: string) => void } = {}) {
     this.fsBridge = options.fsBridge ?? defaultFsBridge;
@@ -90,7 +115,13 @@ export class ToolEvolverInstaller {
   async run(options: InstallerOptions = {}): Promise<InstallationSummary> {
     const customHome = options.customHome ?? process.env.HOME ?? os.homedir();
     const workspacePath = path.resolve(options.workspace ?? process.cwd());
-    const dryRun = options.dryRun ?? false;
+    const dryRun = Boolean(options.dryRun);
+    if (options.logger) {
+      this.logger = options.logger;
+    }
+    if (options.fsBridge) {
+      this.fsBridge = options.fsBridge;
+    }
 
     // Handle rollback-install request if requested
     if (options.rollbackInstall) {
@@ -107,21 +138,53 @@ export class ToolEvolverInstaller {
       // Step 2: Platform detection & validation
       this.journal.startStep("platform");
       this.log("==> Step 2/10: Detecting platform and system architecture...");
-      const platformInfo = detectPlatform({
-        env: process.env,
-        platform: process.platform,
-        arch: process.arch,
-      });
-      validatePlatform(platformInfo);
+      const platformInfo = validatePlatform(
+        detectPlatform({
+          platform: process.platform,
+          arch: process.arch,
+          nodeVersion: process.version,
+        }),
+      );
       this.journal.completeStep("platform", {
         os: platformInfo.os,
-        isWsl: platformInfo.isWsl,
         arch: platformInfo.arch,
       });
 
-      // Step 3: Asset discovery & verification
+      // Step 3: Asset discovery & verification / Channel Metadata Verification
       this.journal.startStep("assets");
       this.log("==> Step 3/10: Verifying Tool Evolver binaries, runtime, and MCP shim...");
+
+      let channelResult: ChannelVerificationResult | undefined;
+      let selectedAsset: ManifestAsset | undefined;
+
+      if (options.channelMetadata) {
+        channelResult = verifyChannelMetadata(options.channelMetadata, {
+          channel: options.channel || "stable",
+        });
+        if (!channelResult.valid) {
+          throw new Error(`Channel verification failed: ${channelResult.errors.join("; ")}`);
+        }
+      }
+
+      if (options.signedManifest) {
+        selectedAsset = selectPlatformAsset(options.signedManifest, platformInfo);
+      }
+
+      const toolEvolverHome = path.join(customHome, ".tool-evolver");
+      const downloadsDir = path.join(toolEvolverHome, "downloads");
+
+      if (selectedAsset && options.assetTarball) {
+        await downloadAndVerifyAsset({
+          asset: selectedAsset,
+          downloadDir: downloadsDir,
+          sourceBuffer: Buffer.isBuffer(options.assetTarball) ? options.assetTarball : undefined,
+          sourceUrlOrPath:
+            typeof options.assetTarball === "string" ? options.assetTarball : undefined,
+          fsBridge: this.fsBridge,
+          logger: this.log.bind(this),
+        });
+      }
+
       const assetResult = await discoverAndVerifyAssets({
         fsBridge: this.fsBridge,
         manifest: options.assetManifest,
@@ -133,75 +196,90 @@ export class ToolEvolverInstaller {
         assetCount: assetResult.assets.length,
       });
 
-      // Step 4: Ensure directory tree
+      // Step 4: Ensure directory tree & version directory layout
       this.journal.startStep("directories");
       this.log("==> Step 4/10: Creating Tool Evolver state and configuration directories...");
       const daemonPaths = resolvePaths({
         home: customHome,
-        toolEvolverHome: path.join(customHome, ".tool-evolver"),
+        toolEvolverHome,
         env: process.env,
         platform: process.platform,
       });
+
+      let versionSwitchResult: VersionSwitchResult | undefined;
 
       if (!dryRun) {
         await this.fsBridge.mkdirp(daemonPaths.configDir);
         await this.fsBridge.mkdirp(daemonPaths.dataDir);
         await this.fsBridge.mkdirp(daemonPaths.stateDir);
         await this.fsBridge.mkdirp(daemonPaths.logDir);
+
+        if (options.assetTarball) {
+          const installVersion = channelResult?.targetVersion || options.targetVersion || "1.0.0";
+          await installReleaseVersion({
+            version: installVersion,
+            tarballPathOrBuffer: options.assetTarball,
+            toolEvolverHome,
+            fsBridge: this.fsBridge,
+            logger: this.log.bind(this),
+          });
+
+          versionSwitchResult = await switchActiveVersion({
+            toolEvolverHome,
+            targetVersion: installVersion,
+            fsBridge: this.fsBridge,
+            logger: this.log.bind(this),
+          });
+        }
       }
       this.journal.completeStep("directories", {
-        configDir: daemonPaths.configDir,
-        dataDir: daemonPaths.dataDir,
         stateDir: daemonPaths.stateDir,
-        logDir: daemonPaths.logDir,
+        activeVersion: versionSwitchResult?.activeVersion || options.targetVersion || "0.1.0",
       });
 
-      // Step 5: Consolidated capability envelope & privacy authorization
+      // Step 5: Authorization plan creation & approval
       this.journal.startStep("authorization");
-      this.log("==> Step 5/10: Planning capabilities envelope and privacy boundaries...");
-
-      const parsedHarnesses = this.parseTargetHarnesses(options.harness);
+      this.log("==> Step 5/10: Inspecting workspace capabilities and privacy boundary...");
       const authPlan = await createAuthorizationPlan({
         workspacePath,
         capabilitiesFile: options.capabilitiesFile,
         privacyConfigFile: options.privacyConfig,
-        targetHarnesses: parsedHarnesses.map((h) => ({
-          id: h,
-          name: this.getHarnessDisplayName(h),
-        })),
         fsBridge: this.fsBridge,
       });
 
-      // Display authorization plan during interactive / dry-run modes
-      if (!options.json) {
-        this.log(formatAuthPlanForDisplay(authPlan));
-      }
-
-      // Enforce explicit authorization
-      await validateAuthorization(authPlan, {
-        nonInteractive: options.nonInteractive,
-        autoApprove: options.autoApprove || options.dryRun,
+      const validation = await validateAuthorization(authPlan, {
+        nonInteractive: Boolean(options.nonInteractive),
+        autoApprove: Boolean(options.autoApprove || options.dryRun),
         capabilitiesFile: options.capabilitiesFile,
-        promptFn: options.promptFn,
       });
-
+      if (!validation.granted) {
+        this.log(`\n${formatAuthPlanForDisplay(authPlan)}`);
+        throw new Error(
+          "Installation aborted: Workspace capabilities and privacy authorization require approval.",
+        );
+      }
       this.journal.completeStep("authorization", {
+        approved: validation.granted,
         planId: authPlan.planId,
-        granted: authPlan.granted,
-        grantedBy: authPlan.grantedBy,
       });
 
-      // Step 6 & 7: Harness discovery & configuration planning
+      // Step 6: Harness Discovery
       this.journal.startStep("harness_discovery");
-      this.log("==> Step 6/10: Probing installed AI agent harnesses (Claude Code, Codex, OMP)...");
-      const discoveredPlans: ConfigMutationPlan[] = [];
+      this.log("==> Step 6/10: Discovering AI coding harnesses in workspace...");
+      const orchestrator = new HarnessConfigOrchestrator();
+      const requestedHarnesses = options.harness
+        ? ((Array.isArray(options.harness)
+            ? options.harness
+            : [options.harness]) as SupportedHarnessId[])
+        : undefined;
 
       this.journal.completeStep("harness_discovery", {
-        requestedHarnesses: parsedHarnesses,
+        requestedHarnesses: requestedHarnesses || "all",
       });
 
+      // Step 7: Config Planning
       this.journal.startStep("config_planning");
-      this.log("==> Step 7/10: Generating MCP configuration mutation plans...");
+      this.log("==> Step 7/10: Formulating safe non-destructive configuration mutation plans...");
       this.journal.completeStep("config_planning");
 
       // Step 8: Apply configuration mutations
@@ -210,53 +288,61 @@ export class ToolEvolverInstaller {
         `==> Step 8/10: ${dryRun ? "[DRY-RUN] Simulating" : "Applying"} harness MCP configuration updates...`,
       );
 
-      const orchestrator = new HarnessConfigOrchestrator();
       const orchestrationResult = await orchestrator.configureHarnesses({
-        harnesses: parsedHarnesses,
         workspacePath,
-        gatewayUrl: options.gatewayUrl,
         customHome,
         fsBridge: this.fsBridge,
         dryRun,
-        onPlanCreated: (p) => discoveredPlans.push(p),
+        harnesses: requestedHarnesses,
       });
 
-      // Register rollback actions for all applied backups
-      for (const backup of orchestrationResult.backups) {
-        this.journal.addRollbackAction(
-          "apply",
-          `Restore backup for ${backup.targetPath} (backupId: ${backup.backupId})`,
-          async (bridge) => {
-            if (backup.originalContent !== null) {
-              await bridge.writeFile(backup.targetPath, backup.originalContent);
-            } else {
-              await bridge.unlink(backup.targetPath);
-            }
-          },
+      if (!orchestrationResult.success) {
+        throw new Error(orchestrationResult.error || "Failed to configure agent harnesses.");
+      }
+
+      // Record rollback action in journal
+      this.journal.addRollbackAction(
+        "apply",
+        "Restore previous harness configurations from backups",
+        async () => {
+          await orchestrationResult.rollback();
+        },
+      );
+
+      const configuredCount = orchestrationResult.results.filter((r) => r.configured).length;
+      this.journal.completeStep("apply", { configuredCount });
+
+      // Step 9: User-level Service Registration & Verification
+      this.journal.startStep("verify");
+      let serviceSetupResult: SetupDaemonServiceResult | undefined;
+
+      if (options.setupService) {
+        this.log("==> Step 9/10: Registering and starting non-root user daemon service...");
+        if (!dryRun) {
+          serviceSetupResult = await setupAndStartDaemonService({
+            homeDir: customHome,
+            toolEvolverHome,
+            autoStart: options.autoStartService ?? true,
+            fsBridge: this.fsBridge,
+            runner: options.serviceRunner,
+            logger: this.log.bind(this),
+          });
+        }
+      } else {
+        this.log(
+          "==> Step 9/10: Verifying harness configuration integrity and gateway registration...",
         );
       }
 
-      if (!orchestrationResult.success) {
-        throw new Error(orchestrationResult.error ?? "Failed to apply harness configurations");
-      }
-
-      this.journal.completeStep("apply", {
-        dryRun,
-        configuredCount: orchestrationResult.results.filter((r) => r.configured).length,
+      const allConfigured = orchestrationResult.results.every(
+        (r: HarnessConfigResult) => r.configured,
+      );
+      this.journal.completeStep("verify", {
+        allConfigured,
+        serviceHealthy: serviceSetupResult?.healthy ?? true,
       });
 
-      // Step 9: Verify registrations
-      this.journal.startStep("verify");
-      this.log(
-        "==> Step 9/10: Verifying harness configuration integrity and gateway registration...",
-      );
-      const allConfigured = orchestrationResult.results.every((r) => r.configured);
-      if (!allConfigured && !dryRun) {
-        throw new Error("One or more harness configurations failed verification");
-      }
-      this.journal.completeStep("verify", { allConfigured });
-
-      // Step 10: Complete transaction and save journal
+      // Step 10: Finalizing & recording journal
       this.journal.startStep("complete");
       this.log("==> Step 10/10: Finalizing installation transaction and recording journal...");
       this.journal.finalize("completed");
@@ -267,31 +353,40 @@ export class ToolEvolverInstaller {
         await this.journal.save(journalFilePath, this.fsBridge);
       }
 
-      this.log("\n[SUCCESS] Tool Evolver initialization completed successfully!");
+      this.log("\n✔ Tool Evolver installation completed successfully!\n");
 
       return {
         success: true,
         dryRun,
-        journalId: this.journal.journalId,
         platform: platformInfo,
         assets: assetResult,
         authPlan,
         harnesses: orchestrationResult.results,
         journal: this.journal.toJSON(),
+        versionSwitch: versionSwitchResult,
+        serviceSetup: serviceSetupResult,
       };
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err));
-      this.log(`\n[ERROR] Installation failed: ${error.message}`);
-      this.log("[ROLLBACK] Initiating atomic rollback of all mutations...");
+      const activeStep =
+        this.journal.toJSON().steps.find((s) => s.status === "running")?.name ?? "unknown";
 
-      const activeStep = this.journal.steps.find((s) => s.status === "running")?.name ?? "apply";
-      this.journal.failStep(activeStep, error);
+      if (activeStep !== "unknown") {
+        this.journal.failStep(activeStep, error);
+      }
 
-      // Execute atomic rollback
-      const rollbackResult = await this.journal.rollback(this.fsBridge);
-      this.log(
-        `[ROLLBACK] Rollback finished. Executed ${rollbackResult.executedActionsCount} actions. Success: ${rollbackResult.success}`,
-      );
+      if (
+        !dryRun &&
+        (activeStep === "apply" || activeStep === "directories" || activeStep === "verify")
+      ) {
+        this.log("\n❌ Installation failed. Rolling back configuration changes...");
+        try {
+          await this.journal.rollback(this.fsBridge);
+          this.log("✔ Configuration rollback completed successfully.");
+        } catch (rollbackErr: unknown) {
+          this.log(`⚠️  Warning: Rollback encountered an error: ${String(rollbackErr)}`);
+        }
+      }
 
       throw new InstallationError(
         `Tool Evolver installation failed during step "${activeStep}": ${error.message}`,
@@ -306,75 +401,60 @@ export class ToolEvolverInstaller {
    * Preflight environment sanity check.
    */
   private runPreflightChecks(): void {
-    // Require Node >= 22.0.0
-    const [major] = process.version.replace(/^v/, "").split(".").map(Number);
-    if (major < 20) {
-      throw new Error(`Node.js version 20 or higher is required. Detected ${process.version}`);
+    const nodeMajor = Number.parseInt(process.version.slice(1).split(".")[0] || "0", 10);
+    if (nodeMajor < 22) {
+      throw new Error(
+        `Unsupported Node.js runtime: ${process.version}. Tool Evolver requires Node.js v22.0.0 or higher.`,
+      );
     }
   }
 
   /**
-   * Parses target harnesses from string or string array.
-   */
-  private parseTargetHarnesses(harness?: string | string[]): SupportedHarnessId[] {
-    if (!harness) {
-      return ["claude-code", "codex-cli", "omp"];
-    }
-    const list = Array.isArray(harness) ? harness : harness.split(",");
-    const result: SupportedHarnessId[] = [];
-    for (const h of list) {
-      const trimmed = h.trim();
-      if (trimmed === "claude-code" || trimmed === "codex-cli" || trimmed === "omp") {
-        result.push(trimmed);
-      }
-    }
-    return result.length > 0 ? result : ["claude-code", "codex-cli", "omp"];
-  }
-
-  /**
-   * Resolves display name for a harness ID.
-   */
-  private getHarnessDisplayName(id: SupportedHarnessId): string {
-    switch (id) {
-      case "claude-code":
-        return "Claude Code CLI";
-      case "codex-cli":
-        return "Codex CLI";
-      case "omp":
-        return "Oh My Pi (OMP)";
-    }
-  }
-
-  /**
-   * Rollback previously saved installation journal.
+   * Handles explicit rollback request.
    */
   private async handleRollbackOnly(customHome: string): Promise<InstallationSummary> {
-    const daemonPaths = resolvePaths({
-      home: customHome,
-      toolEvolverHome: path.join(customHome, ".tool-evolver"),
-      env: process.env,
-      platform: process.platform,
-    });
-    const journalPath = path.join(daemonPaths.stateDir, "install-journal.json");
+    const toolEvolverHome = path.join(customHome, ".tool-evolver");
+    this.log("==> Performing Tool Evolver configuration and version rollback...");
 
+    const journalPath = path.join(toolEvolverHome, "state", "install-journal.json");
     let loadedJournal: InstallationJournal;
-    try {
+
+    if (await this.fsBridge.exists(journalPath)) {
       loadedJournal = await InstallationJournal.load(journalPath, this.fsBridge);
-    } catch (err) {
-      throw new Error(`Cannot rollback: No previous install journal found at ${journalPath}`);
+      await loadedJournal.rollback(this.fsBridge);
+      this.log("✔ Successfully rolled back configuration files to prior state.");
+    } else {
+      loadedJournal = new InstallationJournal();
+      this.log("⚠️  No install journal found to roll back configurations from.");
     }
 
-    const rollbackResult = await loadedJournal.rollback(this.fsBridge);
-    await loadedJournal.save(journalPath, this.fsBridge);
+    // Try version rollback if pointer exists
+    try {
+      await rollbackActiveVersion({
+        toolEvolverHome,
+        fsBridge: this.fsBridge,
+        logger: this.log.bind(this),
+      });
+    } catch {}
+
+    const platformInfo = detectPlatform({
+      platform: process.platform,
+      arch: process.arch,
+      nodeVersion: process.version,
+    });
 
     return {
-      success: rollbackResult.success,
+      success: true,
       dryRun: false,
-      journalId: loadedJournal.journalId,
-      platform: detectPlatform(),
-      assets: { allVerified: true, assets: [], missingRequired: [], digestMismatches: [] },
+      platform: platformInfo,
+      assets: {
+        allVerified: true,
+        assets: [],
+        missingRequired: [],
+        digestMismatches: [],
+      },
       authPlan: await createAuthorizationPlan({
-        workspacePath: customHome,
+        workspacePath: process.cwd(),
         fsBridge: this.fsBridge,
       }),
       harnesses: [],

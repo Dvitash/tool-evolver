@@ -1,23 +1,40 @@
 {
-  "name": "@tool-evolver/cli",
+  "name": "tool-evolver",
   "version": "0.1.0",
-  "description": "Command-line interface for Tool Evolver.",
-  "private": true,
+  "description": "Command-line interface and bootstrap installer for Tool Evolver.",
+  "private": false,
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
     "tool-evolver": "./bin/tool-evolver.mjs"
   },
+  "files": ["dist", "bin", "README.md", "LICENSE"],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./installer/channel-verifier": {
+      "types": "./dist/installer/channel-verifier.d.ts",
+      "import": "./dist/installer/channel-verifier.js",
+      "default": "./dist/installer/channel-verifier.js"
+    },
+    "./installer/asset-downloader": {
+      "types": "./dist/installer/asset-downloader.d.ts",
+      "import": "./dist/installer/asset-downloader.js",
+      "default": "./dist/installer/asset-downloader.js"
+    },
+    "./installer/user-service": {
+      "types": "./dist/installer/user-service.d.ts",
+      "import": "./dist/installer/user-service.js",
+      "default": "./dist/installer/user-service.js"
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && rm -f dist/.tsbuildinfo",
+    "prepack": "rm -f dist/.tsbuildinfo",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "clean": "rm -rf dist *.tsbuildinfo"

@@ -23,7 +23,7 @@
     "@tool-evolver/adapter-claude-code": "workspace:*",
     "@tool-evolver/adapter-codex": "workspace:*",
     "@tool-evolver/adapter-omp": "workspace:*",
-    "@tool-evolver/cli": "workspace:*",
+    "tool-evolver": "workspace:*",
     "@tool-evolver/cloud": "workspace:*",
     "@tool-evolver/contracts": "workspace:*",
     "@tool-evolver/crypto": "workspace:*",

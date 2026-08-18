@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 /** @type {BinarySpec[]} */
 export const BINARY_SPECS = [
   {
-    packageName: "@tool-evolver/cli",
+    packageName: "tool-evolver",
     packageDir: "apps/cli",
     binKey: "tool-evolver",
     binPath: "apps/cli/bin/tool-evolver.mjs",
