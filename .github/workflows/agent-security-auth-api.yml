@@ -1,0 +1,41 @@
+name: Agent Security Auth API Patcher
+
+on:
+  push:
+    branches: [agent/security-auth-api]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.24.0
+          run_install: false
+      - name: Apply security hardening patch
+        run: python3 .github/agent/security_auth_api.py
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Format changed sources
+        run: pnpm exec biome check --write apps/cloud/src/config.ts apps/cloud/src/server/api.ts apps/cloud/src/server/security.ts apps/cloud/src/auth/middleware.ts apps/cloud/tests/security-hardening.test.ts adapters/omp/tests/qualification.test.ts
+      - name: Build
+        run: pnpm build
+      - name: Run focused tests
+        run: pnpm vitest run apps/cloud/tests/config.test.ts apps/cloud/tests/server.test.ts apps/cloud/tests/security-hardening.test.ts apps/cloud/tests/auth adapters/omp/tests/qualification.test.ts
+      - name: Commit patched sources
+        run: |
+          git config user.name "tool-evolver-agent"
+          git config user.email "tool-evolver-agent@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(security): harden cloud authentication and admin APIs"
+          git push origin HEAD:agent/security-auth-api
