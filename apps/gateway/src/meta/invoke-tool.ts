@@ -19,6 +19,14 @@ export interface InvokeToolParams {
   timeout_ms?: number;
 }
 
+function normalizeIdentifier(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function sameRegisteredVersion(left: RegistryTool, right: RegistryTool): boolean {
+  return left.toolId === right.toolId && left.version === right.version;
+}
+
 /**
  * Factory for creating the invoke_tool handler.
  */
@@ -33,9 +41,11 @@ export function createInvokeToolHandler(
     options?: ToolCallOptions,
   ): Promise<CallToolResult> => {
     const params = (rawParams || {}) as InvokeToolParams;
-    const identifier = params.toolId ?? params.name ?? params.tool_name;
+    const publicName = normalizeIdentifier(params.name) ?? normalizeIdentifier(params.tool_name);
+    const toolId = normalizeIdentifier(params.toolId);
+    const displayIdentifier = publicName ?? toolId;
 
-    if (!identifier || typeof identifier !== "string" || !identifier.trim()) {
+    if (!displayIdentifier) {
       return {
         isError: true,
         content: [
@@ -47,7 +57,6 @@ export function createInvokeToolHandler(
       };
     }
 
-    const trimmedId = identifier.trim();
     const targetParams = (params.parameters ?? params.arguments ?? {}) as Record<string, unknown>;
 
     if (typeof targetParams !== "object" || targetParams === null || Array.isArray(targetParams)) {
@@ -62,16 +71,43 @@ export function createInvokeToolHandler(
       };
     }
 
-    // Retrieve user controls for the caller's workspace
     const controls = await registry.controls.getControls(context.workspaceId);
+    const accessibleTools = registry
+      .getAllRegisteredTools()
+      .filter((candidate) => isToolInScope(candidate, context));
+    const nameMatches = publicName
+      ? accessibleTools.filter(
+          (candidate) => candidate.name === publicName || candidate.exposedName === publicName,
+        )
+      : [];
+    const idMatches = toolId
+      ? accessibleTools.filter((candidate) => candidate.toolId === toolId)
+      : [];
 
-    // Look up installed tools matching the identifier
-    const allInstalled = registry.getAllRegisteredTools();
-    const matchingTools = allInstalled.filter(
-      (t) =>
-        (t.toolId === trimmedId || t.name === trimmedId || t.exposedName === trimmedId) &&
-        isToolInScope(t, context),
-    );
+    let matchingTools: RegistryTool[];
+    if (nameMatches.length > 0 && idMatches.length > 0) {
+      const intersection = nameMatches.filter((nameMatch) =>
+        idMatches.some((idMatch) => sameRegisteredVersion(nameMatch, idMatch)),
+      );
+      if (intersection.length === 0) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: `Conflicting tool identifiers: name '${publicName}' and toolId '${toolId}' resolve to different tools.`,
+            },
+          ],
+        };
+      }
+      matchingTools = intersection;
+    } else if (nameMatches.length > 0) {
+      // Public names remain stable across local/cloud registry revisions. A stale internal
+      // toolId must not make an otherwise unambiguous public-name invocation fail.
+      matchingTools = nameMatches;
+    } else {
+      matchingTools = idMatches;
+    }
 
     if (matchingTools.length === 0) {
       return {
@@ -79,39 +115,36 @@ export function createInvokeToolHandler(
         content: [
           {
             type: "text",
-            text: `Tool '${trimmedId}' not found or not accessible in workspace '${context.workspaceId}'.`,
+            text: `Tool '${displayIdentifier}' not found or not accessible in workspace '${context.workspaceId}'.`,
           },
         ],
       };
     }
 
-    // Resolve target version
     let resolvedTool: RegistryTool | undefined;
     if (params.version && typeof params.version === "string") {
       const requestedVer = params.version.trim();
-      resolvedTool = matchingTools.find((t) => t.version === requestedVer);
+      resolvedTool = matchingTools.find((candidate) => candidate.version === requestedVer);
       if (!resolvedTool) {
         return {
           isError: true,
           content: [
             {
               type: "text",
-              text: `Version '${requestedVer}' of tool '${trimmedId}' not found. Available versions: ${matchingTools.map((t) => t.version).join(", ")}.`,
+              text: `Version '${requestedVer}' of tool '${displayIdentifier}' not found. Available versions: ${matchingTools.map((candidate) => candidate.version).join(", ")}.`,
             },
           ],
         };
       }
     } else {
-      // Check user pinned version
       const pinnedVer = controls.pinnedVersions[matchingTools[0].toolId];
       if (pinnedVer) {
-        resolvedTool = matchingTools.find((t) => t.version === pinnedVer);
+        resolvedTool = matchingTools.find((candidate) => candidate.version === pinnedVer);
       }
       if (!resolvedTool) {
-        // Use latest registered version
         const latestVer = registry.getLatestRegisteredVersion(matchingTools[0].toolId);
         if (latestVer) {
-          resolvedTool = matchingTools.find((t) => t.version === latestVer);
+          resolvedTool = matchingTools.find((candidate) => candidate.version === latestVer);
         }
       }
       if (!resolvedTool) {
@@ -119,7 +152,6 @@ export function createInvokeToolHandler(
       }
     }
 
-    // Check if tool is disabled
     const isDisabled =
       controls.disabledTools.includes(resolvedTool.toolId) && !resolvedTool.isSystem;
     if (isDisabled) {
@@ -134,9 +166,6 @@ export function createInvokeToolHandler(
       };
     }
 
-    // Validate parameters strictly against the manifest parameter schema
-
-    // Check production readiness safety gate for generated tools
     if (
       safetyGateEvaluator &&
       !resolvedTool.isSystem &&
@@ -156,6 +185,7 @@ export function createInvokeToolHandler(
         };
       }
     }
+
     const paramSchema = resolvedTool.parameters ?? resolvedTool.manifest?.parameters;
     const validation = validateParameters(paramSchema, targetParams);
     if (!validation.valid) {
@@ -170,7 +200,6 @@ export function createInvokeToolHandler(
       };
     }
 
-    // Determine execution timeout
     const timeoutMs =
       (typeof params.timeout_ms === "number" && params.timeout_ms > 0
         ? params.timeout_ms
@@ -179,7 +208,6 @@ export function createInvokeToolHandler(
       resolvedTool.manifest?.limits?.timeoutMs ??
       30000;
 
-    // Set up AbortController for timeout & caller cancellation
     const abortController = new AbortController();
     let timedOut = false;
     let timerId: NodeJS.Timeout | undefined;
@@ -213,7 +241,7 @@ export function createInvokeToolHandler(
     }
 
     try {
-      const result = await invocationRouter.invoke({
+      return await invocationRouter.invoke({
         toolId: resolvedTool.toolId,
         name: resolvedTool.name,
         version: resolvedTool.version,
@@ -224,8 +252,7 @@ export function createInvokeToolHandler(
         onProgress: options?.onProgress,
         timeoutMs,
       });
-      return result;
-    } catch (err) {
+    } catch (error) {
       if (timedOut) {
         return {
           isError: true,
@@ -248,7 +275,7 @@ export function createInvokeToolHandler(
           ],
         };
       }
-      const message = err instanceof Error ? err.message : String(err);
+      const message = error instanceof Error ? error.message : String(error);
       return {
         isError: true,
         content: [
