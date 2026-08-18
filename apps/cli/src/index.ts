@@ -33,6 +33,8 @@ export async function runCli(args: CliArgs): Promise<number> {
   }
 }
 
+// Platform Subsystem
+export * from "./platform/index.js";
 // Installer Engine
 export * from "./installer/installer.js";
 export * from "./installer/platform.js";

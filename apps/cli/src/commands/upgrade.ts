@@ -4,6 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import { type ConfigFsBridge, defaultFsBridge } from "@tool-evolver/harness-contracts";
 import { IpcClient, resolvePaths } from "@tool-evolver/observer";
+import { type PlatformInfo, resolvePlatformPaths } from "../platform/index.js";
 import { createUserServiceManager } from "../service/manager.js";
 import { type VerificationReport, runVerificationSuite } from "../service/verification.js";
 
@@ -85,18 +86,22 @@ export class UpgradeOrchestrator {
   private readonly fsBridge: ConfigFsBridge;
   private readonly customFetch?: typeof fetch;
 
+  private readonly platformInfo?: PlatformInfo;
+
   constructor(
     options: {
       homeDir?: string;
       toolEvolverHome?: string;
       fsBridge?: ConfigFsBridge;
       customFetch?: typeof fetch;
+      platformInfo?: PlatformInfo;
     } = {},
   ) {
     this.homeDir = options.homeDir ?? os.homedir();
     this.toolEvolverHome = options.toolEvolverHome ?? path.join(this.homeDir, ".tool-evolver");
     this.fsBridge = options.fsBridge ?? defaultFsBridge;
     this.customFetch = options.customFetch;
+    this.platformInfo = options.platformInfo;
   }
 
   async runUpgrade(flags: UpgradeCommandFlags = {}): Promise<UpgradeResult> {
@@ -106,13 +111,15 @@ export class UpgradeOrchestrator {
     const allowRollback = !flags.noRollback;
     const stepsCompleted: string[] = [];
 
-    const daemonPaths = resolvePaths({ home: this.homeDir });
+    const daemonPaths = this.platformInfo
+      ? resolvePlatformPaths({ home: this.homeDir, platformInfo: this.platformInfo })
+      : resolvePlatformPaths({ home: this.homeDir });
     const serviceManager = createUserServiceManager({
       homeDir: this.homeDir,
       toolEvolverHome: this.toolEvolverHome,
       fsBridge: this.fsBridge,
+      platform: this.platformInfo?.os,
     });
-
     // 1. Preflight Checks
     stepsCompleted.push("preflight");
     if (!flags.force && targetVersion === currentVersion) {
@@ -149,6 +156,13 @@ export class UpgradeOrchestrator {
       (await this.fsBridge.readFile(versionFilePath)) ??
       JSON.stringify({ version: currentVersion });
     await this.fsBridge.writeFile(path.join(backupDir, "version.json"), oldVersionContent);
+    const configPath = daemonPaths.configFile ?? path.join(this.toolEvolverHome, "config.json");
+    if (await this.fsBridge.exists(configPath)) {
+      const oldConfig = await this.fsBridge.readFile(configPath);
+      if (oldConfig) {
+        await this.fsBridge.writeFile(path.join(backupDir, "config.json"), oldConfig);
+      }
+    }
     stepsCompleted.push("backup_created");
 
     try {
@@ -225,6 +239,13 @@ export class UpgradeOrchestrator {
 
           // Restore version file
           await this.fsBridge.writeFile(versionFilePath, oldVersionContent);
+          const backupConfigFile = path.join(backupDir, "config.json");
+          if (await this.fsBridge.exists(backupConfigFile)) {
+            const content = await this.fsBridge.readFile(backupConfigFile);
+            if (content) {
+              await this.fsBridge.writeFile(configPath, content);
+            }
+          }
 
           // Restart previous version
           await serviceManager.start().catch(() => {});

@@ -30,6 +30,11 @@
       "types": "./dist/installer/user-service.d.ts",
       "import": "./dist/installer/user-service.js",
       "default": "./dist/installer/user-service.js"
+    },
+    "./platform": {
+      "types": "./dist/platform/index.d.ts",
+      "import": "./dist/platform/index.js",
+      "default": "./dist/platform/index.js"
     }
   },
   "scripts": {
