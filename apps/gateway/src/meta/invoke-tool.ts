@@ -23,8 +23,14 @@ function normalizeIdentifier(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function sameRegisteredVersion(left: RegistryTool, right: RegistryTool): boolean {
-  return left.toolId === right.toolId && left.version === right.version;
+function isSameLogicalTool(left: RegistryTool, right: RegistryTool): boolean {
+  return (
+    left.toolId === right.toolId ||
+    left.name === right.name ||
+    left.exposedName === right.exposedName ||
+    left.name === right.exposedName ||
+    left.exposedName === right.name
+  );
 }
 
 /**
@@ -71,45 +77,29 @@ export function createInvokeToolHandler(
       };
     }
 
-    const controls = await registry.controls.getControls(context.workspaceId);
-    const accessibleTools = registry
-      .getAllRegisteredTools()
-      .filter((candidate) => isToolInScope(candidate, context));
-    const nameMatches = publicName
-      ? accessibleTools.filter(
-          (candidate) => candidate.name === publicName || candidate.exposedName === publicName,
-        )
-      : [];
-    const idMatches = toolId
-      ? accessibleTools.filter((candidate) => candidate.toolId === toolId)
-      : [];
+    // Use the canonical catalog resolver used by native invocation. It applies scope
+    // precedence, active versions, pins, disables, and exposed-name collision handling.
+    const byName = publicName
+      ? await registry.getTool(publicName, context.workspaceId, context.sessionId)
+      : undefined;
+    const byId = toolId
+      ? await registry.getTool(toolId, context.workspaceId, context.sessionId)
+      : undefined;
 
-    let matchingTools: RegistryTool[];
-    if (nameMatches.length > 0 && idMatches.length > 0) {
-      const intersection = nameMatches.filter((nameMatch) =>
-        idMatches.some((idMatch) => sameRegisteredVersion(nameMatch, idMatch)),
-      );
-      if (intersection.length === 0) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: `Conflicting tool identifiers: name '${publicName}' and toolId '${toolId}' resolve to different tools.`,
-            },
-          ],
-        };
-      }
-      matchingTools = intersection;
-    } else if (nameMatches.length > 0) {
-      // Public names remain stable across local/cloud registry revisions. A stale internal
-      // toolId must not make an otherwise unambiguous public-name invocation fail.
-      matchingTools = nameMatches;
-    } else {
-      matchingTools = idMatches;
+    if (byName && byId && !isSameLogicalTool(byName, byId)) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Conflicting tool identifiers: name '${publicName}' and toolId '${toolId}' resolve to different tools.`,
+          },
+        ],
+      };
     }
 
-    if (matchingTools.length === 0) {
+    let resolvedTool = byName ?? byId;
+    if (!resolvedTool) {
       return {
         isError: true,
         content: [
@@ -121,37 +111,26 @@ export function createInvokeToolHandler(
       };
     }
 
-    let resolvedTool: RegistryTool | undefined;
     if (params.version && typeof params.version === "string") {
-      const requestedVer = params.version.trim();
-      resolvedTool = matchingTools.find((candidate) => candidate.version === requestedVer);
-      if (!resolvedTool) {
+      const requestedVersion = params.version.trim();
+      const explicitVersion =
+        registry.getToolVersion(resolvedTool.toolId, requestedVersion) ??
+        (publicName ? registry.getToolVersion(publicName, requestedVersion) : undefined);
+      if (!explicitVersion || !isToolInScope(explicitVersion, context)) {
         return {
           isError: true,
           content: [
             {
               type: "text",
-              text: `Version '${requestedVer}' of tool '${displayIdentifier}' not found. Available versions: ${matchingTools.map((candidate) => candidate.version).join(", ")}.`,
+              text: `Version '${requestedVersion}' of tool '${displayIdentifier}' not found or not accessible.`,
             },
           ],
         };
       }
-    } else {
-      const pinnedVer = controls.pinnedVersions[matchingTools[0].toolId];
-      if (pinnedVer) {
-        resolvedTool = matchingTools.find((candidate) => candidate.version === pinnedVer);
-      }
-      if (!resolvedTool) {
-        const latestVer = registry.getLatestRegisteredVersion(matchingTools[0].toolId);
-        if (latestVer) {
-          resolvedTool = matchingTools.find((candidate) => candidate.version === latestVer);
-        }
-      }
-      if (!resolvedTool) {
-        resolvedTool = matchingTools[0];
-      }
+      resolvedTool = explicitVersion;
     }
 
+    const controls = await registry.controls.getControls(context.workspaceId);
     const isDisabled =
       controls.disabledTools.includes(resolvedTool.toolId) && !resolvedTool.isSystem;
     if (isDisabled) {
