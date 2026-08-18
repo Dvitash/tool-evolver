@@ -1,0 +1,26 @@
+name: FIN-97 E2E Parameter Materialization
+on:
+  push:
+    branches: [agent/product-hardening]
+    paths:
+      - .github/agent/fin97_e2e_param.py
+      - .github/workflows/fin97-e2e-param.yml
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/product-hardening
+          fetch-depth: 0
+      - run: python3 .github/agent/fin97_e2e_param.py
+      - run: rm -f .github/agent/fin97_e2e_param.py .github/workflows/fin97-e2e-param.yml
+      - name: Commit materialized fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'test: align FIN-001 E2E invocation with generated schema'
+          git push origin HEAD:agent/product-hardening
