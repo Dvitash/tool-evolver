@@ -1,0 +1,44 @@
+name: Integrate Runtime Hardening
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.head_ref == 'agent/finished-product'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          ref: agent/finished-product
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: 10.24.0
+          run_install: false
+      - name: Apply validated Runtime commit
+        run: git cherry-pick e2d2339ced0bb90334e2009dc8f5fbd39e00079c
+      - name: Remove temporary integration workflow
+        run: rm .github/workflows/agent-integrate-runtime.yml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Format
+        run: pnpm exec biome check --write .
+      - name: Build
+        run: pnpm build
+      - name: Run tests
+        run: pnpm test
+      - name: Commit integrated source
+        run: |
+          git config user.name "tool-evolver-agent"
+          git config user.email "tool-evolver-agent@users.noreply.github.com"
+          git add -A
+          git commit --amend --no-edit
+          git push --force-with-lease origin HEAD:agent/finished-product
