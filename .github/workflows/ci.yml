@@ -32,13 +32,15 @@ jobs:
           run_install: false
 
       - name: Apply lifecycle hardening
-        run: python3 .github/agent/lifecycle_hardening.py
+        run: |
+          python3 .github/agent/lifecycle_hardening.py
+          python3 .github/agent/lifecycle_fix.py
 
       - name: Restore protected CI definition
         run: git checkout origin/main -- .github/workflows/ci.yml
 
-      - name: Remove one-shot patcher
-        run: rm .github/agent/lifecycle_hardening.py
+      - name: Remove one-shot patchers
+        run: rm .github/agent/lifecycle_hardening.py .github/agent/lifecycle_fix.py
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
