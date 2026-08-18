@@ -41,14 +41,14 @@ describe("E2E - Offline Recovery & Machine-Readable Lifecycle Trace Report", () 
     await runCloudMcpProxyScenario(env);
 
     const reporter = env.traceReporter;
-    expect(reporter.hasFailures()).toBe(false);
+    const report = reporter.getReport();
+    expect(reporter.hasFailures(), JSON.stringify(report, null, 2)).toBe(false);
 
     const summary = reporter.getSummary();
     expect(summary.total).toBeGreaterThanOrEqual(30);
     expect(summary.failed).toBe(0);
     expect(summary.passed).toBe(summary.total);
 
-    const report = reporter.getReport();
     expect(report.reportId).toBeTruthy();
     expect(report.environment.platform).toBeTruthy();
     expect(report.summary.passed).toBe(summary.total);

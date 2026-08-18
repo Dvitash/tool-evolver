@@ -111,7 +111,8 @@ export function createMockOpportunity(
 
 export function createMockEnvelope(overrides: MockEnvelopeOverrides = {}): CapabilityEnvelope {
   const legacy = overrides.capabilities;
-  const legacySecret = legacy?.secrets ??
+  const legacySecret =
+    legacy?.secrets ??
     (legacy?.secret
       ? {
           allowedSecretNames: legacy.secret.allowedSecretNames,
@@ -139,14 +140,12 @@ export function createMockEnvelope(overrides: MockEnvelopeOverrides = {}): Capab
       allowWorkspaceRoot:
         overrides.fs?.allowWorkspaceRoot ?? legacy?.fs?.allowWorkspaceRoot ?? true,
       allowTemp: overrides.fs?.allowTemp ?? legacy?.fs?.allowTemp ?? true,
-      denyPaths:
-        overrides.fs?.denyPaths ?? legacy?.fs?.denyPaths ?? [".env", ".git/secrets"],
+      denyPaths: overrides.fs?.denyPaths ?? legacy?.fs?.denyPaths ?? [".env", ".git/secrets"],
       maxFileSizeBytes:
-        overrides.fs?.maxFileSizeBytes ?? legacy?.fs?.maxFileSizeBytes ?? 10485760,
+        overrides.fs?.maxFileSizeBytes ?? legacy?.fs?.maxFileSizeBytes ?? 10_485_760,
     },
     net: {
-      allowOutbound:
-        overrides.net?.allowOutbound ?? legacy?.net?.allowOutbound ?? (legacy?.net ? false : true),
+      allowOutbound: overrides.net?.allowOutbound ?? legacy?.net?.allowOutbound ?? !legacy?.net,
       allowedDomains:
         overrides.net?.allowedDomains ??
         legacy?.net?.allowedDomains ??
@@ -167,9 +166,7 @@ export function createMockEnvelope(overrides: MockEnvelopeOverrides = {}): Capab
     },
     command: {
       allowShellExecution:
-        overrides.command?.allowShellExecution ??
-        legacy?.command?.allowShellExecution ??
-        false,
+        overrides.command?.allowShellExecution ?? legacy?.command?.allowShellExecution ?? false,
       allowedCommands:
         overrides.command?.allowedCommands ??
         legacy?.command?.allowedCommands ??
@@ -201,8 +198,7 @@ export function createMockEnvelope(overrides: MockEnvelopeOverrides = {}): Capab
         overrides.secrets?.allowedPrefixes ??
         legacySecret?.allowedPrefixes ??
         (legacySecret ? [] : ["APP_"]),
-      denyDirectRead:
-        overrides.secrets?.denyDirectRead ?? legacySecret?.denyDirectRead ?? true,
+      denyDirectRead: overrides.secrets?.denyDirectRead ?? legacySecret?.denyDirectRead ?? true,
       injectAsEnv: overrides.secrets?.injectAsEnv ?? legacySecret?.injectAsEnv ?? true,
     },
     limits: {
@@ -214,9 +210,9 @@ export function createMockEnvelope(overrides: MockEnvelopeOverrides = {}): Capab
         overrides.limits?.maxCpuUsagePercent ?? legacy?.limits?.maxCpuUsagePercent ?? 100,
       maxMemoryMb: overrides.limits?.maxMemoryMb ?? legacy?.limits?.maxMemoryMb ?? 256,
       maxExecutionTimeMs:
-        overrides.limits?.maxExecutionTimeMs ?? legacy?.limits?.maxExecutionTimeMs ?? 60000,
+        overrides.limits?.maxExecutionTimeMs ?? legacy?.limits?.maxExecutionTimeMs ?? 60_000,
       maxOutputSizeBytes:
-        overrides.limits?.maxOutputSizeBytes ?? legacy?.limits?.maxOutputSizeBytes ?? 2097152,
+        overrides.limits?.maxOutputSizeBytes ?? legacy?.limits?.maxOutputSizeBytes ?? 2_097_152,
     },
     isFrozen: overrides.isFrozen ?? false,
     createdAt: overrides.createdAt ?? new Date().toISOString(),

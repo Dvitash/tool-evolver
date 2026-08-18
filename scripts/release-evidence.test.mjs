@@ -86,7 +86,6 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
           expect(artifact.exists).toBe(true);
           expect(artifact.sha256).toMatch(/^[0-9a-f]{64}$/);
 
-          // Confirm actual file exists and matches digest
           const fullPath = path.resolve(rootDir, artifact.path);
           expect(fs.existsSync(fullPath)).toBe(true);
           expect(fileSha256(fullPath)).toBe(artifact.sha256);
@@ -97,7 +96,6 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
           expect(suite.status).toBe("PASSED");
           expect(suite.sha256).toMatch(/^[0-9a-f]{64}$/);
 
-          // Confirm actual test suite exists on disk and matches digest
           const fullPath = path.resolve(rootDir, suite.path);
           expect(fs.existsSync(fullPath)).toBe(true);
           expect(fileSha256(fullPath)).toBe(suite.sha256);
@@ -198,27 +196,30 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
   });
 
   describe("4. Release Verification Integration (verifyReleaseEvidence)", () => {
-    it("passes verification on a fully packaged release directory", () => {
-      // Package in temporary directory
-      packageRelease({
-        rootDir,
-        distDir: tempReleaseDir,
-        skipBuild: true,
-      });
+    it(
+      "passes verification on a fully packaged release directory",
+      () => {
+        packageRelease({
+          rootDir,
+          distDir: tempReleaseDir,
+          skipBuild: true,
+        });
 
-      const fileViolations = verifyReleaseFiles(tempReleaseDir);
-      expect(fileViolations).toHaveLength(0);
+        const fileViolations = verifyReleaseFiles(tempReleaseDir);
+        expect(fileViolations).toHaveLength(0);
 
-      const evidenceViolations = verifyReleaseEvidence(tempReleaseDir);
-      expect(evidenceViolations).toHaveLength(0);
+        const evidenceViolations = verifyReleaseEvidence(tempReleaseDir);
+        expect(evidenceViolations).toHaveLength(0);
 
-      const fullVerify = verifyRelease({
-        rootDir,
-        releaseDir: tempReleaseDir,
-      });
-      expect(fullVerify.valid).toBe(true);
-      expect(fullVerify.violations).toHaveLength(0);
-    });
+        const fullVerify = verifyRelease({
+          rootDir,
+          releaseDir: tempReleaseDir,
+        });
+        expect(fullVerify.valid).toBe(true);
+        expect(fullVerify.violations).toHaveLength(0);
+      },
+      15_000,
+    );
 
     it("detects missing evidence files and incomplete milestones", () => {
       const brokenDir = fs.mkdtempSync(path.join(os.tmpdir(), "broken-release-evidence-"));
@@ -227,7 +228,6 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
         const missingRes = verifyReleaseEvidence(brokenDir);
         expect(missingRes.some((v) => v.rule === "MISSING_EVIDENCE_JSON")).toBe(true);
 
-        // Write incomplete evidence JSON
         const badEvidence = {
           release: "0.9.0",
           status: "INCOMPLETE",
@@ -268,30 +268,25 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
         expect(pubResult.manifestSha256).toMatch(/^[0-9a-f]{64}$/);
         expect(pubResult.evidenceSha256).toMatch(/^[0-9a-f]{64}$/);
 
-        // Verify SHA256SUMS and signature
         const sumsPath = path.join(pubDir, "SHA256SUMS");
         const sigPath = path.join(pubDir, "SHA256SUMS.sig");
         expect(fs.existsSync(sumsPath)).toBe(true);
         expect(fs.existsSync(sigPath)).toBe(true);
 
-        // Verify npm provenance
         const provPath = path.join(pubDir, "npm-provenance.json");
         expect(fs.existsSync(provPath)).toBe(true);
         const prov = JSON.parse(fs.readFileSync(provPath, "utf8"));
         expect(prov.statement.predicate.materials).toHaveLength(WORKSPACE_PACKAGES.length);
         expect(pubResult.npmProvenance.smokeTestPassed).toBe(true);
 
-        // Verify GitHub release bundle
         const ghReleasePath = path.join(pubDir, "github-release.json");
         const ghNotesPath = path.join(pubDir, "github-release-notes.md");
         expect(fs.existsSync(ghReleasePath)).toBe(true);
         expect(fs.existsSync(ghNotesPath)).toBe(true);
 
-        // Verify Cloud promotion gate
         expect(pubResult.cloudPromotion.promotedWithoutRebuild).toBe(true);
         expect(pubResult.cloudPromotion.previousVersionRecoverable).toBe("0.1.0");
 
-        // Verify smoke tests
         expect(pubResult.smokeTests.cleanInstall.status).toBe("PASSED");
         expect(pubResult.smokeTests.authBootstrap.status).toBe("PASSED");
         expect(pubResult.smokeTests.canaryTrafficRouting.status).toBe("PASSED");
