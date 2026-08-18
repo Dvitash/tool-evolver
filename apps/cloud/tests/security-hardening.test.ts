@@ -1,3 +1,4 @@
+// Regression coverage for externally reachable cloud trust boundaries.
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { MemoryDatabasePool, runMigrations } from "../src/db/index.js";
