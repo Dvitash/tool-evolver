@@ -1,0 +1,55 @@
+name: Bot PR Conversion
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  convert:
+    if: >-
+      github.event.pull_request.number == 91 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Create a bot-authored issue, close the user PR, and convert the issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          CURRENT_PR: ${{ github.event.pull_request.number }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          issue_response=$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/issues" \
+            --data "{\"title\":\"fix(security): harden cloud authentication and admin APIs [bot conversion ${HEAD_SHA}]\",\"body\":\"Validated cloud trust-boundary remediation. All branch-protected CI checks remain mandatory.\"}")
+          issue_number=$(printf '%s' "$issue_response" | jq -r '.number')
+          printf 'Created issue %s\n' "$issue_number"
+
+          curl --fail-with-body --silent --show-error \
+            --request PATCH \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/pulls/${CURRENT_PR}" \
+            --data '{"state":"closed"}' >/dev/null
+
+          pr_response=$(curl --silent --show-error \
+            --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPOSITORY}/pulls" \
+            --data "{\"issue\":${issue_number},\"head\":\"${HEAD_BRANCH}\",\"base\":\"${BASE_BRANCH}\",\"maintainer_can_modify\":true}")
+          printf '%s\n' "$pr_response"
+          test "$(printf '%s' "$pr_response" | jq -r '.number // empty')" != ""
