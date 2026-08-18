@@ -52,6 +52,7 @@ export class CodeGenerator {
 
     // 1. Structured Inference with prompt template
     if (options.inferenceService) {
+      const allowFallback = options.allowDeterministicFallback ?? false;
       try {
         const response = await options.inferenceService.infer<Record<string, unknown>, unknown>({
           promptTemplateId: "tool_synthesis",
@@ -76,24 +77,12 @@ export class CodeGenerator {
 
         if (response.output) {
           const parsed = ToolSynthesisOutputSchema.parse(response.output);
-          const needsBroker =
-            plan.capabilities.fs.readPaths.length > 0 ||
-            plan.capabilities.fs.writePaths.length > 0 ||
-            plan.capabilities.net.allowOutbound ||
-            plan.capabilities.command.allowedCommands.length > 0;
-
-          const hasBrokerInCode =
-            parsed.code &&
-            (parsed.code.includes("broker.") ||
-              parsed.code.includes("context.fs") ||
-              parsed.code.includes("context.net") ||
-              parsed.code.includes("context.cmd"));
 
           if (
             parsed.code &&
             parsed.code.includes("defineTool") &&
             parsed.code.includes("export default defineTool") &&
-            (!needsBroker || hasBrokerInCode)
+            this.isBrokerUsageCompatible(plan, parsed.code)
           ) {
             return {
               sourceCode: parsed.code,
@@ -104,7 +93,11 @@ export class CodeGenerator {
           }
 
           const customLogic = parsed.executionBody || parsed.transformationLogic || parsed.code;
-          if (customLogic && !customLogic.includes("defineTool")) {
+          if (
+            customLogic &&
+            !customLogic.includes("defineTool") &&
+            this.isBrokerUsageCompatible(plan, customLogic)
+          ) {
             const zodInputSchemaSource = this.schemaGenerator.generateZodSource(plan.inputSchema);
             const zodOutputSchemaSource = this.schemaGenerator.generateOutputZodSource(
               plan.outputSchema,
@@ -152,8 +145,13 @@ ${customLogic}
             };
           }
         }
+
+        if (!allowFallback) {
+          throw new Error(
+            "Structured inference did not return capability-compatible tool source",
+          );
+        }
       } catch (error) {
-        const allowFallback = options.allowDeterministicFallback ?? false;
         if (!allowFallback) {
           throw error;
         }
@@ -165,6 +163,72 @@ ${customLogic}
     // 2. Deterministic Code Synthesis
     const sourceCode = this.generateSource(plan);
     return { sourceCode };
+  }
+
+  /**
+   * Ensures inferred code uses exactly the broker families declared by the deterministic plan.
+   * Model output can implement a plan, but it cannot substitute a different side-effect class.
+   */
+  private isBrokerUsageCompatible(plan: ToolPlan, sourceCode: string): boolean {
+    const usesBroker = (service: "fs" | "net" | "cmd" | "secret"): boolean =>
+      new RegExp(`\\b(?:broker|context)\\.${service}\\b`).test(sourceCode);
+
+    const used = {
+      fs: usesBroker("fs"),
+      net: usesBroker("net"),
+      cmd: usesBroker("cmd"),
+      secret: usesBroker("secret"),
+    };
+    const permitted = {
+      fs:
+        plan.capabilities.fs.readPaths.length > 0 ||
+        plan.capabilities.fs.writePaths.length > 0 ||
+        plan.capabilities.fs.allowWorkspaceRoot ||
+        plan.capabilities.fs.allowTemp,
+      net: plan.capabilities.net.allowOutbound || plan.capabilities.net.allowLocalhost,
+      cmd:
+        plan.capabilities.command.allowShellExecution ||
+        plan.capabilities.command.allowedCommands.length > 0 ||
+        plan.capabilities.command.allowedBinaries.length > 0,
+      secret:
+        plan.capabilities.secrets.allowedSecretNames.length > 0 ||
+        plan.capabilities.secrets.allowedPrefixes.length > 0,
+    };
+
+    if (
+      (used.fs && !permitted.fs) ||
+      (used.net && !permitted.net) ||
+      (used.cmd && !permitted.cmd) ||
+      (used.secret && !permitted.secret)
+    ) {
+      return false;
+    }
+
+    for (const step of plan.steps) {
+      const service = step.service?.toLowerCase();
+      const action = step.action?.toLowerCase() ?? "";
+      if ((service === "fs" || action.startsWith("fs.")) && !used.fs) return false;
+      if (
+        (service === "net" || action.startsWith("net.") || action.startsWith("http.")) &&
+        !used.net
+      ) {
+        return false;
+      }
+      if ((service === "cmd" || action.startsWith("cmd.")) && !used.cmd) return false;
+      if ((service === "secret" || action.startsWith("secret.")) && !used.secret) return false;
+    }
+
+    const requiresSecret =
+      plan.invariantInputs.some((input) => input.name === "authSecretName") ||
+      plan.steps.some((step) => {
+        const requiredSecrets = step.inputs.requiredSecrets;
+        return (
+          typeof step.inputs.secretName === "string" ||
+          (Array.isArray(requiredSecrets) && requiredSecrets.length > 0)
+        );
+      });
+
+    return !requiresSecret || used.secret;
   }
 
   /**
