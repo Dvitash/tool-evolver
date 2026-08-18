@@ -25,8 +25,10 @@ patch(
     '''  objectStore?: ObjectStore;
   observationRepo?: ObservationRepository;
   requirePersistedReplayEvidence?: boolean;
+  replayEvidenceWaitMs?: number;
+  replayEvidencePollMs?: number;
   evidenceMaxAgeMs?: number;''',
-    'requirePersistedReplayEvidence?: boolean;',
+    'replayEvidenceWaitMs?: number;',
 )
 patch(
     orchestrator,
@@ -35,8 +37,10 @@ patch(
     '''  readonly objectStore?: ObjectStore;
   readonly observationRepo?: ObservationRepository;
   readonly requirePersistedReplayEvidence: boolean;
+  readonly replayEvidenceWaitMs: number;
+  readonly replayEvidencePollMs: number;
   readonly evidenceMaxAgeMs: number;''',
-    'readonly requirePersistedReplayEvidence: boolean;',
+    'readonly replayEvidenceWaitMs: number;',
 )
 patch(
     orchestrator,
@@ -47,8 +51,10 @@ patch(
     this.objectStore = opts.objectStore;
     this.observationRepo = opts.observationRepo;
     this.requirePersistedReplayEvidence = opts.requirePersistedReplayEvidence ?? false;
+    this.replayEvidenceWaitMs = opts.replayEvidenceWaitMs ?? 0;
+    this.replayEvidencePollMs = Math.max(1, opts.replayEvidencePollMs ?? 25);
     this.evidenceMaxAgeMs = opts.evidenceMaxAgeMs ?? 24 * 60 * 60 * 1000;''',
-    'this.requirePersistedReplayEvidence =',
+    'this.replayEvidenceWaitMs =',
 )
 helper = '''
   private async resolveReplayEvidence(
@@ -60,50 +66,62 @@ helper = '''
       return { id: `candidate_${candidate.id}_explicit_evidence`, events: baselineEvents };
     }
 
-    const persistedEvents: NormalizedSessionEvent[] = [];
     const evidenceEventIds = candidate.trigger?.evidenceEventIds ?? [];
+    const persistedById = new Map<string, NormalizedSessionEvent>();
+    const deadline = Date.now() + this.replayEvidenceWaitMs;
+
     if (this.observationRepo && evidenceEventIds.length > 0) {
-      for (const eventId of evidenceEventIds) {
-        const entity = await this.observationRepo.getEventById(tenant, eventId);
-        if (!entity) continue;
-        persistedEvents.push({
-          eventId: entity.id,
-          sessionId: entity.sessionId,
-          timestamp: entity.timestamp,
-          type: entity.eventType as NormalizedSessionEvent["type"],
-          schemaVersion: entity.schemaVersion,
-          causalRef: {
-            causalSequence: entity.causalSequence,
-            parentId: entity.parentId ?? undefined,
-            rootId: entity.rootId ?? undefined,
-            turnIndex: entity.turnIndex ?? undefined,
-            stepIndex: entity.stepIndex ?? undefined,
-            traceId: entity.traceId ?? undefined,
-            spanId: entity.spanId ?? undefined,
-          },
-          redaction: entity.redaction ?? { isRedacted: false, rulesApplied: [] },
-          ...entity.payload,
-        } as unknown as NormalizedSessionEvent);
-      }
+      do {
+        for (const eventId of evidenceEventIds) {
+          if (persistedById.has(eventId)) continue;
+          const entity = await this.observationRepo.getEventById(tenant, eventId);
+          if (!entity) continue;
+          persistedById.set(
+            eventId,
+            {
+              eventId: entity.id,
+              sessionId: entity.sessionId,
+              timestamp: entity.timestamp,
+              type: entity.eventType as NormalizedSessionEvent["type"],
+              schemaVersion: entity.schemaVersion,
+              causalRef: {
+                causalSequence: entity.causalSequence,
+                parentId: entity.parentId ?? undefined,
+                rootId: entity.rootId ?? undefined,
+                turnIndex: entity.turnIndex ?? undefined,
+                stepIndex: entity.stepIndex ?? undefined,
+                traceId: entity.traceId ?? undefined,
+                spanId: entity.spanId ?? undefined,
+              },
+              redaction: entity.redaction ?? { isRedacted: false, rulesApplied: [] },
+              ...entity.payload,
+            } as unknown as NormalizedSessionEvent,
+          );
+        }
+
+        if (persistedById.size === evidenceEventIds.length || Date.now() >= deadline) break;
+        await new Promise((resolve) => setTimeout(resolve, this.replayEvidencePollMs));
+      } while (true);
     }
 
-    persistedEvents.sort((left, right) => {
+    const persistedEvents = [...persistedById.values()].sort((left, right) => {
       const timeDelta = Date.parse(left.timestamp) - Date.parse(right.timestamp);
       if (timeDelta !== 0) return timeDelta;
       return (left.causalRef?.causalSequence ?? 0) - (right.causalRef?.causalSequence ?? 0);
     });
+    const missingEventIds = evidenceEventIds.filter((eventId) => !persistedById.has(eventId));
 
-    if (persistedEvents.length > 0) {
+    if (persistedEvents.length > 0 && (!this.requirePersistedReplayEvidence || missingEventIds.length === 0)) {
       return { id: `candidate_${candidate.id}_persisted_evidence`, events: persistedEvents };
     }
 
     if (this.requirePersistedReplayEvidence) {
       throw new Error(
-        `Candidate '${candidate.id}' has no tenant-scoped persisted replay evidence for IDs: ${evidenceEventIds.join(", ") || "none"}`,
+        `Candidate '${candidate.id}' is missing tenant-scoped persisted replay evidence after ${this.replayEvidenceWaitMs}ms. Missing IDs: ${missingEventIds.join(", ") || "all evidence IDs absent"}`,
       );
     }
 
-    return { id: `candidate_${candidate.id}_test_evidence`, events: [] };
+    return { id: `candidate_${candidate.id}_test_evidence`, events: persistedEvents };
   }
 
 '''
@@ -136,8 +154,10 @@ patch(
       objectStore: this.objectStore,
       observationRepo: this.observationRepo,
       requirePersistedReplayEvidence: true,
+      replayEvidenceWaitMs: 5_000,
+      replayEvidencePollMs: 25,
     });''',
-    'requirePersistedReplayEvidence: true,',
+    'replayEvidenceWaitMs: 5_000,',
 )
 
 # Keep the focused E2E error actionable while this hardening pass runs.
@@ -153,4 +173,4 @@ elif "terminalReason: replayRecord.terminalReason" not in source:
     raise SystemExit("replay diagnostics target not found")
 path.write_text(source)
 
-print("FIN-001 replay now uses persisted tenant-scoped evidence")
+print("FIN-001 replay waits for complete persisted tenant-scoped evidence")
