@@ -86,6 +86,15 @@ describe("Cloud production security hardening", () => {
         deadLetterThreshold: 3,
         backoffBaseMs: 1000,
       },
+      models: {
+        provider: "openai-compatible",
+        providerId: "test-provider",
+        baseUrl: "https://models.example/v1",
+        apiKey: "test-key",
+        model: "test-model",
+        timeoutMs: 30000,
+        allowDeterministicFallback: false,
+      },
       auth: {
         jwtSecret: "production-jwt-secret-value-32-characters",
         deviceTokenSecret: "production-device-secret-value-32-chars",

@@ -3,6 +3,7 @@ import { EpisodeSegmenter } from "../../../src/evolution/opportunity/episode.js"
 import {
   SignatureExtractor,
   classifyToolOrCommand,
+  normalizeCommandProfile,
   normalizePathAlias,
 } from "../../../src/evolution/opportunity/signature.js";
 import {
@@ -32,6 +33,10 @@ describe("SignatureExtractor", () => {
     expect(classifyToolOrCommand("vitest")).toBe("test_runner");
     expect(classifyToolOrCommand("git", "git status")).toBe("vcs");
     expect(classifyToolOrCommand("bash")).toBe("shell_exec");
+    expect(classifyToolOrCommand("bash", "git status --porcelain")).toBe("vcs");
+    expect(normalizeCommandProfile("/usr/bin/git   status --porcelain")).toBe(
+      "git status --porcelain",
+    );
     expect(classifyToolOrCommand("agent")).toBe("subagent");
   });
 

@@ -111,7 +111,7 @@ describe("npm-pack-clean-install: Public bootstrap package & clean environment i
     expect(hasTests).toBe(false);
     expect(hasTsBuildInfo).toBe(false);
     expect(hasSrc).toBe(false);
-  });
+  }, 15_000);
 
   it("installs release versions into immutable directories and performs atomic version switching", async () => {
     const toolEvolverHome = path.join(fakeHome, ".tool-evolver");

@@ -550,59 +550,184 @@ export class MockInferenceServer {
             body && typeof body === "object" ? (body as Record<string, unknown>) : {};
           const promptText = JSON.stringify(parsedObj.messages ?? []);
 
-          // Deterministically generate tool candidate or structured response
-          const isOpportunity =
-            promptText.includes("opportunity") || promptText.includes("analyze");
-          const isTestSynthesis = promptText.includes("test") || promptText.includes("spec");
+          const responseFormat = parsedObj.response_format as
+            | { json_schema?: { name?: string } }
+            | undefined;
+          const schemaName = responseFormat?.json_schema?.name ?? "";
 
-          let assistantContent = "";
-          if (isOpportunity) {
-            assistantContent = JSON.stringify({
-              confidence: 0.95,
-              pattern: "repetitive_git_status",
-              toolName: "git_status_checker",
-              description: "Checks git status and diff cleanly",
-              rationale: "Frequent invocation pattern detected across multiple sessions",
-            });
-          } else if (isTestSynthesis) {
-            assistantContent = JSON.stringify({
-              suiteId: "suite_synth_01",
-              tests: [
+          const parseJsonSection = (label: string): Record<string, unknown> | undefined => {
+            const marker = `${label}:`;
+            const markerIndex = promptText.indexOf(marker);
+            if (markerIndex < 0) return undefined;
+            const tail = promptText.slice(markerIndex + marker.length);
+            const firstBrace = tail.indexOf("{");
+            if (firstBrace < 0) return undefined;
+            let depth = 0;
+            let inString = false;
+            let escaped = false;
+            for (let index = firstBrace; index < tail.length; index++) {
+              const char = tail[index]!;
+              if (inString) {
+                if (escaped) escaped = false;
+                else if (char === "\\") escaped = true;
+                else if (char === '"') inString = false;
+                continue;
+              }
+              if (char === '"') inString = true;
+              else if (char === "{") depth++;
+              else if (char === "}") {
+                depth--;
+                if (depth === 0) {
+                  try {
+                    return JSON.parse(tail.slice(firstBrace, index + 1)) as Record<string, unknown>;
+                  } catch {
+                    return undefined;
+                  }
+                }
+              }
+            }
+            return undefined;
+          };
+
+          let structuredOutput: Record<string, unknown>;
+          if (schemaName.includes("opportunity_detection")) {
+            structuredOutput = {
+              opportunities: [
                 {
-                  name: "test_basic_execution",
-                  input: { command: "status" },
-                  expectedOutput: { status: "clean" },
+                  id: "opp_http_001",
+                  title: "Inspect Git Working Tree Status",
+                  description: "Repeated immutable git status inspection workflow.",
+                  taskClass: "vcs",
+                  pattern: "vcs_git_status_porcelain",
+                  confidenceScore: 0.95,
+                  evidence: ["repeated sessions"],
+                  priority: "high",
                 },
               ],
-            });
-          } else {
-            // Default candidate tool synthesis response
-            assistantContent = JSON.stringify({
+            };
+          } else if (schemaName.includes("candidate_planning")) {
+            const classification = parseJsonSection("Classification");
+            structuredOutput = {
+              planId: "plan_http_001",
+              targetToolName:
+                (classification?.suggestedToolName as string | undefined) ?? "git_status_checker",
+              action: "create",
+              summary: "Create a tool from the persisted deterministic opportunity.",
+              interfaceChanges: [],
+              securityRisks: ["Command execution is restricted to the observed immutable profile."],
+              estimatedImpact: "Eliminates a repeated multi-step workflow.",
+              suggestedInputs: [],
+            };
+          } else if (schemaName.includes("schema_generation")) {
+            const observedMatch = promptText.match(/Observed Variables:\n(\[[\s\S]*?\])\n/i);
+            let observed: Array<Record<string, unknown>> = [];
+            if (observedMatch?.[1]) {
+              try {
+                const parsedObserved = JSON.parse(observedMatch[1]);
+                if (Array.isArray(parsedObserved)) observed = parsedObserved;
+              } catch {
+                observed = [];
+              }
+            }
+            structuredOutput = {
               toolName: "git_status_checker",
-              description: "Deterministic Git status and working tree cleaner tool",
-              inputSchema: {
+              description: "Schema derived only from observed variables.",
+              parameters: observed.map((value) => ({
+                name: String(value.name ?? "input"),
+                type: String(value.type ?? "string"),
+                description: String(value.description ?? "Observed input"),
+                required: value.required !== false,
+              })),
+              outputSchema: {
                 type: "object",
+                description: "Command execution result",
                 properties: {
-                  command: { type: "string" },
-                  flag: { type: "string" },
+                  success: { type: "boolean" },
+                  data: { type: "object" },
                 },
-                required: ["command"],
+                required: ["success"],
               },
-              implementationCode: `
-export default async function run(input: { command: string; flag?: string }) {
-  if (input.command === "fail") {
-    throw new Error("Simulated execution failure in generated tool");
-  }
-  return {
-    status: "ok",
-    executedCommand: input.command,
-    flag: input.flag ?? "none",
-    timestamp: new Date().toISOString(),
-  };
-}
-`.trim(),
-            });
+            };
+          } else if (schemaName.includes("tool_synthesis")) {
+            const specification = parseJsonSection("Specification") ?? {};
+            const toolName = String(specification.name ?? "generated_tool");
+            const description = String(specification.description ?? "Generated tool");
+            const steps = Array.isArray(specification.steps)
+              ? (specification.steps as Array<Record<string, unknown>>)
+              : [];
+            const commandStep = steps.find(
+              (step) => step.service === "cmd" || String(step.action ?? "").startsWith("cmd."),
+            );
+            const stepInputs =
+              commandStep?.inputs && typeof commandStep.inputs === "object"
+                ? (commandStep.inputs as Record<string, unknown>)
+                : {};
+            const command = String(stepInputs.command ?? "git");
+            const args = Array.isArray(stepInputs.args)
+              ? stepInputs.args.filter((value): value is string => typeof value === "string")
+              : [];
+            const code = commandStep
+              ? `import { defineTool, type ToolContext } from "@tool-evolver/runtime";
+import { z } from "zod";
+export const InputSchema = z.object({}).strict();
+export const OutputSchema = z.object({ success: z.boolean(), data: z.record(z.unknown()).optional() }).strict();
+type ToolInput = z.infer<typeof InputSchema>;
+type ToolOutput = z.infer<typeof OutputSchema>;
+export default defineTool<ToolInput, ToolOutput>(async (context: ToolContext<ToolInput>): Promise<ToolOutput> => {
+  const { broker, logger, progress } = context;
+  await progress(0, "Starting execution");
+  await logger.info("Executing tool", { toolName: ${JSON.stringify(toolName)} });
+  const result = await broker.cmd.exec(${JSON.stringify(command)}, ${JSON.stringify(args)});
+  if (result.exitCode !== 0) throw new Error(\`Command failed with exit code \${result.exitCode}: \${result.stderr}\`);
+  await progress(100, "Execution finished", "complete");
+  return { success: true, data: { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode } };
+});`
+              : `import { defineTool, type ToolContext } from "@tool-evolver/runtime";
+import { z } from "zod";
+export const InputSchema = z.object({ input: z.unknown().optional() }).strict();
+export const OutputSchema = z.object({ success: z.boolean(), data: z.record(z.unknown()).optional() }).strict();
+type ToolInput = z.infer<typeof InputSchema>;
+type ToolOutput = z.infer<typeof OutputSchema>;
+export default defineTool<ToolInput, ToolOutput>(async (context: ToolContext<ToolInput>): Promise<ToolOutput> => {
+  return { success: true, data: { input: context.input.input } };
+});`;
+            structuredOutput = {
+              toolId: `tool_${toolName}`,
+              name: toolName,
+              version: "1.0.0",
+              description,
+              schema: specification.inputSchema ?? { type: "object", properties: {} },
+              code,
+              runtimeRequirements: ["deno:runtime"],
+            };
+          } else if (schemaName.includes("test_generation")) {
+            structuredOutput = {
+              suiteId: "suite_http_001",
+              targetTool: "generated_tool",
+              unitTests: [
+                {
+                  name: "executes valid input",
+                  description: "Validates the generated tool happy path.",
+                  code: "Deno.test('executes', () => {});",
+                },
+              ],
+              propertyTests: [],
+              edgeCases: ["broker failure"],
+            };
+          } else if (schemaName.includes("tool_repair")) {
+            structuredOutput = {
+              toolId: "tool_repaired_http",
+              name: "repaired_tool",
+              version: "1.0.1",
+              code: "",
+              fixedIssues: [],
+              explanation: "No repair supplied by deterministic HTTP fixture.",
+            };
+          } else {
+            structuredOutput = { status: "success" };
           }
+
+          const assistantContent = JSON.stringify(structuredOutput);
 
           const responsePayload = {
             id: `chatcmpl-mock-${Date.now()}`,

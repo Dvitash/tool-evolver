@@ -234,10 +234,13 @@ ${executionBody}
       toolClass === "filesystem" ||
       toolClass === "file_read" ||
       toolClass === "file_edit" ||
-      name.includes("file") ||
-      name.includes("read") ||
-      name.includes("write") ||
-      desc.includes("file")
+      ((service === "" || service === "compute") &&
+        !action.startsWith("cmd.") &&
+        !action.startsWith("net.") &&
+        (name.includes("file") ||
+          name.includes("read") ||
+          name.includes("write") ||
+          desc.includes("file")))
     ) {
       if (
         action.includes("write") ||
@@ -285,10 +288,12 @@ ${executionBody}
       toolClass === "network" ||
       toolClass === "http" ||
       toolClass === "api" ||
-      name.includes("fetch") ||
-      name.includes("http") ||
-      name.includes("api") ||
-      desc.includes("api")
+      ((service === "" || service === "compute") &&
+        !action.startsWith("cmd.") &&
+        (name.includes("fetch") ||
+          name.includes("http") ||
+          name.includes("api") ||
+          desc.includes("api")))
     ) {
       const secretName =
         plan.capabilities.secrets.allowedSecretNames[0] ||
@@ -346,15 +351,20 @@ ${executionBody}
       name.includes("command")
     ) {
       const commandName =
-        plan.capabilities.command.allowedCommands[0] ||
         (step?.inputs.command as string | undefined) ||
-        "echo 'done'";
+        plan.capabilities.command.allowedBinaries[0];
+      const commandArgs = Array.isArray(step?.inputs.args)
+        ? step.inputs.args.filter((value): value is string => typeof value === "string")
+        : [];
+      if (!commandName || commandName.startsWith("$")) {
+        throw new Error("Command source generation requires a fixed executable identity");
+      }
 
       const secretName = plan.capabilities.secrets.allowedSecretNames[0];
 
       if (secretName) {
-        return `      const command = (input as Record<string, unknown>).command as string ?? (input as Record<string, unknown>).cmd as string ?? ${JSON.stringify(commandName)};
-      const args = ((input as Record<string, unknown>).args as string[]) ?? [];
+        return `      const command = ${JSON.stringify(commandName)};
+      const args = ${JSON.stringify(commandArgs)};
       await logger.debug("Executing command with secret env via cmd broker", { command, args });
       const secretEnv = broker.secret.createReference(${JSON.stringify(secretName)}, { modes: ["command_env"] });
       const res = await broker.cmd.exec(command, args, {
@@ -370,10 +380,13 @@ ${executionBody}
       };`;
       }
 
-      return `      const command = (input as Record<string, unknown>).command as string ?? (input as Record<string, unknown>).cmd as string ?? ${JSON.stringify(commandName)};
-      const args = ((input as Record<string, unknown>).args as string[]) ?? [];
+      return `      const command = ${JSON.stringify(commandName)};
+      const args = ${JSON.stringify(commandArgs)};
       await logger.debug("Executing command via command broker", { command, args });
       const res = await broker.cmd.exec(command, args);
+      if (res.exitCode !== 0) {
+        throw new Error(\`Command '\${command}' failed with exit code \${res.exitCode}: \${res.stderr}\`);
+      }
       resultData = {
         stdout: res.stdout,
         stderr: res.stderr,

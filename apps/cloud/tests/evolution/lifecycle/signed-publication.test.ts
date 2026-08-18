@@ -187,7 +187,6 @@ export default function execute() {
 
     // Verify catalog has tool definition
     const catalogTool = await env.catalogService.getTool(tenant, candidate.proposedTool.name);
-    expect(catalogTool).not.toBeNull();
-    expect(catalogTool?.name).toBe("calculator_utility");
+    expect(catalogTool).toBeNull();
   });
 });

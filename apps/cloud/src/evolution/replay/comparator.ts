@@ -351,7 +351,11 @@ export class ReplayTraceComparator {
           op.args[0] &&
           typeof op.args[0] === "string"
         ) {
-          if (!new RegExp(a.commandPattern).test(op.args[0])) return false;
+          const commandArgs = Array.isArray(op.args[1])
+            ? op.args[1].filter((value): value is string => typeof value === "string")
+            : [];
+          const commandProfile = [op.args[0], ...commandArgs].join(" ").trim();
+          if (!new RegExp(a.commandPattern).test(commandProfile)) return false;
         }
 
         return true;
@@ -367,6 +371,7 @@ export class ReplayTraceComparator {
             service: op.service,
             operation: op.operation,
             args: op.args,
+            allowedBrokerOperations: allowed,
           },
         });
       }

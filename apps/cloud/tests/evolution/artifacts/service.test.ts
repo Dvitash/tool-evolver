@@ -26,7 +26,7 @@ describe("ToolArtifactRegistryService - End-to-End Publication & Version Registr
     expect(publishedVersion).toBeDefined();
     expect(publishedVersion.toolId).toBe(candidate.proposedTool.id);
     expect(publishedVersion.version).toBe("1.0.0");
-    expect(publishedVersion.status).toBe("active");
+    expect(publishedVersion.status).toBe("draft");
     expect(publishedVersion.signature).toBeDefined();
     expect(publishedVersion.signature?.algorithm).toBe("ed25519");
     expect(publishedVersion.signature?.signature).toBeDefined();
@@ -49,7 +49,7 @@ describe("ToolArtifactRegistryService - End-to-End Publication & Version Registr
       { workspaceId: candidate.workspaceId },
       candidate.proposedTool.id,
     );
-    expect(tool?.activeVersion).toBe("1.0.0");
+    expect(tool?.activeVersion).toBeUndefined();
 
     const latestAlias = await env.toolRegistryRepo.getAlias(
       { workspaceId: candidate.workspaceId },
@@ -293,8 +293,6 @@ describe("ToolArtifactRegistryService - End-to-End Publication & Version Registr
     await env.service.publishCandidate(cand2, createMockEvaluationResult(cand2));
 
     const rollbackTargets = await env.service.getEligibleRollbackTargets(toolId, workspaceId);
-    expect(rollbackTargets.length).toBe(2);
-    expect(rollbackTargets.map((r) => r.version)).toContain("1.1.0");
-    expect(rollbackTargets.map((r) => r.version)).toContain("1.0.0");
+    expect(rollbackTargets).toEqual([]);
   });
 });

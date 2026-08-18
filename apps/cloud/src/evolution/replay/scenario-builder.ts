@@ -300,54 +300,79 @@ export class ReplayScenarioBuilder {
       "requiredCapabilities" in candidate && candidate.requiredCapabilities
         ? candidate.requiredCapabilities
         : undefined;
+    if (!caps) return allowed;
 
-    if (caps?.fs) {
-      const paths = [...(caps.fs.readPaths ?? []), ...(caps.fs.writePaths ?? [])];
+    const regexEscape = String.fromCharCode(92);
+    const regexSpecials = new Set([
+      regexEscape,
+      ".",
+      "*",
+      "+",
+      "?",
+      "^",
+      "$",
+      "{",
+      "}",
+      "(",
+      ")",
+      "|",
+      "[",
+      "]",
+    ]);
+    const escapeRegex = (value: string): string =>
+      Array.from(value, (character) =>
+        regexSpecials.has(character) ? `${regexEscape}${character}` : character,
+      ).join("");
+
+    const fsPaths = [...(caps.fs.readPaths ?? []), ...(caps.fs.writePaths ?? [])];
+    if (fsPaths.length > 0 || caps.fs.allowWorkspaceRoot || caps.fs.allowTemp) {
       allowed.push({
         service: "fs",
         operation: "*",
-        pathPattern: paths.length > 0 ? paths.join("|") : ".*",
-      });
-    } else {
-      allowed.push({
-        service: "fs",
-        operation: "*",
-        pathPattern: ".*",
+        pathPattern:
+          fsPaths.length > 0
+            ? fsPaths.map(escapeRegex).join("|")
+            : caps.fs.allowWorkspaceRoot
+              ? ".*"
+              : "^/tmp(?:/|$)",
       });
     }
 
-    if (caps?.net) {
+    if (caps.net.allowOutbound || caps.net.allowLocalhost) {
+      const hosts = [...(caps.net.allowedHosts ?? []), ...(caps.net.allowedDomains ?? [])];
       allowed.push({
         service: "net",
         operation: "*",
-        urlPattern: caps.net.allowedHosts?.join("|") ?? ".*",
-      });
-    } else {
-      allowed.push({
-        service: "net",
-        operation: "*",
-        urlPattern: ".*",
+        urlPattern: hosts.length > 0 ? hosts.map(escapeRegex).join("|") : "(?!)",
       });
     }
 
-    if (caps?.command) {
-      allowed.push({
-        service: "cmd",
-        operation: "*",
-        commandPattern: caps.command.allowedCommands?.join("|") ?? ".*",
-      });
-    } else {
-      allowed.push({
-        service: "cmd",
-        operation: "*",
-        commandPattern: ".*",
-      });
+    const commandProfiles = (caps.command.allowedCommands ?? []).filter(
+      (value) => value && !value.startsWith("$"),
+    );
+    const commandBinaries = (caps.command.allowedBinaries ?? []).filter(
+      (value) => value && !value.startsWith("$"),
+    );
+    if (
+      caps.command.allowShellExecution ||
+      commandProfiles.length > 0 ||
+      commandBinaries.length > 0
+    ) {
+      const commandPattern = caps.command.allowShellExecution
+        ? ".*"
+        : `^(?:${[
+            ...commandProfiles.map((value) => escapeRegex(value)),
+            ...commandBinaries.map((value) => `${escapeRegex(value)}(?:\s|$)`),
+          ].join("|")})`;
+      allowed.push({ service: "cmd", operation: "*", commandPattern });
     }
 
-    allowed.push({
-      service: "secret",
-      operation: "*",
-    });
+    if (
+      (caps.secrets.allowedSecretNames?.length ?? 0) > 0 ||
+      (caps.secrets.allowedPrefixes?.length ?? 0) > 0
+    ) {
+      allowed.push({ service: "secret", operation: "createReference" });
+    }
 
     return allowed;
   }
@@ -527,7 +552,7 @@ export class ReplayScenarioBuilder {
     const hasFiles =
       hasFsCapability && Object.keys(primary.virtualState.fs?.files ?? {}).length > 0;
 
-    if (targetFile || hasFiles) {
+    if (hasFsCapability && (targetFile || hasFiles)) {
       const fileToFail = targetFile ?? Object.keys(primary.virtualState.fs?.files ?? {})[0]!;
       negatives.push({
         id: `scenario-neg-file-${rng.nextUuid().slice(0, 8)}`,
@@ -603,7 +628,7 @@ export class ReplayScenarioBuilder {
     );
     const hasNetCapability = caps?.net?.allowOutbound === true;
 
-    if (hasNetRoutes || hasUrlInput || hasNetCapability) {
+    if (hasNetCapability && (hasNetRoutes || hasUrlInput || hasNetCapability)) {
       negatives.push({
         id: `scenario-neg-net-${rng.nextUuid().slice(0, 8)}`,
         name: `Negative Network Error: ${manifest.name ?? "candidate"}`,

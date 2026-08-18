@@ -52,6 +52,7 @@ describe("CandidatePlanner", () => {
         inferredInputs: [
           { name: "command", type: "string", description: "Git subcommand to execute" },
         ],
+        commandProfiles: ["git status --porcelain"],
       },
     });
 
@@ -62,6 +63,9 @@ describe("CandidatePlanner", () => {
     expect(plan.steps).toHaveLength(1);
     expect(plan.steps[0].action).toBe("cmd.exec");
     expect(plan.steps[0].toolClass).toBe("command");
+    expect(plan.steps[0].inputs.command).toBe("git");
+    expect(plan.steps[0].inputs.args).toEqual(["status", "--porcelain"]);
+    expect(plan.variableInputs.some((input) => input.name === "command")).toBe(false);
   });
 
   it("should derive fallback variable inputs when inferred inputs are empty", () => {
@@ -104,6 +108,7 @@ describe("CandidatePlanner", () => {
         confidenceScore: 0.9,
         priority: "high",
         suggestedToolName: "inspect_repo",
+        commandProfiles: ["git status --porcelain"],
         inferredInputs: [{ name: "command", type: "string", description: "Command to run" }],
       },
     });

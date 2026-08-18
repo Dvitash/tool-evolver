@@ -589,6 +589,7 @@ export async function doctorCommand(
     fsBridge?: ConfigFsBridge;
     customFetch?: typeof fetch;
     isRepair?: boolean;
+    safetyCertification?: LocalSafetyCertificationOptions;
   } = {},
 ): Promise<number> {
   const flags = parseDoctorFlags(args);
@@ -607,6 +608,7 @@ export async function doctorCommand(
         home: flags.home,
         fsBridge: options.fsBridge,
         customFetch: options.customFetch,
+        safetyCertification: options.safetyCertification,
       });
     }
 
@@ -661,6 +663,7 @@ export async function repairCommand(
   options: {
     fsBridge?: ConfigFsBridge;
     customFetch?: typeof fetch;
+    safetyCertification?: LocalSafetyCertificationOptions;
   } = {},
 ): Promise<number> {
   return doctorCommand(args, { ...options, isRepair: true });

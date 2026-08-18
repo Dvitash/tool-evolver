@@ -84,6 +84,9 @@ describe("doctor & repair commands", () => {
     const actions = await repairState({
       home: homeDir,
       fsBridge,
+      safetyCertification: {
+        probeOverrides: { denoAvailable: true, denoVersion: "2.0.0" },
+      },
     });
 
     expect(actions.some((a) => a.includes("Created directory"))).toBe(true);
@@ -138,6 +141,9 @@ describe("doctor & repair commands", () => {
     try {
       const exitCode = await repairCommand(["--json", "--home", homeDir], {
         fsBridge,
+        safetyCertification: {
+          probeOverrides: { denoAvailable: true, denoVersion: "2.0.0" },
+        },
       });
 
       expect(exitCode).toBe(0);

@@ -97,6 +97,8 @@ describe("CodeGenerator", () => {
     const source = codeGen.generateSource(plan);
 
     expect(source).toContain("await broker.cmd.exec(command, args);");
+    expect(source).toContain("if (res.exitCode !== 0)");
+    expect(source).toContain("failed with exit code");
   });
 
   it("should generate TypeScript source for a network tool", () => {

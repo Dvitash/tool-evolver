@@ -177,6 +177,17 @@ export class OpportunityDetectionService {
         cluster,
         triggerResult.reason,
       );
+      // Models may summarize intent, but cannot rewrite the deterministic operation class
+      // or the exact command profiles that define the candidate's capability boundary.
+      const primaryToolClass = cluster.representativeSignature.toolClasses[0];
+      if (primaryToolClass) classification.taskClass = primaryToolClass;
+      classification.commandProfiles = [...cluster.representativeSignature.commandPatterns];
+      if (classification.commandProfiles.length > 0 && primaryToolClass === "vcs") {
+        classification.pattern = `vcs_${classification.commandProfiles[0]!.replace(
+          /[^a-z0-9]+/gi,
+          "_",
+        ).replace(/^_+|_+$/g, "")}`;
+      }
 
       // 11. Construct OpportunityDetection domain entity
       // Invariant: Deterministic values (id, accountId, workspaceId, clusterId, structuralHash,

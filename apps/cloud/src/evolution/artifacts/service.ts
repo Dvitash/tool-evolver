@@ -127,7 +127,8 @@ export class ToolArtifactRegistryService {
     this.builder = options.builder ?? new ArtifactBuilder();
     this.signer = options.signer ?? new ArtifactSigner();
     this.versioning = options.versioning ?? new SemanticVersionClassifier();
-    this.allowEphemeralSigningKey = options.allowEphemeralSigningKey ?? false;
+    this.allowEphemeralSigningKey =
+      options.allowEphemeralSigningKey ?? process.env.NODE_ENV === "test";
   }
 
   /**
@@ -198,21 +199,32 @@ export class ToolArtifactRegistryService {
       tenant,
       candidate.proposedTool.id,
     );
+    const existingVersions = await this.toolRegistryRepo.listToolVersions(
+      tenant,
+      candidate.proposedTool.id,
+    );
+    const priorVersion = existingVersions[0] ?? priorActiveVersion;
     const diffReport = this.versioning.diffManifests(
       candidate.proposedTool,
-      priorActiveVersion ? priorActiveVersion.manifest : undefined,
+      priorVersion ? priorVersion.manifest : undefined,
     );
 
     let targetVersion = options.overrideVersion;
     if (!targetVersion) {
       if (options.targetVersionIncrement) {
         targetVersion = this.versioning.computeNextVersion(
-          priorActiveVersion?.version,
+          priorVersion?.version,
           options.targetVersionIncrement,
           candidate.proposedTool.version,
         );
       } else {
-        targetVersion = diffReport.newVersion;
+        targetVersion = priorVersion
+          ? this.versioning.computeNextVersion(
+              priorVersion.version,
+              diffReport.increment,
+              candidate.proposedTool.version,
+            )
+          : diffReport.newVersion;
       }
     }
 

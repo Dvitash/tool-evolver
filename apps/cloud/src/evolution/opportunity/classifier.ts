@@ -19,6 +19,7 @@ function generateHeuristicClassification(sig: EpisodeSignature): OpportunityClas
   let description = `Recurring sequence of operations: ${opsSummary}.`;
 
   const inferredInputs: OpportunityInferredInput[] = [];
+  const commandProfiles = [...sig.commandPatterns];
 
   if (sig.normalizedPaths.length > 0) {
     inferredInputs.push({
@@ -29,7 +30,17 @@ function generateHeuristicClassification(sig: EpisodeSignature): OpportunityClas
     });
   }
 
-  if (sig.toolClasses.includes("test_runner")) {
+  if (sig.toolClasses.includes("vcs")) {
+    const profile = commandProfiles[0] ?? "git status --porcelain";
+    title = profile.startsWith("git status")
+      ? "Inspect Git Working Tree Status"
+      : "Automate Repeated Git Operation";
+    pattern = `vcs_${profile.replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "")}`;
+    suggestedToolName = profile.startsWith("git status")
+      ? "git_status_checker"
+      : "git_operation_helper";
+    description = `Executes the observed immutable command profile: ${profile}.`;
+  } else if (sig.toolClasses.includes("test_runner")) {
     title = "Automated Test Discovery and Execution";
     pattern = "test_execution_flow";
     suggestedToolName = "run_test_suite";
@@ -56,12 +67,13 @@ function generateHeuristicClassification(sig: EpisodeSignature): OpportunityClas
   return {
     title,
     description,
-    taskClass: "opportunity_detection",
+    taskClass: primaryClass,
     pattern,
     confidenceScore: 0.85,
     priority: sig.retryCount > 0 || sig.totalDurationMs > 60_000 ? "high" : "medium",
     inferredInputs,
     suggestedToolName,
+    commandProfiles,
     candidateOutputSchema: {
       type: "object",
       properties: {
@@ -145,6 +157,7 @@ export class OpportunityClassifier {
           inferredInputs: fallback.inferredInputs,
           candidateOutputSchema: fallback.candidateOutputSchema,
           suggestedToolName: fallback.suggestedToolName,
+          commandProfiles: fallback.commandProfiles,
           provenance: {
             requestId: response.requestId,
             providerId: response.provenance.providerId,

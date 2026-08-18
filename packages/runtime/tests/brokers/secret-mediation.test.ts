@@ -412,21 +412,21 @@ describe("Secret Mediation Broker Security & Isolation", () => {
         workspaceId: "ws_main",
       };
 
-      // Dispatched request for mediateHeaders
-      const res = (await brokerManager.handleRequest(
-        "secret",
-        "mediateHeaders",
-        {
-          headers: {
-            Authorization: "Bearer {{secret:GITHUB_TOKEN}}",
-          },
-        },
-        ctx,
-      )) as Record<string, string>;
+      await expect(
+        brokerManager.handleRequest(
+          "secret",
+          "mediateHeaders",
+          { headers: { Authorization: "Bearer {{secret:GITHUB_TOKEN}}" } },
+          ctx,
+        ),
+      ).rejects.toMatchObject({ code: "DIRECT_READ_DENIED" });
 
-      expect(res.Authorization).toBe("Bearer ghp_123456789012345678901234567890123456");
+      const trusted = await secretBroker.mediateHeaders(
+        { Authorization: "Bearer {{secret:GITHUB_TOKEN}}" },
+        { ...ctx, isWorker: false, source: "host" },
+      );
+      expect(trusted.Authorization).toBe("Bearer ghp_123456789012345678901234567890123456");
 
-      // Dispatched direct read fails
       await expect(
         brokerManager.handleRequest("secret", "getSecret", { name: "GITHUB_TOKEN" }, ctx),
       ).rejects.toThrow(BrokerSecurityError);

@@ -579,6 +579,14 @@ export class CandidatePlanner {
       }
     }
 
+    if (opportunity.classification.commandProfiles?.length) {
+      for (let index = variableInputs.length - 1; index >= 0; index--) {
+        if (["command", "cmd", "args"].includes(variableInputs[index]!.name.toLowerCase())) {
+          variableInputs.splice(index, 1);
+        }
+      }
+    }
+
     if (
       opportunity.classification.taskClass === "multi_step" ||
       opportunity.classification.pattern.includes("->")
@@ -739,9 +747,27 @@ export class CandidatePlanner {
       toolClass = "command";
       service = "cmd";
       action = "cmd.exec";
-      const defaultCmd =
-        envelope?.command.allowedCommands[0] || envelope?.command.allowedBinaries[0] || "echo";
-      inputs.command = inputs.command || defaultCmd;
+      const inferredDefault = opportunity.classification.inferredInputs?.find((input) =>
+        ["command", "cmd"].includes(input.name.toLowerCase()),
+      )?.default;
+      const descriptiveText =
+        `${opportunity.classification.title} ${opportunity.classification.description}`.toLowerCase();
+      const commandProfile =
+        opportunity.classification.commandProfiles?.[0] ||
+        (typeof inferredDefault === "string" ? inferredDefault : undefined) ||
+        envelope?.command.allowedCommands[0] ||
+        envelope?.command.allowedBinaries[0] ||
+        (descriptiveText.includes("git status") ? "git status --porcelain" : undefined);
+      if (!commandProfile || commandProfile.startsWith("$")) {
+        throw new Error(
+          "Command candidates require an observed immutable command profile or an explicitly approved envelope command",
+        );
+      }
+      const [executable, ...commandArgs] = commandProfile.trim().split(/\s+/);
+      if (!executable) throw new Error("Command profile has no executable");
+      inputs.command = executable;
+      inputs.args = commandArgs;
+      inputs.commandProfile = commandProfile;
       inputs.toolClass = "command";
     } else if (
       taskClass === "network" ||

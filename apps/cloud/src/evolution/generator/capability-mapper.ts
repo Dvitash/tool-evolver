@@ -185,16 +185,19 @@ export class CapabilityMapper {
         needsCmd = true;
         const commandVal = step.inputs.command ?? step.inputs.cmd ?? step.inputs.binary;
         if (typeof commandVal === "string" && commandVal.trim().length > 0) {
-          const fullCmd = commandVal.trim();
-          const binary = fullCmd.split(/\s+/)[0];
+          if (commandVal.trim().startsWith("$")) {
+            throw new Error("Dynamic command placeholders cannot be converted into capabilities");
+          }
+          const commandArgs = Array.isArray(step.inputs.args)
+            ? step.inputs.args.filter((value): value is string => typeof value === "string")
+            : [];
+          const binary = commandVal.trim().split(/\s+/)[0];
+          const fullCmd = [commandVal.trim(), ...commandArgs].join(" ").trim();
           if (binary && !cmdCap.allowedBinaries.includes(binary)) {
             cmdCap.allowedBinaries.push(binary);
           }
           if (fullCmd && !cmdCap.allowedCommands.includes(fullCmd)) {
             cmdCap.allowedCommands.push(fullCmd);
-          }
-          if (binary && !cmdCap.allowedCommands.includes(binary)) {
-            cmdCap.allowedCommands.push(binary);
           }
         }
       }

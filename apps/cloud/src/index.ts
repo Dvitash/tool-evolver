@@ -83,7 +83,7 @@ import {
   OpenAiCompatibleProvider,
   createInferenceService,
 } from "./models/index.js";
-import type { JobEnvelope } from "./queue/envelope.js";
+import { type JobEnvelope, createJobEnvelope } from "./queue/envelope.js";
 import { type DurableQueue, createDurableQueue } from "./queue/queue.js";
 import { JobScheduler } from "./queue/scheduler.js";
 import { WorkerRuntime } from "./queue/worker.js";
@@ -306,6 +306,10 @@ export class CloudService {
       outboxPublisher: this.outboxPublisher,
       queue: this.queue,
       objectStore: this.objectStore,
+      observationRepo: this.observationRepo,
+      requirePersistedReplayEvidence: true,
+      replayEvidenceWaitMs: 5_000,
+      replayEvidencePollMs: 25,
     });
     this.worker.registerHandler("opportunity.detect", async (job) => {
       const tenant = job.tenantContext;
@@ -374,6 +378,31 @@ export class CloudService {
     this.worker.registerHandler("store-observation-batch", async (job) => {
       const typedJob = job as unknown as JobEnvelope<StoreObservationBatchPayload>;
       await this.observationConsumer.processJob(typedJob);
+    });
+
+    // Transactional outbox records are durable intent, not completed work. Bridge every
+    // record into the durable queue before the publisher marks it published. The outbox
+    // record ID is the queue idempotency key, so retries cannot fork downstream work.
+    this.outboxPublisher.subscribe("*", async (record) => {
+      await this.queue.enqueue(
+        createJobEnvelope({
+          jobType: record.eventType,
+          version: "1.0.0",
+          tenantContext: {
+            accountId: record.accountId,
+            workspaceId: record.workspaceId,
+            traceId: record.headers.traceId,
+            correlationId: record.headers.correlationId,
+            roles: ["system"],
+            metadata: { source: "transactional-outbox" },
+          },
+          causationId: record.aggregateId,
+          correlationId: record.headers.correlationId,
+          idempotencyKey: `outbox:${record.id}`,
+          payload: record.payload,
+          traceContext: record.headers,
+        }),
+      );
     });
 
     this.worker.registerHandler("candidate.validate", async (job) => {
