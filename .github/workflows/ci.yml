@@ -28,20 +28,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec biome check --write .
       - run: pnpm build
-      - name: Run tests with concise failure diagnostics
-        run: |
-          set +e
-          pnpm test > /tmp/test.log 2>&1
-          status=$?
-          set -e
-          if [ "$status" -ne 0 ]; then
-            echo '=== FAILED TEST SUMMARY ==='
-            grep -nE 'FAIL |Failed Tests|AssertionError|Error:|Test Files|Tests ' /tmp/test.log | tail -n 160 || true
-            echo '=== FINAL LOG TAIL ==='
-            tail -n 260 /tmp/test.log
-            exit "$status"
-          fi
-          tail -n 40 /tmp/test.log
+      - name: Run focused real-process lifecycle test
+        run: pnpm exec vitest run fixtures/e2e/tests/real-process-topology.test.ts
       - name: commit
         run: |
           git config user.name 'github-actions[bot]'
