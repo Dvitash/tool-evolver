@@ -38,7 +38,7 @@ describe("OpportunityClassifier & Model Invariants", () => {
     expect(classification.title).toBeDefined();
     expect(classification.pattern).toBeDefined();
     expect(classification.confidenceScore).toBeGreaterThan(0);
-    expect(classification.taskClass).toBe("opportunity_detection");
+    expect(classification.taskClass).toBe("file_read");
   });
 
   it("should enrich opportunity classification using InferenceService", async () => {

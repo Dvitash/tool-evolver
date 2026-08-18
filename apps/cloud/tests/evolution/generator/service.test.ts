@@ -100,12 +100,13 @@ describe("CandidateGenerationService (End-to-End)", () => {
       workspaceId: tenant.workspaceId,
       classification: {
         title: "Tool Two",
-        description: "Tool 2",
+        description: "Runs the observed immutable Node version command",
         taskClass: "command",
         pattern: "command",
         confidenceScore: 0.85,
         priority: "medium",
         suggestedToolName: "tool_two",
+        commandProfiles: ["node --version"],
       },
     });
 
