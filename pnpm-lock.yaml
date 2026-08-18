@@ -191,9 +191,6 @@ importers:
       '@tool-evolver/adapter-omp':
         specifier: workspace:*
         version: link:../../adapters/omp
-      '@tool-evolver/cli':
-        specifier: workspace:*
-        version: link:../../apps/cli
       '@tool-evolver/cloud':
         specifier: workspace:*
         version: link:../../apps/cloud
@@ -224,6 +221,9 @@ importers:
       '@tool-evolver/test-fixtures':
         specifier: workspace:*
         version: link:../test-fixtures
+      tool-evolver:
+        specifier: workspace:*
+        version: link:../../apps/cli
       zod:
         specifier: ^3.25.76
         version: 3.25.76
