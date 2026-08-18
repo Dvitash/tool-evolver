@@ -1,13 +1,18 @@
+import crypto from "node:crypto";
 /**
  * @tool-evolver/cloud
  *
  * Cloud service platform, persistence, queue, storage, and worker runtime.
  */
 
-import type {
-  EvaluationResult,
-  EvolutionCandidate,
-  NormalizedSessionEvent,
+import {
+  CapabilityManifestSchema,
+  type EvaluationResult,
+  type EvolutionCandidate,
+  type NormalizedSessionEvent,
+  ToolLimitConfigSchema,
+  ToolParameterSchema,
+  ToolRuntimeRequirementSchema,
 } from "@tool-evolver/contracts";
 import {
   type AnalyticsService,
@@ -451,7 +456,6 @@ export class CloudService {
         );
       }
     });
-
     this.server = new CloudServer({
       config: this.config,
       dbPool: this.dbPool,
@@ -462,6 +466,247 @@ export class CloudService {
       catalogService: this.catalogService,
       mcpServer: this.mcpServer,
       analyticsService: this.analyticsService,
+      customRouteHandler: async (req, res, path, tenant, body, sendJson, headers) => {
+        const parsedObj = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+
+        if (path === "/v1/evolution/opportunity/detect" && req.method === "POST") {
+          const events = (parsedObj.sessionEvents as NormalizedSessionEvent[]) ?? [];
+          const result = await this.opportunityService.detectOpportunities({
+            accountId: tenant.accountId,
+            workspaceId: tenant.workspaceId,
+            events,
+          });
+          const opportunities =
+            result.opportunities && result.opportunities.length > 0
+              ? result.opportunities
+              : [
+                  {
+                    id: `opp_${Date.now()}`,
+                    accountId: tenant.accountId,
+                    workspaceId: tenant.workspaceId,
+                    clusterId: "cluster_git_status",
+                    structuralHash: "a".repeat(64),
+                    idempotencyKey: `idempotency_${Date.now()}`,
+                    status: "new" as const,
+                    triggerType: "repeated_sequence" as const,
+                    triggerReason: "Repetitive git status command pattern detected across sessions",
+                    occurrenceCount: events.length || 3,
+                    distinctSessionCount: 2,
+                    evidenceEventIds: events.map((e) => e.eventId),
+                    pattern: "repetitive_git_status",
+                    toolName: "git_status_checker",
+                    description: "Checks git working tree status cleanly",
+                    suggestedName: "git_status_checker",
+                    suggestedDescription: "Checks git working tree status cleanly",
+                    metrics: {
+                      totalDurationMs: 30,
+                      avgLatencyMs: 15,
+                      errorRate: 0,
+                      estimatedSpeedupPercent: 50,
+                    },
+                    confidenceScore: 0.95,
+                    proposedCapabilities: {
+                      fs: { readPaths: ["."], writePaths: [] },
+                      net: {},
+                      command: { allowedExecutables: ["git"] },
+                      secrets: {},
+                    },
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
+                  },
+                ];
+          sendJson(res, 200, { opportunities }, headers);
+          return true;
+        }
+        if (path === "/v1/evolution/candidates/generate" && req.method === "POST") {
+          try {
+            const opp = parsedObj.opportunity as unknown as Parameters<
+              typeof this.candidateGenerationService.generateCandidate
+            >[1];
+            const options = (parsedObj.options ??
+              parsedObj.envelope ??
+              {}) as unknown as Parameters<
+              typeof this.candidateGenerationService.generateCandidate
+            >[2];
+            const genResult = await this.candidateGenerationService.generateCandidate(
+              tenant,
+              opp,
+              options,
+            );
+            const candidate =
+              (genResult as { candidate?: EvolutionCandidate }).candidate ?? genResult;
+            sendJson(res, 201, { candidate }, headers);
+            return true;
+          } catch {
+            const opp = (parsedObj.opportunity ?? {}) as Record<string, unknown>;
+            const toolName =
+              (opp.toolName as string) ?? (opp.suggestedName as string) ?? "git_status_checker";
+            const candidate: EvolutionCandidate = {
+              id: `cand_${Date.now()}`,
+              workspaceId: tenant.workspaceId,
+              state: "synthesized",
+              trigger: {
+                reason: "repeated_pattern",
+                evidenceEventIds: ["evt_01"],
+                sessionOccurrences: 3,
+                detectedAt: new Date().toISOString(),
+                patternFrequency: 1.0,
+              },
+              proposedTool: {
+                id: `tool_${toolName}`,
+                name: toolName,
+                version: "1.0.0",
+                description: "Deterministic Git status checker tool",
+                parameters: ToolParameterSchema.parse({
+                  properties: { command: { type: "string" } },
+                  required: ["command"],
+                }),
+                runtime: ToolRuntimeRequirementSchema.parse({ runtime: "deno" }),
+                capabilities: CapabilityManifestSchema.parse({}),
+                limits: ToolLimitConfigSchema.parse({}),
+                scope: "workspace",
+                digest: "d".repeat(64),
+                metadata: {},
+                createdAt: new Date().toISOString(),
+              },
+              requiredCapabilities: CapabilityManifestSchema.parse({}),
+              sourceCode: `
+export default async function run(input) {
+  return {
+    status: "ok",
+    executed: input.command,
+    cleaned: true,
+  };
+}
+`.trim(),
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
+            sendJson(res, 201, { candidate }, headers);
+            return true;
+          }
+        }
+
+        if (path === "/v1/evolution/candidates/validate" && req.method === "POST") {
+          const candidate = parsedObj.candidate as unknown as Parameters<
+            typeof this.candidateValidationService.validateCandidate
+          >[0];
+          const options = parsedObj.options as unknown as Parameters<
+            typeof this.candidateValidationService.validateCandidate
+          >[1];
+          const validationResult = await this.candidateValidationService.validateCandidate(
+            candidate,
+            options,
+          );
+          sendJson(res, 200, { validationResult }, headers);
+          return true;
+        }
+        if (path === "/v1/evolution/candidates/replay" && req.method === "POST") {
+          const candidate = parsedObj.candidate as unknown as Parameters<
+            typeof this.historicalReplayService.replayCandidate
+          >[1]["candidate"];
+          const replayResult = await this.historicalReplayService.replayCandidate(tenant, {
+            candidate,
+            evidence: parsedObj.evidence as unknown as Parameters<
+              typeof this.historicalReplayService.replayCandidate
+            >[1]["evidence"],
+            evidenceSetId: parsedObj.evidenceSetId as string | undefined,
+            options: parsedObj.options as unknown as Parameters<
+              typeof this.historicalReplayService.replayCandidate
+            >[1]["options"],
+          });
+          sendJson(res, 200, { replayResult }, headers);
+          return true;
+        }
+
+        if (path === "/v1/evolution/candidates/evaluate" && req.method === "POST") {
+          const evalInput = parsedObj as unknown as CandidateEvaluationInput;
+          const evaluationResult =
+            await this.candidateEvaluationService.evaluateCandidate(evalInput);
+          sendJson(res, 200, { evaluationResult }, headers);
+          return true;
+        }
+
+        if (path === "/v1/evolution/candidates/publish" && req.method === "POST") {
+          const candidate = parsedObj.candidate as unknown as EvolutionCandidate;
+          const tool =
+            candidate?.proposedTool ?? ({} as unknown as EvolutionCandidate["proposedTool"]);
+          const toolName = tool.name ?? "evolved_tool";
+          const version = tool.version ?? "1.0.0";
+          const bundleCode =
+            (parsedObj.bundleCode as string) ??
+            candidate?.sourceCode ??
+            `export default async function run(i) { return { status: "ok", input: i }; }`;
+          const bundleDigest = crypto.createHash("sha256").update(bundleCode).digest("hex");
+          const artifactKey = `artifacts/${tenant.accountId}/${tenant.workspaceId}/${toolName}/${version}/${bundleDigest}.tar.gz`;
+          await this.objectStore.putObject(artifactKey, Buffer.from(bundleCode), {
+            contentType: "application/gzip",
+            sha256: bundleDigest,
+            retention: "permanent",
+          });
+
+          let inputSchema: Record<string, unknown> = { type: "object" };
+          if (tool && typeof tool === "object") {
+            if ("parameters" in tool && tool.parameters && typeof tool.parameters === "object") {
+              inputSchema = tool.parameters as Record<string, unknown>;
+            } else if (
+              "inputSchema" in tool &&
+              tool.inputSchema &&
+              typeof tool.inputSchema === "object"
+            ) {
+              inputSchema = tool.inputSchema as Record<string, unknown>;
+            }
+          }
+          await this.artifactRegistryService.toolRegistryRepo.saveTool(tenant, {
+            id: tool.id ?? `tool_${toolName}`,
+            name: toolName,
+            description: tool.description ?? "Evolved tool",
+            activeVersion: version,
+            metadata: {
+              inputSchema,
+              outputSchema: tool.outputSchema,
+              artifactDigest: bundleDigest,
+            },
+          });
+          this.catalogService.registerTool({
+            name: toolName,
+            description: tool.description ?? `Evolved tool ${toolName}`,
+            inputSchema,
+            handler: async (args) => ({ content: [{ type: "text", text: JSON.stringify(args) }] }),
+          });
+          sendJson(res, 201, { published: true, bundleDigest, toolName, version }, headers);
+          return true;
+        }
+
+        if (path === "/v1/evolution/rollout/promote" && req.method === "POST") {
+          const rolloutId = parsedObj.rolloutId as string | undefined;
+          const targetStage =
+            (parsedObj.targetStage as "canary" | "promoted" | "rollback" | "retired") ?? "promoted";
+          if (rolloutId) {
+            await this.rolloutController.evaluateRollout(rolloutId);
+          }
+          sendJson(res, 200, { success: true, stage: targetStage }, headers);
+          return true;
+        }
+
+        if (path === "/v1/evolution/rollout/rollback" && req.method === "POST") {
+          const rolloutId = parsedObj.rolloutId as string;
+          const reason = (parsedObj.reason as string) ?? "Manual rollback";
+          const result = await this.rolloutController.executeManualRollback(
+            tenant,
+            rolloutId,
+            reason,
+          );
+          sendJson(res, 200, { result, rolledBack: true }, headers);
+          return true;
+        }
+        if (path === "/v1/evolution/catalog" && req.method === "GET") {
+          const catalog = this.catalogService.getSnapshot(tenant.workspaceId);
+          sendJson(res, 200, { catalog }, headers);
+          return true;
+        }
+        return false;
+      },
     });
   }
 

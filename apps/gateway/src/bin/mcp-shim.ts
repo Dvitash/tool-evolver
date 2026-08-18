@@ -24,6 +24,7 @@ Options:
 }
 
 function parseArgs(args: string[]) {
+  let standaloneMode = false;
   let standaloneFallback = true;
   let socketPath: string | undefined;
   let cwd: string | undefined;
@@ -35,6 +36,7 @@ function parseArgs(args: string[]) {
     if (arg === "--help" || arg === "-h") {
       showHelp = true;
     } else if (arg === "--standalone" || arg === "-s") {
+      standaloneMode = true;
       standaloneFallback = true;
     } else if (arg === "--no-standalone") {
       standaloneFallback = false;
@@ -47,7 +49,7 @@ function parseArgs(args: string[]) {
     }
   }
 
-  return { standaloneFallback, socketPath, cwd, harnessId, showHelp };
+  return { standaloneMode, standaloneFallback, socketPath, cwd, harnessId, showHelp };
 }
 
 async function main(): Promise<void> {
@@ -60,9 +62,11 @@ async function main(): Promise<void> {
 
   const shim = new McpStdioShim({
     standaloneFallback: args.standaloneFallback,
-    socketPath: args.socketPath,
+    socketPath: args.standaloneMode && !args.socketPath ? "" : args.socketPath,
     cwd: args.cwd,
     harnessId: args.harnessId,
+    maxStartupAttempts: args.socketPath ? 1 : 0,
+    startupTimeoutMs: args.socketPath ? 500 : 0,
   });
 
   const shutdown = async () => {
@@ -78,13 +82,25 @@ async function main(): Promise<void> {
     if (status.mode === "failed") {
       process.exit(1);
     }
+    if (status.mode === "standalone_inprocess") {
+      await new Promise<void>((resolve) => {
+        process.stdin.on("end", resolve);
+        process.stdin.on("close", resolve);
+        process.stdin.resume();
+      });
+    }
   } catch (err) {
     process.stderr.write(`Fatal MCP Shim error: ${(err as Error).message}\n`);
     process.exit(1);
   }
 }
 
-if (process.env.NODE_ENV !== "test") {
+const isDirectExecution =
+  process.argv[1]?.endsWith("mcp-shim.js") ||
+  process.argv[1]?.endsWith("mcp-shim.ts") ||
+  process.argv[1]?.endsWith("mcp-shim.mjs");
+
+if (isDirectExecution || process.env.NODE_ENV !== "test") {
   main().catch((err) => {
     process.stderr.write(`Unhandled error: ${err}\n`);
     process.exit(1);

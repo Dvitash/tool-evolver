@@ -62,6 +62,20 @@ export interface CloudServerOptions {
   catalogService?: CloudCatalogService;
   mcpServer?: CloudMcpServer;
   analyticsService?: AnalyticsService;
+  customRouteHandler?: (
+    req: IncomingMessage,
+    res: ServerResponse,
+    path: string,
+    tenant: TenantContext,
+    body: unknown,
+    sendJson: (
+      res: ServerResponse,
+      status: number,
+      data: unknown,
+      headers?: Record<string, string>,
+    ) => void,
+    headers: Record<string, string>,
+  ) => Promise<boolean>;
 }
 /**
  * Cloud API Server shell providing HTTP endpoints, health checks,
@@ -79,6 +93,7 @@ export class CloudServer {
   private catalogService: CloudCatalogService;
   private mcpServer: CloudMcpServer;
   private analyticsService: AnalyticsService;
+  private customRouteHandler?: CloudServerOptions["customRouteHandler"];
   private startTime: number;
 
   constructor(options: CloudServerOptions = {}) {
@@ -105,15 +120,14 @@ export class CloudServer {
         dbPool: this.dbPool,
         outboxPublisher: this.outboxPublisher,
       });
-
     this.mcpServer =
       options.mcpServer ??
       createCloudMcpServer({
         catalogService: this.catalogService,
       });
+    this.customRouteHandler = options.customRouteHandler;
     this.analyticsService = options.analyticsService ?? createAnalyticsService(this.dbPool);
   }
-
   getDbPool(): DatabasePool {
     return this.dbPool;
   }
@@ -728,6 +742,22 @@ export class CloudServer {
       const dispatched = await this.outboxPublisher.dispatchBatch();
       this.sendJson(res, 200, { dispatchedCount: dispatched }, headers);
       return;
+    }
+    if (this.customRouteHandler) {
+      const body =
+        req.method === "POST" || req.method === "PUT" || req.method === "PATCH"
+          ? await this.parseJsonBody(req).catch(() => ({}))
+          : {};
+      const handled = await this.customRouteHandler(
+        req,
+        res,
+        path,
+        tenant,
+        body,
+        (r, s, d, h) => this.sendJson(r, s, d, h),
+        headers,
+      );
+      if (handled) return;
     }
 
     this.sendJson(

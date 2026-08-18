@@ -80,6 +80,7 @@ export async function attemptDaemonStartup(socketPath: string, maxWaitMs = 3000)
       detached: true,
       stdio: "ignore",
     });
+    child.on("error", () => {});
     child.unref();
   } catch {
     // Binary might not be on path or in test environment
@@ -136,16 +137,15 @@ export class McpStdioShim {
     if (this.isRunning) {
       throw new Error("Shim is already running");
     }
-    this.isRunning = true;
-
     // 1. Check if daemon is reachable
-    let daemonReachable = await checkDaemonReachable(this.socketPath, 500);
+    let daemonReachable = this.socketPath
+      ? await checkDaemonReachable(this.socketPath, 500)
+      : false;
 
     // 2. If daemon not reachable, attempt bounded startup
-    if (!daemonReachable && this.maxStartupAttempts > 0) {
+    if (!daemonReachable && this.socketPath && this.maxStartupAttempts > 0) {
       daemonReachable = await attemptDaemonStartup(this.socketPath, this.startupTimeoutMs);
     }
-
     // 3. Connect to daemon or fallback to standalone in-process gateway
     if (daemonReachable) {
       try {

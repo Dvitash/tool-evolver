@@ -7,4 +7,6 @@
 
 export * from "./trace-reporter.js";
 export * from "./environment.js";
+export * from "./process-harness.js";
+export * from "./topology.js";
 export * from "./scenarios/index.js";
