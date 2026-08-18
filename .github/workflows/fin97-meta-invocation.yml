@@ -1,0 +1,38 @@
+name: FIN-97 Final Meta Invocation
+on:
+  push:
+    branches: [agent/product-hardening]
+    paths:
+      - .github/agent/fin97_meta_invocation.py
+      - .github/workflows/fin97-meta-invocation.yml
+permissions:
+  contents: write
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/product-hardening
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.24.0
+          run_install: false
+      - run: python3 .github/agent/fin97_meta_invocation.py
+      - run: rm -f .github/agent/fin97_meta_invocation.py .github/workflows/fin97-meta-invocation.yml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec biome check --write .
+      - run: pnpm build
+      - run: pnpm exec vitest run fixtures/e2e/tests/e2e-happy-path.test.ts fixtures/e2e/tests/e2e-lifecycle-trace.test.ts apps/gateway/tests/meta/invoke-tool-identifiers.test.ts
+      - run: pnpm test
+      - name: Commit verified result
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix(e2e): use public-name meta invocation contract'
+          git push origin HEAD:agent/product-hardening
