@@ -167,7 +167,12 @@ export class DeterministicSelfReviewer {
       if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
         const pExpr = node.expression;
         const root = pExpr.expression;
-        if (ts.isIdentifier(root) && root.text === "logger") {
+        // Match bare `logger.error(...)` and qualified `context.logger.error(...)`
+        // (also ctx.logger / this.logger): the canonical ToolContext logging path.
+        const isLoggerRoot =
+          (ts.isIdentifier(root) && root.text === "logger") ||
+          (ts.isPropertyAccessExpression(root) && root.name.text === "logger");
+        if (isLoggerRoot) {
           if (pExpr.name.text === "error") hasLoggerError = true;
           if (pExpr.name.text === "info" || pExpr.name.text === "debug") hasLoggerInfo = true;
         }

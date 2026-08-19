@@ -664,3 +664,85 @@ export default defineTool(async (context) => {
     ).toHaveLength(0);
   });
 });
+
+describe("DeterministicSelfReviewer logger detection", () => {
+  const planner = new CandidatePlanner();
+  const reviewer = new DeterministicSelfReviewer();
+
+  const makeArtifacts = (sourceCode: string): GeneratedArtifactSet => {
+    const opp = createMockOpportunity();
+    const plan = { ...planner.plan(opp), targetType: "single_tool" as const };
+    return {
+      plan,
+      manifest: {
+        id: "tool-123",
+        name: plan.name,
+        version: "1.0.0",
+        description: plan.description,
+        parameters: plan.inputSchema,
+        outputSchema: plan.outputSchema,
+        runtime: plan.runtime,
+        capabilities: plan.capabilityRequirements,
+        limits: {
+          timeoutMs: 30000,
+          maxOutputBytes: 1048576,
+          maxMemoryBytes: 134217728,
+          maxConcurrentInvocations: 4,
+        },
+        scope: "workspace",
+        digest: "hash-123",
+        metadata: {},
+        createdAt: new Date().toISOString(),
+      },
+      capabilities: plan.capabilityRequirements,
+      sourceCode,
+      generatedAt: new Date().toISOString(),
+    };
+  };
+
+  it("recognizes context.logger.error/info (qualified ToolContext path)", () => {
+    const sourceCode = `
+import { defineTool } from "@tool-evolver/runtime";
+import { z } from "zod";
+export const InputSchema = z.object({}).strict();
+export const OutputSchema = z.object({ success: z.boolean() }).strict();
+export default defineTool(async (context) => {
+  try {
+    const result = await context.broker.cmd.exec("git", ["status"]);
+    await context.logger.info("done");
+    return { success: result.exitCode === 0, data: null, error: null };
+  } catch (err) {
+    await context.logger.error("failed", { err: String(err) });
+    return { success: false, data: null, error: String(err) };
+  }
+});
+`;
+    const verdict = reviewer.review(makeArtifacts(sourceCode));
+    expect(verdict.issues.filter((i) => i.category === "error_handling")).toHaveLength(0);
+    expect(verdict.issues.some((i) => i.message.includes("logger.info"))).toBe(false);
+  });
+
+  it("still flags catch blocks with no error logging", () => {
+    const sourceCode = `
+import { defineTool } from "@tool-evolver/runtime";
+import { z } from "zod";
+export const InputSchema = z.object({}).strict();
+export const OutputSchema = z.object({ success: z.boolean() }).strict();
+export default defineTool(async (context) => {
+  try {
+    const result = await context.broker.cmd.exec("git", ["status"]);
+    await context.logger.info("done");
+    return { success: result.exitCode === 0, data: null, error: null };
+  } catch (err) {
+    return { success: false, data: null, error: String(err) };
+  }
+});
+`;
+    const verdict = reviewer.review(makeArtifacts(sourceCode));
+    expect(
+      verdict.issues.some(
+        (i) => i.severity === "error" && i.message.includes("logger.error"),
+      ),
+    ).toBe(true);
+  });
+});
