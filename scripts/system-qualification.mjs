@@ -17,6 +17,8 @@ const SUITES = Object.freeze([
   "apps/cloud/tests/staging/fault-injection-matrix.test.ts",
   "apps/cloud/tests/staging/soak-profile.test.ts",
   "apps/cli/tests/installer/production-release-transaction.test.ts",
+  "apps/cli/tests/installer/signed-channel-verifier.test.ts",
+  "apps/cli/tests/installer/packaged-cli-production-http.test.ts",
 ]);
 
 function sha256File(filePath) {
@@ -61,6 +63,72 @@ function collectReleaseBinding(releaseDir) {
   };
 }
 
+function smokeLongRunningNodeProcess(entrypoint, expectedOutput, cwd) {
+  const result = spawnSync(process.execPath, [entrypoint], {
+    cwd,
+    env: {
+      ...process.env,
+      NODE_ENV: "test",
+      DATABASE_URL: "memory://system-qualification",
+      STORAGE_PROVIDER: "memory",
+      QUEUE_PROVIDER: "memory",
+    },
+    encoding: "utf8",
+    timeout: 3000,
+    maxBuffer: 10 * 1024 * 1024,
+  });
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  if (!output.includes(expectedOutput)) {
+    throw new Error(
+      `Packaged process ${path.basename(entrypoint)} did not reach readiness marker '${expectedOutput}'. Output: ${output}`,
+    );
+  }
+  return {
+    ready: true,
+    marker: expectedOutput,
+    exitCode: result.status,
+    signal: result.signal,
+    timedOut: result.error?.code === "ETIMEDOUT",
+  };
+}
+
+function qualifyPackagedCloudBackgroundProcesses(releaseDir, release) {
+  const hostAssetId = process.arch === "arm64" ? "linux-arm64" : "linux-x64";
+  const asset = release.assets[hostAssetId];
+  if (process.platform !== "linux" || !asset) {
+    throw new Error("Full-system packaged cloud-process qualification requires a Linux release asset");
+  }
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tool-evolver-system-cloud-"));
+  try {
+    const archive = path.join(releaseDir, asset.filename);
+    const extracted = path.join(tempDir, "extract");
+    fs.mkdirSync(extracted, { recursive: true });
+    const unpack = spawnSync("tar", ["-xzf", archive, "-C", extracted], {
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+    if (unpack.status !== 0) {
+      throw new Error(`Unable to extract packaged cloud stack: ${unpack.stderr || unpack.stdout}`);
+    }
+
+    const installedRoot = path.join(extracted, "tool-evolver");
+    const worker = smokeLongRunningNodeProcess(
+      path.join(installedRoot, "apps/cloud/dist/bin/worker.js"),
+      "[Worker] Durable cloud worker and scheduler started",
+      installedRoot,
+    );
+    const scheduler = smokeLongRunningNodeProcess(
+      path.join(installedRoot, "apps/cloud/dist/bin/scheduler.js"),
+      "[Scheduler] Starting periodic background scheduler",
+      installedRoot,
+    );
+    return { worker, scheduler };
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 export function runSystemQualification(options = {}) {
   const rootDir = options.rootDir ?? process.cwd();
   const releaseDir = path.resolve(rootDir, options.releaseDir ?? "dist/release/v1.0.0");
@@ -73,14 +141,19 @@ export function runSystemQualification(options = {}) {
     throw new Error(`Qualification release commit is invalid: ${release.commitSha}`);
   }
 
+  const packagedCloudProcesses = qualifyPackagedCloudBackgroundProcesses(releaseDir, release);
   const command = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const result = spawnSync(command, ["exec", "vitest", "run", "--testTimeout=60000", "--hookTimeout=60000", ...SUITES], {
-    cwd: rootDir,
-    env: { ...process.env, TOOL_EVOLVER_RELEASE_TEST_ONLY: "1" },
-    encoding: "utf8",
-    timeout: 12 * 60 * 1000,
-    maxBuffer: 50 * 1024 * 1024,
-  });
+  const result = spawnSync(
+    command,
+    ["exec", "vitest", "run", "--testTimeout=60000", "--hookTimeout=60000", ...SUITES],
+    {
+      cwd: rootDir,
+      env: { ...process.env, TOOL_EVOLVER_RELEASE_TEST_ONLY: "1" },
+      encoding: "utf8",
+      timeout: 12 * 60 * 1000,
+      maxBuffer: 50 * 1024 * 1024,
+    },
+  );
 
   const passed = result.status === 0;
   const evidence = {
@@ -102,10 +175,13 @@ export function runSystemQualification(options = {}) {
       workflowRunAttempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
     },
     release,
+    packagedCloudProcesses,
     suites: SUITES.map((suite) => ({ path: suite, status: passed ? "PASSED" : "FAILED" })),
     coverage: {
       realProcessHappyPath: true,
       generatedToolInvocation: true,
+      packagedWorkerProcess: packagedCloudProcesses.worker.ready,
+      packagedSchedulerProcess: packagedCloudProcesses.scheduler.ready,
       daemonAndCloudRestartRecovery: true,
       canaryRollbackAndQuarantine: true,
       deterministicRetryAndDlq: true,
@@ -113,6 +189,7 @@ export function runSystemQualification(options = {}) {
       dependencyFaultInjection: true,
       signedPublication: true,
       tamperedInstallTrustPath: true,
+      packedCliProductionHttpPath: true,
     },
     testProcess: {
       exitCode: result.status,
