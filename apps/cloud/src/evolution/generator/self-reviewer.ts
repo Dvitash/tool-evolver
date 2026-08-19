@@ -449,11 +449,13 @@ export class DeterministicSelfReviewer {
               execResultVars.add(node.name.text);
             } else if (ts.isObjectBindingPattern(node.name)) {
               // const { exitCode, stdout } = await ...exec(...)
-              const bindsExitCode = node.name.elements.some(
-                (el) =>
-                  ts.isIdentifier(el.name) &&
-                  (el.propertyName ? el.propertyName.text : el.name.text) === "exitCode",
-              );
+              const bindsExitCode = node.name.elements.some((el) => {
+                const named: ts.Node = el.propertyName ?? el.name;
+                return (
+                  (ts.isIdentifier(named) || ts.isStringLiteral(named)) &&
+                  named.text === "exitCode"
+                );
+              });
               if (!bindsExitCode) {
                 push(
                   "destructure-no-exitcode",

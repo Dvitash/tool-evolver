@@ -82,7 +82,7 @@ export default defineTool(async (context: ToolContext) => {
     const data = await broker.fs.readFile("test.txt", "utf-8");
     const cmdRes = await broker.cmd.exec("git", ["status"]);
     await progress(100, "done");
-    return { success: true };
+    return { success: cmdRes.exitCode === 0 };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await logger.error("failed", { msg });
