@@ -33,6 +33,53 @@ function parseArgs(argv) {
   return options;
 }
 
+function copyPackageTree(sourceDir, destinationDir) {
+  fs.mkdirSync(destinationDir, { recursive: true });
+  for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+    if (entry.name === "node_modules" || entry.name === ".git") continue;
+    const sourcePath = path.join(sourceDir, entry.name);
+    const destinationPath = path.join(destinationDir, entry.name);
+    const stat = fs.lstatSync(sourcePath);
+
+    if (stat.isSymbolicLink()) {
+      const resolved = fs.realpathSync(sourcePath);
+      const resolvedStat = fs.statSync(resolved);
+      if (resolvedStat.isDirectory()) {
+        copyPackageTree(resolved, destinationPath);
+      } else if (resolvedStat.isFile()) {
+        fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+        fs.copyFileSync(resolved, destinationPath);
+        fs.chmodSync(destinationPath, resolvedStat.mode & 0o777);
+      }
+      continue;
+    }
+
+    if (stat.isDirectory()) {
+      copyPackageTree(sourcePath, destinationPath);
+    } else if (stat.isFile()) {
+      fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+      fs.copyFileSync(sourcePath, destinationPath);
+      fs.chmodSync(destinationPath, stat.mode & 0o777);
+    }
+  }
+}
+
+function readManifest(packageDir, label) {
+  const manifestPath = path.join(packageDir, "package.json");
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error(`${label} is missing package.json: ${manifestPath}`);
+  }
+  return JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+}
+
+function writeManifest(packageDir, manifest) {
+  fs.writeFileSync(
+    path.join(packageDir, "package.json"),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    "utf8",
+  );
+}
+
 function normalizeInternalPackageEntrypoints(dependency, dependencyPath, dependencyManifest) {
   if (!dependency.startsWith("@tool-evolver/")) return dependencyManifest;
 
@@ -43,6 +90,7 @@ function normalizeInternalPackageEntrypoints(dependency, dependencyPath, depende
     );
   }
 
+  dependencyManifest.private = false;
   dependencyManifest.main = "./dist/index.js";
   const distTypes = path.join(dependencyPath, "dist", "index.d.ts");
   if (fs.existsSync(distTypes)) dependencyManifest.types = "./dist/index.d.ts";
@@ -60,96 +108,141 @@ function normalizeInternalPackageEntrypoints(dependency, dependencyPath, depende
   return dependencyManifest;
 }
 
-function preparePortableManifest(stagingDir) {
-  const packagePath = path.join(stagingDir, "package.json");
-  if (!fs.existsSync(packagePath)) {
-    throw new Error(`Deployed npm bootstrap is missing package.json: ${packagePath}`);
+function resolveDependencyDirectory(packageDir, deployRoot, dependency) {
+  let cursor = packageDir;
+  while (true) {
+    const candidate = path.join(cursor, "node_modules", ...dependency.split("/"));
+    if (fs.existsSync(candidate)) return fs.realpathSync(candidate);
+    if (path.resolve(cursor) === path.resolve(deployRoot)) break;
+    const parent = path.dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
   }
-  const manifest = JSON.parse(fs.readFileSync(packagePath, "utf8"));
-  if (manifest.name !== "tool-evolver" || manifest.version !== "1.0.0") {
+
+  const rootCandidate = path.join(deployRoot, "node_modules", ...dependency.split("/"));
+  if (fs.existsSync(rootCandidate)) return fs.realpathSync(rootCandidate);
+  throw new Error(`Unable to resolve runtime dependency '${dependency}' from ${packageDir}.`);
+}
+
+function materializePortableTree(deployDir, portableDir) {
+  copyPackageTree(deployDir, portableDir);
+  const rootManifest = readManifest(portableDir, "Deployed npm bootstrap");
+  if (rootManifest.name !== "tool-evolver" || rootManifest.version !== "1.0.0") {
     throw new Error(
-      `Unexpected deployed bootstrap identity: ${manifest.name ?? "<missing>"}@${manifest.version ?? "<missing>"}`,
+      `Unexpected deployed bootstrap identity: ${rootManifest.name ?? "<missing>"}@${rootManifest.version ?? "<missing>"}`,
     );
   }
 
-  const dependencies = Object.keys(manifest.dependencies ?? {});
-  for (const dependency of dependencies) {
-    const dependencyPath = path.join(stagingDir, "node_modules", ...dependency.split("/"));
-    if (!fs.existsSync(dependencyPath)) {
-      throw new Error(`Deployed npm bootstrap is missing bundled dependency '${dependency}'.`);
-    }
-    const resolved = fs.realpathSync(dependencyPath);
-    const relative = path.relative(stagingDir, resolved);
-    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+  const queue = Object.keys(rootManifest.dependencies ?? {}).map((name) => ({
+    name,
+    requesterSourceDir: deployDir,
+  }));
+  const copiedVersions = new Map();
+  const dependencyVersions = new Map();
+
+  while (queue.length > 0) {
+    const { name, requesterSourceDir } = queue.shift();
+    const sourceDir = resolveDependencyDirectory(requesterSourceDir, deployDir, name);
+    const sourceManifest = readManifest(sourceDir, `Runtime dependency '${name}'`);
+    if (sourceManifest.name !== name) {
       throw new Error(
-        `Bundled dependency '${dependency}' resolves outside deployment: ${resolved}`,
+        `Resolved dependency identity mismatch for '${name}': received '${sourceManifest.name ?? "<missing>"}'.`,
       );
     }
-
-    const dependencyManifestPath = path.join(dependencyPath, "package.json");
-    if (!fs.existsSync(dependencyManifestPath)) {
-      throw new Error(`Bundled dependency '${dependency}' is missing package.json.`);
+    if (typeof sourceManifest.version !== "string" || sourceManifest.version.length === 0) {
+      throw new Error(`Runtime dependency '${name}' has no concrete package version.`);
     }
-    const dependencyManifest = normalizeInternalPackageEntrypoints(
-      dependency,
-      dependencyPath,
-      JSON.parse(fs.readFileSync(dependencyManifestPath, "utf8")),
-    );
-    fs.writeFileSync(
-      dependencyManifestPath,
-      `${JSON.stringify(dependencyManifest, null, 2)}\n`,
-      "utf8",
-    );
 
-    const specifier = manifest.dependencies[dependency];
-    if (typeof specifier === "string" && specifier.startsWith("workspace:")) {
-      if (
-        typeof dependencyManifest.version !== "string" ||
-        !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(dependencyManifest.version)
-      ) {
+    const existingVersion = copiedVersions.get(name);
+    if (existingVersion) {
+      if (existingVersion !== sourceManifest.version) {
         throw new Error(
-          `Bundled workspace dependency '${dependency}' has invalid version '${dependencyManifest.version ?? "<missing>"}'.`,
+          `Portable bootstrap cannot flatten conflicting versions of '${name}': ${existingVersion} vs ${sourceManifest.version}.`,
         );
       }
-      manifest.dependencies[dependency] = dependencyManifest.version;
+      continue;
     }
+
+    const destinationDir = path.join(portableDir, "node_modules", ...name.split("/"));
+    copyPackageTree(sourceDir, destinationDir);
+    const destinationManifest = normalizeInternalPackageEntrypoints(
+      name,
+      destinationDir,
+      readManifest(destinationDir, `Materialized dependency '${name}'`),
+    );
+
+    for (const [childName, specifier] of Object.entries(destinationManifest.dependencies ?? {})) {
+      const childSourceDir = resolveDependencyDirectory(sourceDir, deployDir, childName);
+      const childManifest = readManifest(childSourceDir, `Runtime dependency '${childName}'`);
+      if (typeof specifier === "string" && specifier.startsWith("workspace:")) {
+        destinationManifest.dependencies[childName] = childManifest.version;
+      }
+      queue.push({ name: childName, requesterSourceDir: sourceDir });
+    }
+
+    writeManifest(destinationDir, destinationManifest);
+    copiedVersions.set(name, sourceManifest.version);
+    dependencyVersions.set(name, sourceManifest.version);
   }
 
-  for (const [name, specifier] of Object.entries(manifest.dependencies ?? {})) {
+  for (const [dependency, version] of dependencyVersions) {
+    rootManifest.dependencies ??= {};
+    rootManifest.dependencies[dependency] = version;
+  }
+  for (const [name, specifier] of Object.entries(rootManifest.dependencies ?? {})) {
     if (typeof specifier === "string" && specifier.startsWith("workspace:")) {
-      throw new Error(
-        `Portable npm bootstrap retained workspace protocol for ${name}: ${specifier}`,
-      );
+      const version = dependencyVersions.get(name);
+      if (!version) {
+        throw new Error(`Portable npm bootstrap retained unresolved workspace dependency '${name}'.`);
+      }
+      rootManifest.dependencies[name] = version;
     }
   }
 
-  manifest.bundledDependencies = dependencies;
-  fs.writeFileSync(packagePath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-  return manifest;
+  rootManifest.bundledDependencies = [...copiedVersions.keys()].sort();
+  writeManifest(portableDir, rootManifest);
+
+  for (const dependency of rootManifest.bundledDependencies) {
+    const dependencyPath = path.join(portableDir, "node_modules", ...dependency.split("/"));
+    if (!fs.existsSync(dependencyPath)) {
+      throw new Error(`Portable bootstrap is missing bundled dependency '${dependency}'.`);
+    }
+    const realPath = fs.realpathSync(dependencyPath);
+    const relative = path.relative(portableDir, realPath);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw new Error(`Bundled dependency '${dependency}' resolves outside portable package.`);
+    }
+  }
+
+  return rootManifest;
 }
 
 export function packNpmBootstrap(options = {}) {
   const rootDir = path.resolve(options.rootDir ?? process.cwd());
   const outputDir = path.resolve(rootDir, options.outputDir ?? "dist/npm");
-  const ownsStagingDir = !options.stagingDir;
-  const stagingDir = path.resolve(
-    options.stagingDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "tool-evolver-npm-deploy-")),
+  const ownsWorkDir = !options.stagingDir;
+  const workDir = path.resolve(
+    options.stagingDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "tool-evolver-npm-work-")),
   );
+  const deployDir = path.join(workDir, "deploy");
+  const portableDir = path.join(workDir, "portable");
   const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 
-  fs.rmSync(stagingDir, { recursive: true, force: true });
-  fs.mkdirSync(stagingDir, { recursive: true });
+  fs.rmSync(workDir, { recursive: true, force: true });
+  fs.mkdirSync(deployDir, { recursive: true });
   fs.mkdirSync(outputDir, { recursive: true });
 
   try {
-    run(pnpm, ["--filter=./apps/cli", "--prod", "deploy", "--legacy", stagingDir], {
+    run(pnpm, ["--filter=./apps/cli", "--prod", "deploy", "--legacy", deployDir], {
       cwd: rootDir,
     });
-    const manifest = preparePortableManifest(stagingDir);
-    const packOutput = run(npm, ["pack", stagingDir, "--pack-destination", outputDir, "--json"], {
-      cwd: rootDir,
-    });
+    const manifest = materializePortableTree(deployDir, portableDir);
+    const packOutput = run(
+      npm,
+      ["pack", portableDir, "--pack-destination", outputDir, "--json"],
+      { cwd: rootDir },
+    );
     const parsed = JSON.parse(packOutput);
     const filename = parsed?.[0]?.filename;
     if (!filename) throw new Error(`npm pack returned no filename: ${packOutput}`);
@@ -162,9 +255,10 @@ export function packNpmBootstrap(options = {}) {
       filename,
       version: manifest.version,
       packageName: manifest.name,
+      bundledDependencies: manifest.bundledDependencies,
     };
   } finally {
-    if (ownsStagingDir) fs.rmSync(stagingDir, { recursive: true, force: true });
+    if (ownsWorkDir) fs.rmSync(workDir, { recursive: true, force: true });
   }
 }
 
