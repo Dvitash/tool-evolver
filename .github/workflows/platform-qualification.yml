@@ -1,0 +1,157 @@
+name: Platform Qualification
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-qualification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unix-platforms:
+    name: Qualify ${{ matrix.lane }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: linux-x64
+            runner: ubuntu-24.04
+          - lane: linux-arm64
+            runner: ubuntu-24.04-arm
+          - lane: darwin-x64
+            runner: macos-15-intel
+          - lane: darwin-arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      TOOL_EVOLVER_RELEASE_TEST_ONLY: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.24.0
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build exact candidate
+        run: pnpm build
+
+      - name: Package signed test-domain release candidate
+        run: pnpm release:package
+
+      - name: Qualify packaged stack on executing host
+        run: >-
+          node scripts/platform-qualification.mjs
+          --lane=${{ matrix.lane }}
+          --release-dir=dist/release/v1.0.0
+          --output-dir=dist/qualification
+
+      - name: Upload qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-qualification-${{ matrix.lane }}
+          path: dist/qualification/${{ matrix.lane }}.json
+          if-no-files-found: error
+          retention-days: 30
+
+  wsl:
+    name: Qualify wsl
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Import Ubuntu into real WSLv1
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $rootfs = Join-Path $env:RUNNER_TEMP "ubuntu-noble-wsl.rootfs.tar.gz"
+          $distroDir = Join-Path $env:RUNNER_TEMP "tool-evolver-wsl"
+          Invoke-WebRequest \
+            -Uri "https://cloud-images.ubuntu.com/wsl/releases/noble/current/ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz" \
+            -OutFile $rootfs
+          New-Item -ItemType Directory -Force -Path $distroDir | Out-Null
+          wsl.exe --import ToolEvolverQual $distroDir $rootfs --version 1
+          if ($LASTEXITCODE -ne 0) { throw "wsl --import failed with exit code $LASTEXITCODE" }
+          wsl.exe -d ToolEvolverQual -- uname -a
+          if ($LASTEXITCODE -ne 0) { throw "Imported WSL distribution did not start" }
+
+      - name: Install Linux runtime and copy clean checkout into WSL
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $workspace = (wsl.exe -d ToolEvolverQual -- wslpath -a "$env:GITHUB_WORKSPACE").Trim()
+          if (-not $workspace) { throw "Could not resolve workspace path inside WSL" }
+          wsl.exe -d ToolEvolverQual -- bash -lc @"
+          set -euo pipefail
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl xz-utils git
+          curl -fsSLo /tmp/node.tar.xz https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.xz
+          mkdir -p /opt/node
+          tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1
+          export PATH=/opt/node/bin:`$PATH
+          npm install -g pnpm@10.24.0
+          rm -rf /root/tool-evolver
+          cp -a '$workspace' /root/tool-evolver
+          "@
+          if ($LASTEXITCODE -ne 0) { throw "WSL runtime/bootstrap step failed" }
+
+      - name: Build package and qualify inside real WSL
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          wsl.exe -d ToolEvolverQual -- bash -lc @"
+          set -euo pipefail
+          export PATH=/opt/node/bin:`$PATH
+          cd /root/tool-evolver
+          pnpm install --frozen-lockfile
+          pnpm build
+          TOOL_EVOLVER_RELEASE_TEST_ONLY=1 pnpm release:package
+          node scripts/platform-qualification.mjs \
+            --lane=wsl \
+            --release-dir=dist/release/v1.0.0 \
+            --output-dir=dist/qualification
+          "@
+          if ($LASTEXITCODE -ne 0) { throw "WSL packaged-stack qualification failed" }
+
+      - name: Copy WSL qualification evidence to runner workspace
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\dist\qualification" | Out-Null
+          wsl.exe -d ToolEvolverQual -- bash -lc "test -f /root/tool-evolver/dist/qualification/wsl.json && cat /root/tool-evolver/dist/qualification/wsl.json" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\dist\qualification\wsl.json"
+
+      - name: Upload WSL qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-qualification-wsl
+          path: dist/qualification/wsl.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove WSL qualification distro
+        if: always()
+        shell: pwsh
+        run: wsl.exe --unregister ToolEvolverQual
