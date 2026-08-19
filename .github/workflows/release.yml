@@ -57,9 +57,17 @@ jobs:
           git fetch origin main --tags --force
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main
           test "$(node -p "require('./apps/cli/package.json').version")" = "$RELEASE_VERSION"
-          test -n "$TOOL_EVOLVER_RELEASE_KEY_ID"
-          test -n "$TOOL_EVOLVER_RELEASE_PUBLIC_KEY_PEM"
-          test -n "$TOOL_EVOLVER_RELEASE_PRIVATE_KEY_PEM"
+          missing=0
+          for name in \
+            TOOL_EVOLVER_RELEASE_KEY_ID \
+            TOOL_EVOLVER_RELEASE_PUBLIC_KEY_PEM \
+            TOOL_EVOLVER_RELEASE_PRIVATE_KEY_PEM; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name is not configured for the production release workflow"
+              missing=1
+            fi
+          done
+          test "$missing" = "0"
           if git rev-parse -q --verify "refs/tags/$RELEASE_TAG" >/dev/null; then
             test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$RELEASE_SHA"
           fi
@@ -219,7 +227,7 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          npm install --global npm@latest
+          npm install --global npm@11.19.0
           if npm view "tool-evolver@$RELEASE_VERSION" version --silent 2>/dev/null | grep -qx "$RELEASE_VERSION"; then
             echo "tool-evolver@$RELEASE_VERSION is already published; verifying existing publication."
           else
