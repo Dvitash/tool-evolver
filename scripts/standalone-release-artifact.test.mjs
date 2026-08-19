@@ -36,9 +36,9 @@ describe("standalone platform release artifact", () => {
     execFileSync("tar", ["-xzf", tarball, "-C", extractDir], { stdio: "pipe" });
 
     const installedRoot = path.join(extractDir, "tool-evolver");
-    expect(fs.existsSync(path.join(installedRoot, "node_modules", "@tool-evolver", "contracts"))).toBe(
-      true,
-    );
+    expect(
+      fs.existsSync(path.join(installedRoot, "node_modules", "@tool-evolver", "contracts")),
+    ).toBe(true);
     expect(fs.existsSync(path.join(installedRoot, "node_modules", "zod"))).toBe(true);
 
     const cli = path.join(installedRoot, "bin", "tool-evolver");
