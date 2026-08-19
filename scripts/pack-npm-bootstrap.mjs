@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
+const REQUIRED_PORTABLE_RUNTIME_DEPENDENCIES = ["typescript"];
+
 function run(command, args, options) {
   const result = spawnSync(command, args, {
     cwd: options.cwd,
@@ -108,23 +110,24 @@ function normalizeInternalPackageEntrypoints(dependency, dependencyPath, depende
   return dependencyManifest;
 }
 
-function resolveDependencyDirectory(packageDir, deployRoot, dependency) {
+function resolveDependencyDirectory(packageDir, resolutionRoot, dependency) {
   let cursor = packageDir;
+  const resolvedRoot = path.resolve(resolutionRoot);
   while (true) {
     const candidate = path.join(cursor, "node_modules", ...dependency.split("/"));
     if (fs.existsSync(candidate)) return fs.realpathSync(candidate);
-    if (path.resolve(cursor) === path.resolve(deployRoot)) break;
+    if (path.resolve(cursor) === resolvedRoot) break;
     const parent = path.dirname(cursor);
     if (parent === cursor) break;
     cursor = parent;
   }
 
-  const rootCandidate = path.join(deployRoot, "node_modules", ...dependency.split("/"));
+  const rootCandidate = path.join(resolutionRoot, "node_modules", ...dependency.split("/"));
   if (fs.existsSync(rootCandidate)) return fs.realpathSync(rootCandidate);
   throw new Error(`Unable to resolve runtime dependency '${dependency}' from ${packageDir}.`);
 }
 
-function materializePortableTree(deployDir, portableDir) {
+function materializePortableTree(deployDir, portableDir, repositoryRoot) {
   copyPackageTree(deployDir, portableDir);
   const rootManifest = readManifest(portableDir, "Deployed npm bootstrap");
   if (rootManifest.name !== "tool-evolver" || rootManifest.version !== "1.0.0") {
@@ -133,16 +136,24 @@ function materializePortableTree(deployDir, portableDir) {
     );
   }
 
-  const queue = Object.keys(rootManifest.dependencies ?? {}).map((name) => ({
-    name,
-    requesterSourceDir: deployDir,
-  }));
+  const queue = [
+    ...Object.keys(rootManifest.dependencies ?? {}).map((name) => ({
+      name,
+      requesterSourceDir: deployDir,
+      resolutionRoot: deployDir,
+    })),
+    ...REQUIRED_PORTABLE_RUNTIME_DEPENDENCIES.map((name) => ({
+      name,
+      requesterSourceDir: repositoryRoot,
+      resolutionRoot: repositoryRoot,
+    })),
+  ];
   const copiedVersions = new Map();
   const dependencyVersions = new Map();
 
   while (queue.length > 0) {
-    const { name, requesterSourceDir } = queue.shift();
-    const sourceDir = resolveDependencyDirectory(requesterSourceDir, deployDir, name);
+    const { name, requesterSourceDir, resolutionRoot } = queue.shift();
+    const sourceDir = resolveDependencyDirectory(requesterSourceDir, resolutionRoot, name);
     const sourceManifest = readManifest(sourceDir, `Runtime dependency '${name}'`);
     if (sourceManifest.name !== name) {
       throw new Error(
@@ -172,12 +183,16 @@ function materializePortableTree(deployDir, portableDir) {
     );
 
     for (const [childName, specifier] of Object.entries(destinationManifest.dependencies ?? {})) {
-      const childSourceDir = resolveDependencyDirectory(sourceDir, deployDir, childName);
+      const childSourceDir = resolveDependencyDirectory(sourceDir, resolutionRoot, childName);
       const childManifest = readManifest(childSourceDir, `Runtime dependency '${childName}'`);
       if (typeof specifier === "string" && specifier.startsWith("workspace:")) {
         destinationManifest.dependencies[childName] = childManifest.version;
       }
-      queue.push({ name: childName, requesterSourceDir: sourceDir });
+      queue.push({
+        name: childName,
+        requesterSourceDir: sourceDir,
+        resolutionRoot,
+      });
     }
 
     writeManifest(destinationDir, destinationManifest);
@@ -239,7 +254,7 @@ export function packNpmBootstrap(options = {}) {
     run(pnpm, ["--filter=./apps/cli", "--prod", "deploy", "--legacy", deployDir], {
       cwd: rootDir,
     });
-    const manifest = materializePortableTree(deployDir, portableDir);
+    const manifest = materializePortableTree(deployDir, portableDir, rootDir);
     const packOutput = run(npm, ["pack", portableDir, "--pack-destination", outputDir, "--json"], {
       cwd: rootDir,
     });
