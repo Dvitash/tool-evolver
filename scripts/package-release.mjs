@@ -233,8 +233,8 @@ export function createUstarHeader({
   buf.write(typeflag, 156, 1, "ascii");
   buf.write("ustar\0", 257, 6, "ascii");
   buf.write("00", 263, 2, "ascii");
-  buf.write(uname, 265, 32, "ascii");
-  buf.write(gname, 297, 32, "ascii");
+  buf.write(uname, 265, 32, "utf8");
+  buf.write(gname, 297, 32, "utf8");
   if (prefixField) buf.write(prefixField, 345, 155, "utf8");
 
   buf.fill(0x20, 148, 156);
@@ -455,17 +455,20 @@ export function createPlatformReleaseTarballs(rootDir, outputDir) {
     },
     {
       path: "tool-evolver/bin/tool-evolver",
-      content: "#!/usr/bin/env node\nimport { cliMain } from '../apps/cli/dist/index.js';\ncliMain(process.argv.slice(2));\n",
+      content:
+        "#!/usr/bin/env node\nimport { cliMain } from '../apps/cli/dist/index.js';\ncliMain(process.argv.slice(2));\n",
       mode: 0o755,
     },
     {
       path: "tool-evolver/bin/tool-evolver-daemon",
-      content: "#!/usr/bin/env node\nimport { daemonMain } from '../apps/observer/dist/index.js';\ndaemonMain();\n",
+      content:
+        "#!/usr/bin/env node\nimport { daemonMain } from '../apps/observer/dist/index.js';\ndaemonMain();\n",
       mode: 0o755,
     },
     {
       path: "tool-evolver/bin/tool-evolver-mcp",
-      content: "#!/usr/bin/env node\nimport { gatewayMain } from '../apps/gateway/dist/index.js';\ngatewayMain();\n",
+      content:
+        "#!/usr/bin/env node\nimport { gatewayMain } from '../apps/gateway/dist/index.js';\ngatewayMain();\n",
       mode: 0o755,
     },
     {
@@ -566,7 +569,9 @@ function resolveReleaseIdentity(options = {}) {
     ref,
     workflow: {
       name:
-        options.workflowName || process.env.GITHUB_WORKFLOW || (testOnly ? "test-only-release" : ""),
+        options.workflowName ||
+        process.env.GITHUB_WORKFLOW ||
+        (testOnly ? "test-only-release" : ""),
       runId: workflowRunId,
       runAttempt: workflowRunAttempt,
     },
@@ -584,7 +589,9 @@ export function generateSignedManifest(packageDigests, assetDigests, options = {
   const releaseIdentity = options.releaseIdentity || resolveReleaseIdentity(options);
   const evidence = options.evidence;
   if (!evidence && options.testOnly !== true) {
-    throw new Error("Production release manifests require release evidence metadata before signing.");
+    throw new Error(
+      "Production release manifests require release evidence metadata before signing.",
+    );
   }
   const manifestPayload = {
     schemaVersion: "2.0.0",
@@ -691,7 +698,9 @@ export function packageRelease(options = {}) {
   const skipBuild = options.skipBuild ?? false;
   const testOnly = options.testOnly ?? process.env.TOOL_EVOLVER_RELEASE_TEST_ONLY === "1";
   const distDir =
-    options.distDir || options.outputDir || path.resolve(rootDir, `dist/release/v${RELEASE_VERSION}`);
+    options.distDir ||
+    options.outputDir ||
+    path.resolve(rootDir, `dist/release/v${RELEASE_VERSION}`);
 
   const releaseIdentity = resolveReleaseIdentity({ ...options, rootDir, testOnly });
   const keyPair = resolveSigningKey({ ...options, testOnly });
@@ -743,7 +752,11 @@ export function packageRelease(options = {}) {
   );
   fs.writeFileSync(
     path.join(distDir, "channels.json"),
-    JSON.stringify(generateChannelMetadata(manifestSha256, { keyPair, releaseIdentity, testOnly }), null, 2),
+    JSON.stringify(
+      generateChannelMetadata(manifestSha256, { keyPair, releaseIdentity, testOnly }),
+      null,
+      2,
+    ),
   );
   fs.writeFileSync(
     path.join(distDir, "release-trust.json"),
