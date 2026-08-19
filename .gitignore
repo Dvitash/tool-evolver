@@ -12,6 +12,9 @@ build/
 coverage/
 .nyc_output/
 
+# Local runtime logs
+tmp/
+
 # Environment & Secrets
 .env
 .env.*
