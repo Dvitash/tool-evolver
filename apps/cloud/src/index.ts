@@ -360,6 +360,10 @@ export class CloudService {
       const tenant = job.tenantContext;
       const payload = job.payload as { sessionIds?: string[] } | undefined;
       if (payload?.sessionIds && payload.sessionIds.length > 0) {
+        // Aggregate events across all sessions into one detection pass:
+        // workflow patterns repeat ACROSS sessions, so per-session calls
+        // can never reach the occurrence threshold.
+        const allEvents: NormalizedSessionEvent[] = [];
         for (const sessId of payload.sessionIds) {
           const queryResult = await this.observationRepo.queryEvents({
             accountId: tenant.accountId,
@@ -367,28 +371,27 @@ export class CloudService {
             sessionId: sessId,
             limit: 500,
           });
-          if (queryResult.events.length > 0) {
-            const sessionEvents: NormalizedSessionEvent[] = queryResult.events.map(
-              (entity) =>
-                ({
-                  eventId: entity.id,
-                  sessionId: entity.sessionId,
-                  timestamp: entity.timestamp,
-                  type: entity.eventType as NormalizedSessionEvent["type"],
-                  schemaVersion: entity.schemaVersion,
-                  causalRef: {
-                    causalSequence: entity.causalSequence,
-                    parentId: entity.parentId ?? undefined,
-                    rootId: entity.rootId ?? undefined,
-                    turnIndex: entity.turnIndex ?? undefined,
-                    stepIndex: entity.stepIndex ?? undefined,
-                  },
-                  redaction: entity.redaction ?? { isRedacted: false, rulesApplied: [] },
-                  ...entity.payload,
-                }) as unknown as NormalizedSessionEvent,
-            );
-            await this.opportunityService.processSessionEvents(tenant, sessionEvents);
+          for (const entity of queryResult.events) {
+            allEvents.push({
+              eventId: entity.id,
+              sessionId: entity.sessionId,
+              timestamp: entity.timestamp,
+              type: entity.eventType as NormalizedSessionEvent["type"],
+              schemaVersion: entity.schemaVersion,
+              causalRef: {
+                causalSequence: entity.causalSequence,
+                parentId: entity.parentId ?? undefined,
+                rootId: entity.rootId ?? undefined,
+                turnIndex: entity.turnIndex ?? undefined,
+                stepIndex: entity.stepIndex ?? undefined,
+              },
+              redaction: entity.redaction ?? { isRedacted: false, rulesApplied: [] },
+              ...entity.payload,
+            } as unknown as NormalizedSessionEvent);
           }
+        }
+        if (allEvents.length > 0) {
+          await this.opportunityService.processSessionEvents(tenant, allEvents);
         }
       }
     });
