@@ -109,7 +109,7 @@ describe("OMP Discovery, Installation Probing & Breadcrumbs", () => {
       expect(installation?.status).toBe("ready");
       expect(installation?.version).toBe("1.0.0");
       expect(installation?.executablePath).toBe(mockBin);
-      expect(installation?.configPath).toBe(path.join(ompHome, "config.json"));
+      expect(installation?.configPath).toBe(path.join(ompHome, "agent", "mcp.json"));
       expect(installation?.isInstalled).toBe(true);
       expect(installation?.metadata.streaming).toBe(true);
       expect(installation?.metadata.subagents).toBe(true);

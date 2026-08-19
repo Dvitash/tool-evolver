@@ -1,3 +1,4 @@
+import path from "node:path";
 import {
   ConfigPreconditionFailedError,
   InMemoryConfigFsBridge,
@@ -17,21 +18,36 @@ describe("OMP Config Planner, MCP Registration, Idempotency & Rollback", () => {
     const custom = resolveOmpConfigPath(undefined, { customConfigPath: "/custom/path.json" });
     expect(custom).toBe(resolveOmpConfigPath(undefined, { customConfigPath: "/custom/path.json" }));
 
+    const globalHome = "/test/custom-home/.omp";
+    const globalConfig = resolveOmpConfigPath(undefined, { ompHome: globalHome });
+    expect(globalConfig).toBe(path.resolve(globalHome, "agent", "mcp.json"));
+
     const wsConfig = resolveOmpConfigPath({
       workspaceId: "ws-1",
       rootPath: "/repo/app",
       name: "app",
       harnessId: "omp",
-      configPath: "/repo/app/.omp/config.json",
+      configPath: "/repo/app/.omp/agent/mcp.json",
       metadata: {},
     });
     expect(wsConfig).toContain(".omp");
-    expect(wsConfig).toContain("config.json");
+    expect(wsConfig).toContain(path.join("agent", "mcp.json"));
+
+    const explicitWsMcp = resolveOmpConfigPath({
+      workspaceId: "ws-2",
+      rootPath: "/repo/app2",
+      name: "app2",
+      harnessId: "omp",
+      configPath: "/repo/app2/.omp/agent/mcp.json",
+      mcpConfigPath: "/repo/app2/custom-mcp.json",
+      metadata: {},
+    });
+    expect(explicitWsMcp).toBe(path.resolve("/repo/app2/custom-mcp.json"));
   });
 
-  it("plans MCP config mutation on an empty config file", async () => {
+  it("plans MCP config mutation on a missing / empty config file creating valid shape", async () => {
     const fsBridge = new InMemoryConfigFsBridge();
-    const configPath = "/test/home/.omp/config.json";
+    const configPath = "/test/home/.omp/agent/mcp.json";
 
     const plan = await planOmpMcpConfig({
       gatewayUrl: "http://127.0.0.1:4000/mcp/sse",
@@ -53,13 +69,94 @@ describe("OMP Config Planner, MCP Registration, Idempotency & Rollback", () => {
       url: "http://127.0.0.1:4000/mcp/sse",
       type: "sse",
     });
+
+    const backup = await applyOmpMcpConfig(plan, fsBridge);
+    expect(backup.targetPath).toBe(configPath);
+    expect(await fsBridge.exists(configPath)).toBe(true);
+
+    const verified = await verifyOmpMcpConfig({
+      customConfigPath: configPath,
+      gatewayUrl: "http://127.0.0.1:4000/mcp/sse",
+      fsBridge,
+    });
+    expect(verified).toBe(true);
+  });
+
+  it("injection into a scratch HOME writes ~/.omp/agent/mcp.json containing the new server under mcpServers, preserves a pre-existing server entry, and creates a backup file", async () => {
+    const fsBridge = new InMemoryConfigFsBridge();
+    const ompHome = "/scratch/home/.omp";
+    const targetMcpPath = path.resolve(ompHome, "agent", "mcp.json");
+
+    const initialConfig = {
+      $schema: "https://json.schemastore.org/mcp-server-config.json",
+      theme: "dark",
+      mcpServers: {
+        "pre-existing-tool": {
+          type: "stdio",
+          command: "python",
+          args: ["-m", "tool"],
+          env: { FOO: "bar" },
+        },
+      },
+    };
+    const initialContent = `${JSON.stringify(initialConfig, null, 2)}\n`;
+    await fsBridge.writeFile(targetMcpPath, initialContent);
+
+    const plan = await planOmpMcpConfig({
+      ompHome,
+      serverName: "tool-evolver-gateway",
+      command: "tool-evolver-gateway",
+      args: ["--stdio"],
+      env: { PORT: "4000" },
+      fsBridge,
+    });
+
+    expect(plan.targetPath).toBe(targetMcpPath);
+
+    const backup = await applyOmpMcpConfig(plan, fsBridge);
+    expect(backup.targetPath).toBe(targetMcpPath);
+    expect(backup.originalContent).toBe(initialContent);
+    expect(await fsBridge.exists(backup.backupPath)).toBe(true);
+    expect(await fsBridge.readFile(backup.backupPath)).toBe(initialContent);
+
+    const mutatedContent = await fsBridge.readFile(targetMcpPath);
+    expect(mutatedContent).not.toBeNull();
+    const parsed = JSON.parse(mutatedContent!);
+    expect(parsed.$schema).toBe("https://json.schemastore.org/mcp-server-config.json");
+    expect(parsed.theme).toBe("dark");
+    expect(parsed.mcpServers["pre-existing-tool"]).toEqual({
+      type: "stdio",
+      command: "python",
+      args: ["-m", "tool"],
+      env: { FOO: "bar" },
+    });
+    expect(parsed.mcpServers["tool-evolver-gateway"]).toEqual({
+      type: "stdio",
+      command: "tool-evolver-gateway",
+      args: ["--stdio"],
+      env: { PORT: "4000" },
+    });
+
+    const verified = await verifyOmpMcpConfig({
+      ompHome,
+      serverName: "tool-evolver-gateway",
+      command: "tool-evolver-gateway",
+      fsBridge,
+    });
+    expect(verified).toBe(true);
+
+    await rollbackOmpMcpConfig(backup, fsBridge);
+    const restoredContent = await fsBridge.readFile(targetMcpPath);
+    expect(restoredContent).toBe(initialContent);
+    expect(await fsBridge.exists(backup.backupPath)).toBe(true);
   });
 
   it("preserves existing extensions, user preferences, and other MCP servers", async () => {
     const fsBridge = new InMemoryConfigFsBridge();
-    const configPath = "/test/home/.omp/config.json";
+    const configPath = "/test/home/.omp/agent/mcp.json";
 
     const initialConfig = {
+      $schema: "https://json.schemastore.org/mcp-server-config.json",
       theme: "monokai",
       model: "gpt-4o",
       extensions: ["omp-plugin-git", "omp-plugin-diff"],
@@ -83,15 +180,14 @@ describe("OMP Config Planner, MCP Registration, Idempotency & Rollback", () => {
       fsBridge,
     });
 
-    expect(plan.preconditionHash).not.toBe("");
-
     const plannedParsed = JSON.parse(plan.plannedContent) as typeof initialConfig & {
       mcpServers: {
-        "existing-db-server": unknown;
+        "existing-db-server": { command: string; args: string[] };
         "tool-evolver-gateway": { url: string; type: string };
       };
     };
 
+    expect(plannedParsed.$schema).toBe("https://json.schemastore.org/mcp-server-config.json");
     expect(plannedParsed.theme).toBe("monokai");
     expect(plannedParsed.model).toBe("gpt-4o");
     expect(plannedParsed.extensions).toEqual(["omp-plugin-git", "omp-plugin-diff"]);
@@ -108,7 +204,7 @@ describe("OMP Config Planner, MCP Registration, Idempotency & Rollback", () => {
 
   it("is idempotent when re-planning against already mutated config", async () => {
     const fsBridge = new InMemoryConfigFsBridge();
-    const configPath = "/test/home/.omp/config.json";
+    const configPath = "/test/home/.omp/agent/mcp.json";
 
     const plan1 = await planOmpMcpConfig({
       gatewayUrl: "http://127.0.0.1:4000/mcp/sse",
@@ -129,47 +225,36 @@ describe("OMP Config Planner, MCP Registration, Idempotency & Rollback", () => {
     expect(parsed1).toEqual(parsed2);
   });
 
-  it("applies mutation, creates backup, verifies config, and rolls back cleanly", async () => {
+  it("prefers agent/mcp.json and leaves legacy config.json untouched when present", async () => {
     const fsBridge = new InMemoryConfigFsBridge();
-    const configPath = "/test/home/.omp/config.json";
-
-    const initialContent = `${JSON.stringify({ custom: "value" }, null, 2)}\n`;
-    await fsBridge.writeFile(configPath, initialContent);
+    const ompHome = "/test/legacy-home/.omp";
+    const legacyConfigPath = path.resolve(ompHome, "config.json");
+    const legacyContent = JSON.stringify({ legacyField: "old_value" }, null, 2);
+    await fsBridge.writeFile(legacyConfigPath, legacyContent);
 
     const plan = await planOmpMcpConfig({
-      gatewayUrl: "http://127.0.0.1:4000/mcp/sse",
-      customConfigPath: configPath,
-      fsBridge,
-    });
-
-    const backup = await applyOmpMcpConfig(plan, fsBridge);
-    expect(backup.targetPath).toBe(configPath);
-    expect(backup.originalContent).toBe(initialContent);
-
-    // Verify
-    const isVerified = await verifyOmpMcpConfig({
-      customConfigPath: configPath,
+      ompHome,
       gatewayUrl: "http://127.0.0.1:4000/mcp/sse",
       fsBridge,
     });
-    expect(isVerified).toBe(true);
 
-    // Rollback
-    await rollbackOmpMcpConfig(backup, fsBridge);
-    const restoredContent = await fsBridge.readFile(configPath);
-    expect(restoredContent).toBe(initialContent);
+    expect(plan.targetPath).toBe(path.resolve(ompHome, "agent", "mcp.json"));
 
-    const isVerifiedAfterRollback = await verifyOmpMcpConfig({
-      customConfigPath: configPath,
-      gatewayUrl: "http://127.0.0.1:4000/mcp/sse",
-      fsBridge,
-    });
-    expect(isVerifiedAfterRollback).toBe(false);
+    await applyOmpMcpConfig(plan, fsBridge);
+
+    // Verify legacy file is untouched
+    const currentLegacyContent = await fsBridge.readFile(legacyConfigPath);
+    expect(currentLegacyContent).toBe(legacyContent);
+
+    // Verify new agent/mcp.json was created
+    const newContent = await fsBridge.readFile(path.resolve(ompHome, "agent", "mcp.json"));
+    expect(newContent).not.toBeNull();
+    expect(JSON.parse(newContent!).mcpServers["tool-evolver-gateway"]).toBeDefined();
   });
 
   it("throws ConfigPreconditionFailedError when current content changes before apply", async () => {
     const fsBridge = new InMemoryConfigFsBridge();
-    const configPath = "/test/home/.omp/config.json";
+    const configPath = "/test/home/.omp/agent/mcp.json";
 
     await fsBridge.writeFile(configPath, JSON.stringify({ version: 1 }));
 

@@ -173,14 +173,16 @@ export async function collectStatus(options: {
   ]);
   const claudePath = path.join(customHome, ".claude.json");
   const codexPath = path.join(customHome, ".codex", "config.toml");
-  const ompPath = path.join(customHome, ".omp", "config.json");
+  const ompPath = path.join(customHome, ".omp", "agent", "mcp.json");
+  const ompLegacyPath = path.join(customHome, ".omp", "config.json");
 
-  const [claudeContent, codexContent, ompContent] = await Promise.all([
+  const [claudeContent, codexContent, ompAgentContent, ompLegacyContent] = await Promise.all([
     fsBridge.readFile(claudePath),
     fsBridge.readFile(codexPath),
     fsBridge.readFile(ompPath),
+    fsBridge.readFile(ompLegacyPath),
   ]);
-
+  const ompContent = ompAgentContent ?? ompLegacyContent;
   const claudeConfigured = Boolean(
     claudeContent &&
       (claudeContent.includes("tool-evolver") || claudeContent.includes("toolevolver")),

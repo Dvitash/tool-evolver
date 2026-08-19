@@ -13,22 +13,29 @@ import {
 } from "@tool-evolver/harness-contracts";
 import { resolveOmpHome } from "./discovery.js";
 
-export const DEFAULT_OMP_CONFIG_FILENAME = "config.json";
+export const DEFAULT_OMP_CONFIG_FILENAME = path.join("agent", "mcp.json");
+export const DEFAULT_OMP_MCP_CONFIG_PATH = path.join("agent", "mcp.json");
 export const DEFAULT_GATEWAY_SERVER_NAME = "tool-evolver-gateway";
 
 export interface PlanOmpMcpConfigOptions {
   workspace?: HarnessWorkspace;
-  gatewayUrl: string;
+  gatewayUrl?: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
   ompHome?: string;
   customConfigPath?: string;
   fsBridge?: ConfigFsBridge;
   serverName?: string;
-  serverType?: "sse" | "http" | "stdio";
+  serverType?: "stdio" | "sse" | "http";
+  type?: "stdio" | "sse" | "http" | string;
+  url?: string;
 }
 
 export interface VerifyOmpMcpConfigOptions {
   workspace?: HarnessWorkspace;
   gatewayUrl?: string;
+  command?: string;
   fsBridge?: ConfigFsBridge;
   customConfigPath?: string;
   ompHome?: string;
@@ -37,6 +44,7 @@ export interface VerifyOmpMcpConfigOptions {
 
 /**
  * Resolves the target configuration path for an OMP workspace or global install.
+ * Prefers ~/.omp/agent/mcp.json (OMP v17.3.8+ format).
  */
 export function resolveOmpConfigPath(
   workspace?: HarnessWorkspace,
@@ -48,19 +56,21 @@ export function resolveOmpConfigPath(
   if (workspace?.mcpConfigPath) {
     return path.resolve(workspace.mcpConfigPath);
   }
+  if (workspace?.rootPath) {
+    return path.resolve(workspace.rootPath, ".omp", "agent", "mcp.json");
+  }
   if (workspace?.configPath) {
     return path.resolve(workspace.configPath);
   }
-  if (workspace?.rootPath) {
-    return path.resolve(workspace.rootPath, ".omp", DEFAULT_OMP_CONFIG_FILENAME);
-  }
   const ompHome = resolveOmpHome({ customHome: options?.ompHome });
-  return path.resolve(ompHome, DEFAULT_OMP_CONFIG_FILENAME);
+  return path.resolve(ompHome, "agent", "mcp.json");
 }
+
+export const resolveOmpMcpConfigPath = resolveOmpConfigPath;
 
 /**
  * Plans a configuration mutation that registers the Tool Evolver Gateway in OMP's MCP configuration.
- * Preserves all existing extensions, user settings, and other MCP servers.
+ * Preserves all existing extensions, user settings, $schema, and other MCP servers.
  */
 export async function planOmpMcpConfig(
   options: PlanOmpMcpConfigOptions,
@@ -83,16 +93,38 @@ export async function planOmpMcpConfig(
     }
   }
 
-  // Preserve existing mcpServers, extensions, tools, settings, etc.
+  // Preserve existing mcpServers, $schema, extensions, tools, settings, etc.
   const existingMcpServers =
     typeof currentConfig.mcpServers === "object" && currentConfig.mcpServers !== null
       ? { ...(currentConfig.mcpServers as Record<string, unknown>) }
       : {};
 
-  const serverEntry: Record<string, unknown> = {
-    url: options.gatewayUrl,
-    type: options.serverType ?? "sse",
-  };
+  const explicitType = options.serverType ?? options.type;
+  let serverEntry: Record<string, unknown>;
+
+  if (options.command !== undefined) {
+    serverEntry = {
+      type: explicitType ?? "stdio",
+      command: options.command,
+      args: options.args ?? [],
+      ...(options.env !== undefined ? { env: options.env } : {}),
+      ...(options.gatewayUrl !== undefined ? { url: options.gatewayUrl } : {}),
+      ...(options.url !== undefined ? { url: options.url } : {}),
+    };
+  } else if (options.gatewayUrl !== undefined || options.url !== undefined) {
+    serverEntry = {
+      type: explicitType ?? "sse",
+      url: options.gatewayUrl ?? options.url,
+      ...(options.args !== undefined ? { args: options.args } : {}),
+      ...(options.env !== undefined ? { env: options.env } : {}),
+    };
+  } else {
+    serverEntry = {
+      type: explicitType ?? "stdio",
+      ...(options.args !== undefined ? { args: options.args } : {}),
+      ...(options.env !== undefined ? { env: options.env } : {}),
+    };
+  }
 
   const updatedMcpServers = {
     ...existingMcpServers,
@@ -100,6 +132,7 @@ export async function planOmpMcpConfig(
   };
 
   const updatedConfig: Record<string, unknown> = {
+    ...(currentConfig.$schema !== undefined ? { $schema: currentConfig.$schema } : {}),
     ...currentConfig,
     mcpServers: updatedMcpServers,
   };
@@ -113,7 +146,7 @@ export async function planOmpMcpConfig(
     plannedContent,
     description: `Register Tool Evolver Gateway MCP server "${serverName}" in OMP configuration`,
     metadata: {
-      changesSummary: `Add/update mcpServers.${serverName} -> ${options.gatewayUrl}`,
+      changesSummary: `Add/update mcpServers.${serverName}`,
     },
   });
 }
@@ -168,6 +201,10 @@ export async function verifyOmpMcpConfig(
     if (mergedOptions.gatewayUrl) {
       const entryUrl = serverEntry.url ?? serverEntry.endpoint;
       return entryUrl === mergedOptions.gatewayUrl;
+    }
+
+    if (mergedOptions.command) {
+      return serverEntry.command === mergedOptions.command;
     }
 
     return true;

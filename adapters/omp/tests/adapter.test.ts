@@ -74,7 +74,7 @@ describe("OmpHarnessAdapter (End-to-End Contract & Lifecycle)", () => {
         rootPath: wsPath,
         name: "my-repo",
         harnessId: "omp",
-        configPath: path.join(wsPath, ".omp", "config.json"),
+        configPath: path.join(wsPath, ".omp", "agent", "mcp.json"),
         metadata: {},
       };
 
@@ -95,7 +95,7 @@ describe("OmpHarnessAdapter (End-to-End Contract & Lifecycle)", () => {
       expect(plan.harnessId).toBe("omp");
 
       const backup = await adapter.applyMcpConfig(plan);
-      expect(backup.targetPath).toContain("config.json");
+      expect(backup.targetPath).toContain("mcp.json");
 
       // 6. Verify MCP Config
       const verified = await adapter.verifyMcpConfig(workspace);

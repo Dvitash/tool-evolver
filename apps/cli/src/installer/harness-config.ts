@@ -347,7 +347,7 @@ export class HarnessConfigOrchestrator {
   }): Promise<HarnessConfigResult> {
     const { customHome, gatewayUrl, fsBridge, dryRun } = options;
 
-    const fallbackConfigPath = path.join(customHome, ".omp", "config.json");
+    const fallbackConfigPath = path.join(customHome, ".omp", "agent", "mcp.json");
     const fallbackInstallation: HarnessInstallation = {
       harnessId: "omp",
       displayName: "Oh My Pi (OMP)",

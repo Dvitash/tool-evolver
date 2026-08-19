@@ -294,11 +294,13 @@ export async function runDiagnostics(options: {
   });
 
   // 7. Harness Configurations
-  const [claudeContent, codexContent, ompContent] = await Promise.all([
+  const [claudeContent, codexContent, ompAgentContent, ompLegacyContent] = await Promise.all([
     fsBridge.readFile(path.join(customHome, ".claude.json")),
     fsBridge.readFile(path.join(customHome, ".codex", "config.toml")),
+    fsBridge.readFile(path.join(customHome, ".omp", "agent", "mcp.json")),
     fsBridge.readFile(path.join(customHome, ".omp", "config.json")),
   ]);
+  const ompContent = ompAgentContent ?? ompLegacyContent;
 
   if (
     claudeContent &&

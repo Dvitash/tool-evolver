@@ -10,7 +10,7 @@ Tool Evolver integrates seamlessly with multiple AI developer harnesses via the 
 |---------|-----------------|-------------------|-----------------|------------------|-------------------|
 | **Claude Code CLI** | `0.2.29`, `1.0.0` (`>= 0.1.0`) | `~/.claude/claude.json` | MCP over SSE / Stdio | Local JSONL Session Tailing | Context Notice Prompt Nudge |
 | **Codex CLI** | `0.1.0`, `0.2.0` (`>= 0.1.0`) | `~/.codex/config.toml` | MCP over SSE | Local TOML/JSON Log Tailing | Session Restart Required |
-| **Oh My Pi (OMP)** | `0.1.0`, `0.2.0` (`>= 0.1.0`) | `~/.omp/config.json` | MCP over SSE / Hub IPC | In-process Event Tailer | Native ListChanged Notification |
+| **Oh My Pi (OMP)** | `0.1.0`, `0.2.0`, `17.3.8` (`>= 0.1.0`) | `~/.omp/agent/mcp.json` | MCP over Stdio / SSE / Hub IPC | In-process Event Tailer | Native ListChanged Notification |
 ---
 
 ## 1. Claude Code CLI Integration
@@ -72,14 +72,17 @@ Codex CLI session logs are tailed from `~/.codex/sessions/`. Tool Evolver's obse
 
 ### Automated Registration
 
-For OMP environments, Tool Evolver updates `~/.omp/config.json`:
+For OMP environments, Tool Evolver updates `~/.omp/agent/mcp.json`:
 
 ```json
 {
+  "$schema": "https://json.schemastore.org/mcp-server-config.json",
   "mcpServers": {
     "tool-evolver-gateway": {
-      "url": "http://127.0.0.1:9400/mcp/sse",
-      "type": "sse"
+      "type": "stdio",
+      "command": "tool-evolver-gateway",
+      "args": ["--stdio"],
+      "env": {}
     }
   }
 }

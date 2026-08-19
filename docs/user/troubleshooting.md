@@ -63,7 +63,7 @@ tool-evolver repair
    Verify that your harness configuration file contains the correct URL (`http://127.0.0.1:9400/mcp/sse`):
    - Claude Code: `~/.claude/claude.json`
    - Codex CLI: `~/.codex/config.toml`
-   - Oh My Pi: `~/.omp/config.json`
+   - Oh My Pi: `~/.omp/agent/mcp.json`
 3. **Resynchronize Harness Configs**:
    ```bash
    tool-evolver repair --fix-harness-configs

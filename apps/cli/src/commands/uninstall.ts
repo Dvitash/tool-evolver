@@ -136,22 +136,32 @@ export async function removeHarnessMcpConfigurations(options: {
     cleaned.push("Codex CLI");
   }
 
-  // 3. OMP (~/.omp/config.json)
-  const ompPath = path.join(home, ".omp", "config.json");
-  const ompContent = await fsBridge.readFile(ompPath);
-  if (ompContent) {
-    try {
-      const parsed = JSON.parse(ompContent) as Record<string, unknown>;
-      const mcp = parsed.mcpServers as Record<string, unknown> | undefined;
-      if (mcp && ("tool-evolver" in mcp || "toolevolver" in mcp)) {
-        delete mcp["tool-evolver"];
-        delete mcp.toolevolver;
-        await fsBridge.writeFile(ompPath, JSON.stringify(parsed, null, 2));
-        cleaned.push("Oh My Pi (OMP)");
+  // 3. OMP (~/.omp/agent/mcp.json and legacy ~/.omp/config.json)
+  const ompPaths = [
+    path.join(home, ".omp", "agent", "mcp.json"),
+    path.join(home, ".omp", "config.json"),
+  ];
+  let ompCleaned = false;
+  for (const oPath of ompPaths) {
+    const ompContent = await fsBridge.readFile(oPath);
+    if (ompContent) {
+      try {
+        const parsed = JSON.parse(ompContent) as Record<string, unknown>;
+        const mcp = parsed.mcpServers as Record<string, unknown> | undefined;
+        if (mcp && ("tool-evolver" in mcp || "toolevolver" in mcp || "tool-evolver-gateway" in mcp)) {
+          delete mcp["tool-evolver"];
+          delete mcp.toolevolver;
+          delete mcp["tool-evolver-gateway"];
+          await fsBridge.writeFile(oPath, `${JSON.stringify(parsed, null, 2)}\n`);
+          ompCleaned = true;
+        }
+      } catch {
+        // Continue
       }
-    } catch {
-      // Continue
     }
+  }
+  if (ompCleaned) {
+    cleaned.push("Oh My Pi (OMP)");
   }
 
   return cleaned;

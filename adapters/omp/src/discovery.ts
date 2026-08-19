@@ -217,7 +217,7 @@ export async function probeOmpInstallation(
       displayName: "Oh My Pi",
       version: "0.0.0",
       executablePath: options.customExecutablePath,
-      configPath: path.join(ompHome, "config.json"),
+      configPath: path.join(ompHome, "agent", "mcp.json"),
       homePath: ompHome,
       isInstalled: false,
       status: "missing_executable",
@@ -234,7 +234,7 @@ export async function probeOmpInstallation(
 
   const globalConfigPath = options?.customConfigPath
     ? path.resolve(options.customConfigPath)
-    : path.join(ompHome, "config.json");
+    : path.join(ompHome, "agent", "mcp.json");
 
   let status: InstallationStatus = "missing_executable";
   let version = "0.0.0";
@@ -394,8 +394,8 @@ export async function discoverOmpWorkspaces(
         rootPath: cwd,
         name: path.basename(cwd),
         harnessId: "omp",
-        configPath: path.join(cwd, ".omp", "config.json"),
-        mcpConfigPath: path.join(cwd, ".omp", "config.json"),
+        configPath: path.join(cwd, ".omp", "agent", "mcp.json"),
+        mcpConfigPath: path.join(cwd, ".omp", "agent", "mcp.json"),
         metadata: { source: "cwd" },
       });
     }
@@ -416,8 +416,8 @@ export async function discoverOmpWorkspaces(
             rootPath: absPath,
             name: path.basename(absPath),
             harnessId: "omp",
-            configPath: path.join(absPath, ".omp", "config.json"),
-            mcpConfigPath: path.join(absPath, ".omp", "config.json"),
+            configPath: path.join(absPath, ".omp", "agent", "mcp.json"),
+            mcpConfigPath: path.join(absPath, ".omp", "agent", "mcp.json"),
             metadata: { source: "searchPath" },
           });
         }
@@ -446,8 +446,8 @@ export async function discoverOmpWorkspaces(
           rootPath: absWsPath,
           name: typeof ws === "object" && ws?.name ? String(ws.name) : path.basename(absWsPath),
           harnessId: "omp",
-          configPath: path.join(absWsPath, ".omp", "config.json"),
-          mcpConfigPath: path.join(absWsPath, ".omp", "config.json"),
+          configPath: path.join(absWsPath, ".omp", "agent", "mcp.json"),
+          mcpConfigPath: path.join(absWsPath, ".omp", "agent", "mcp.json"),
           metadata: typeof ws === "object" ? ws : {},
         });
       }
@@ -478,10 +478,10 @@ export async function discoverOmpWorkspaces(
             workspacesMap.set(absWsPath, {
               workspaceId,
               rootPath: absWsPath,
-              name: parsed.name ?? path.basename(absWsPath),
+              name: path.basename(absWsPath),
               harnessId: "omp",
-              configPath: path.join(absWsPath, ".omp", "config.json"),
-              mcpConfigPath: path.join(absWsPath, ".omp", "config.json"),
+              configPath: path.join(absWsPath, ".omp", "agent", "mcp.json"),
+              mcpConfigPath: path.join(absWsPath, ".omp", "agent", "mcp.json"),
               metadata: parsed,
             });
           }
@@ -506,8 +506,8 @@ export async function discoverOmpWorkspaces(
         name: path.basename(absPath),
         harnessId: "omp",
         activeSessionId: bc.sessionId,
-        configPath: path.join(absPath, ".omp", "config.json"),
-        mcpConfigPath: path.join(absPath, ".omp", "config.json"),
+        configPath: path.join(absPath, ".omp", "agent", "mcp.json"),
+        mcpConfigPath: path.join(absPath, ".omp", "agent", "mcp.json"),
         metadata: { source: "breadcrumb", ...bc.metadata },
       });
     }

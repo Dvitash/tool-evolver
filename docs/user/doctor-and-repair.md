@@ -60,7 +60,7 @@ tool-evolver doctor
 | `worker_runtime`| Execution | Tests sandbox isolation (Deno or fallback Node worker). |
 | `harness_claude`| Integration | Validates `~/.claude/claude.json` MCP registration syntax. |
 | `harness_codex` | Integration | Validates `~/.codex/config.toml` MCP registration syntax. |
-| `harness_omp`   | Integration | Validates `~/.omp/config.json` MCP registration syntax. |
+| `harness_omp`   | Integration | Validates `~/.omp/agent/mcp.json` MCP registration syntax. |
 
 ### Sample Output with Identified Issues
 
