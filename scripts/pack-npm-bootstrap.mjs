@@ -48,7 +48,9 @@ function preparePortableManifest(stagingDir) {
   const dependencies = Object.keys(manifest.dependencies ?? {});
   for (const [name, specifier] of Object.entries(manifest.dependencies ?? {})) {
     if (typeof specifier === "string" && specifier.startsWith("workspace:")) {
-      throw new Error(`Deployed npm bootstrap retained workspace protocol for ${name}: ${specifier}`);
+      throw new Error(
+        `Deployed npm bootstrap retained workspace protocol for ${name}: ${specifier}`,
+      );
     }
   }
 
@@ -63,7 +65,9 @@ function preparePortableManifest(stagingDir) {
     const resolved = fs.realpathSync(dependencyPath);
     const relative = path.relative(stagingDir, resolved);
     if (relative.startsWith("..") || path.isAbsolute(relative)) {
-      throw new Error(`Bundled dependency '${dependency}' resolves outside deployment: ${resolved}`);
+      throw new Error(
+        `Bundled dependency '${dependency}' resolves outside deployment: ${resolved}`,
+      );
     }
   }
   return manifest;
@@ -84,17 +88,13 @@ export function packNpmBootstrap(options = {}) {
   fs.mkdirSync(outputDir, { recursive: true });
 
   try {
-    run(
-      pnpm,
-      ["--filter=./apps/cli", "--prod", "deploy", "--legacy", stagingDir],
-      { cwd: rootDir },
-    );
+    run(pnpm, ["--filter=./apps/cli", "--prod", "deploy", "--legacy", stagingDir], {
+      cwd: rootDir,
+    });
     const manifest = preparePortableManifest(stagingDir);
-    const packOutput = run(
-      npm,
-      ["pack", stagingDir, "--pack-destination", outputDir, "--json"],
-      { cwd: rootDir },
-    );
+    const packOutput = run(npm, ["pack", stagingDir, "--pack-destination", outputDir, "--json"], {
+      cwd: rootDir,
+    });
     const parsed = JSON.parse(packOutput);
     const filename = parsed?.[0]?.filename;
     if (!filename) throw new Error(`npm pack returned no filename: ${packOutput}`);
@@ -121,7 +121,9 @@ if (
     const result = packNpmBootstrap(parseArgs(process.argv.slice(2)));
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
+    process.stderr.write(
+      `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+    );
     process.exit(1);
   }
 }
