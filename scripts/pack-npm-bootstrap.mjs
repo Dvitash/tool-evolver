@@ -33,6 +33,33 @@ function parseArgs(argv) {
   return options;
 }
 
+function normalizeInternalPackageEntrypoints(dependency, dependencyPath, dependencyManifest) {
+  if (!dependency.startsWith("@tool-evolver/")) return dependencyManifest;
+
+  const distIndex = path.join(dependencyPath, "dist", "index.js");
+  if (!fs.existsSync(distIndex)) {
+    throw new Error(
+      `Bundled internal dependency '${dependency}' is missing its built dist/index.js entrypoint.`,
+    );
+  }
+
+  dependencyManifest.main = "./dist/index.js";
+  const distTypes = path.join(dependencyPath, "dist", "index.d.ts");
+  if (fs.existsSync(distTypes)) dependencyManifest.types = "./dist/index.d.ts";
+
+  const exportsField =
+    dependencyManifest.exports && typeof dependencyManifest.exports === "object"
+      ? dependencyManifest.exports
+      : {};
+  exportsField["."] = {
+    ...(fs.existsSync(distTypes) ? { types: "./dist/index.d.ts" } : {}),
+    import: "./dist/index.js",
+    default: "./dist/index.js",
+  };
+  dependencyManifest.exports = exportsField;
+  return dependencyManifest;
+}
+
 function preparePortableManifest(stagingDir) {
   const packagePath = path.join(stagingDir, "package.json");
   if (!fs.existsSync(packagePath)) {
@@ -59,13 +86,23 @@ function preparePortableManifest(stagingDir) {
       );
     }
 
+    const dependencyManifestPath = path.join(dependencyPath, "package.json");
+    if (!fs.existsSync(dependencyManifestPath)) {
+      throw new Error(`Bundled dependency '${dependency}' is missing package.json.`);
+    }
+    const dependencyManifest = normalizeInternalPackageEntrypoints(
+      dependency,
+      dependencyPath,
+      JSON.parse(fs.readFileSync(dependencyManifestPath, "utf8")),
+    );
+    fs.writeFileSync(
+      dependencyManifestPath,
+      `${JSON.stringify(dependencyManifest, null, 2)}\n`,
+      "utf8",
+    );
+
     const specifier = manifest.dependencies[dependency];
     if (typeof specifier === "string" && specifier.startsWith("workspace:")) {
-      const dependencyManifestPath = path.join(dependencyPath, "package.json");
-      if (!fs.existsSync(dependencyManifestPath)) {
-        throw new Error(`Bundled workspace dependency '${dependency}' is missing package.json.`);
-      }
-      const dependencyManifest = JSON.parse(fs.readFileSync(dependencyManifestPath, "utf8"));
       if (
         typeof dependencyManifest.version !== "string" ||
         !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(dependencyManifest.version)
