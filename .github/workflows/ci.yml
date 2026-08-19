@@ -5,17 +5,15 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
+  pull-requests: read
 
 jobs:
-  fin99-finalize:
-    name: FIN-003 Finalize Signed Installer
+  fin99-acceptance:
+    name: FIN-003 Signed Installer Acceptance
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: agent/product-hardening
-          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -23,57 +21,7 @@ jobs:
         with:
           version: 10.24.0
           run_install: false
-      - name: Rebase finalizer onto current source
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('.github/agent/fin99_finalize.py')
-          s = p.read_text()
-          s = s.replace(
-              '    if old not in text:\n        raise SystemExit(f"missing replacement target: {label}")\n    p.write_text(text.replace(old, new, 1))',
-              '    if old not in text:\n        if new in text:\n            return\n        raise SystemExit(f"missing replacement target: {label}")\n    p.write_text(text.replace(old, new, 1))',
-          )
-          s = s.replace(
-              '    if old not in s:\n        raise SystemExit(f"missing provisional Deno digest {old}")\n    s = s.replace(old, new)',
-              '    if old in s:\n        s = s.replace(old, new)',
-          )
-          s = s.replace(
-              '"function resolveDenoAsset(\\n  manifest: ReleaseManifestWithRuntimes,\\n  platform: ResolveProductionReleaseOptions[\\"platform\\"],\\n): RuntimeAssetDescriptor {"',
-              '"function resolveDenoAsset(\\n  descriptor: RuntimeDescriptor | undefined,\\n  platform: { os: string; arch: string; isWsl?: boolean },\\n): RuntimeAssetDescriptor {"',
-          )
-          s = s.replace(
-              '"function resolveDenoAsset(\\n  manifest: ReleaseManifestWithRuntimes,\\n  platform: ResolveProductionReleaseOptions[\\"platform\\"],\\n  allowInsecureHttpForTests = false,\\n): RuntimeAssetDescriptor {"',
-              '"function resolveDenoAsset(\\n  descriptor: RuntimeDescriptor | undefined,\\n  platform: { os: string; arch: string; isWsl?: boolean },\\n  allowInsecureHttpForTests = false,\\n): RuntimeAssetDescriptor {"',
-          )
-          s = s.replace(
-              '"  const denoAsset = resolveDenoAsset(manifest, options.platform);"',
-              '"  const denoAsset = resolveDenoAsset(manifest.runtimes?.deno, options.platform);"',
-          )
-          s = s.replace(
-              '"  const denoAsset = resolveDenoAsset(\\n    manifest,\\n    options.platform,\\n    options.allowInsecureHttpForTests === true,\\n  );"',
-              '"  const denoAsset = resolveDenoAsset(\\n    manifest.runtimes?.deno,\\n    options.platform,\\n    options.allowInsecureHttpForTests === true,\\n  );"',
-          )
-          p.write_text(s)
-          PY
-      - name: Apply final installer transaction hardening
-        run: python3 .github/agent/fin99_finalize.py
-      - run: rm -f .github/agent/fin99_finalize.py
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec biome check --write .
-        continue-on-error: true
+      - run: pnpm lint
       - run: pnpm build
-        continue-on-error: true
-      - run: pnpm exec vitest run apps/cli/tests/assets.test.ts apps/cli/tests/installer/signed-channel-verifier.test.ts apps/cli/tests/installer/npm-pack-clean-install.test.ts apps/cli/tests/installer/production-release-transaction.test.ts apps/cli/tests/installer-e2e.test.ts apps/cli/tests/upgrade-command.test.ts scripts/verify-release.test.mjs
-        continue-on-error: true
-      - name: Exclude workflow changes from bot commit
-        if: always()
-        run: git checkout HEAD -- .github/workflows/ci.yml .github/workflows/release.yml
-      - name: Commit finalized FIN-003 source
-        if: always()
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'fix(installer): complete signed release transaction'
-          git push origin HEAD:agent/product-hardening
+      - run: pnpm exec vitest run apps/cli/tests/assets.test.ts apps/cli/tests/installer/signed-channel-verifier.test.ts apps/cli/tests/installer/npm-pack-clean-install.test.ts apps/cli/tests/installer/production-release-transaction.test.ts apps/cli/tests/installer/packaged-cli-production-http.test.ts apps/cli/tests/installer-e2e.test.ts apps/cli/tests/upgrade-command.test.ts scripts/verify-release.test.mjs
