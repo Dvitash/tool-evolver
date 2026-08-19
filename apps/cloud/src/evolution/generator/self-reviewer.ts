@@ -361,11 +361,17 @@ export class DeterministicSelfReviewer {
    * - `<chain>.cmd.execute(...)`: CmdBrokerClient exposes `exec`, not `execute`.
    * - Reading `.output` / `.error` / `.exit_code` off a variable holding an exec
    *   result: cmd.exec resolves `{ exitCode, stdout, stderr }`.
+   * - Never inspecting `.exitCode` on an exec result: non-zero exits resolve as
+   *   data, they do not throw — unchecked results report failures as success.
+   * - Shell operators (`&&`, `||`, `|`, `;`, `>`) inside exec args: no shell is
+   *   invoked, so operators reach the process as literal argv entries.
    */
   private checkBrokerResultContract(sourceFile: ts.SourceFile, issues: SelfReviewIssue[]): void {
     const execResultVars = new Set<string>();
+    const exitCodeReadVars = new Set<string>();
     const reported = new Set<string>();
     const hallucinatedResultFields = new Set(["output", "error", "exit_code"]);
+    const shellOperators = new Set(["&&", "||", "|", ";", ">", ">>", "<", "2>", "2>&1"]);
     const brokerRoots = new Set(["broker", "context", "ctx"]);
 
     const isBrokerishChain = (expr: ts.Expression): boolean => {
@@ -428,7 +434,7 @@ export class DeterministicSelfReviewer {
       }
 
       // const x = await <brokerish chain>.exec|execute(...)
-      if (ts.isVariableDeclaration(node) && node.initializer && ts.isIdentifier(node.name)) {
+      if (ts.isVariableDeclaration(node) && node.initializer) {
         let init: ts.Expression = node.initializer;
         if (ts.isAwaitExpression(init)) {
           init = init.expression;
@@ -439,9 +445,70 @@ export class DeterministicSelfReviewer {
             (method === "exec" || method === "execute") &&
             isBrokerishChain(init.expression.expression)
           ) {
-            execResultVars.add(node.name.text);
+            if (ts.isIdentifier(node.name)) {
+              execResultVars.add(node.name.text);
+            } else if (ts.isObjectBindingPattern(node.name)) {
+              // const { exitCode, stdout } = await ...exec(...)
+              const bindsExitCode = node.name.elements.some(
+                (el) =>
+                  ts.isIdentifier(el.name) &&
+                  (el.propertyName ? el.propertyName.text : el.name.text) === "exitCode",
+              );
+              if (!bindsExitCode) {
+                push(
+                  "destructure-no-exitcode",
+                  "Broker contract violation: destructured cmd.exec result does not bind 'exitCode'. Non-zero exits resolve as data; tools must inspect exitCode to report failure.",
+                  "Bind and check exitCode: const { exitCode, stdout, stderr } = await context.broker.cmd.exec(...); if (exitCode !== 0) return { success: false, ... }. ",
+                );
+              }
+            }
+
+            // Shell operators in the args array reach the process literally.
+            const argsArg = init.arguments[1];
+            if (argsArg && ts.isArrayLiteralExpression(argsArg)) {
+              for (const el of argsArg.elements) {
+                if (ts.isStringLiteral(el) && shellOperators.has(el.text)) {
+                  push(
+                    `shell-op-${el.text}`,
+                    `Broker contract violation: cmd.exec does not invoke a shell; '${el.text}' would be passed to the process as a literal argument.`,
+                    "Split chained commands into separate cmd.exec calls and combine their outputs in code.",
+                  );
+                }
+              }
+            }
           }
         }
+      }
+
+      // await <brokerish>.exec(...) as a bare statement — result discarded.
+      if (ts.isExpressionStatement(node)) {
+        let expr: ts.Expression = node.expression;
+        if (ts.isAwaitExpression(expr)) {
+          expr = expr.expression;
+        }
+        if (ts.isCallExpression(expr) && ts.isPropertyAccessExpression(expr.expression)) {
+          const method = expr.expression.name.text;
+          if (
+            (method === "exec" || method === "execute") &&
+            isBrokerishChain(expr.expression.expression)
+          ) {
+            push(
+              "exec-result-discarded",
+              "Broker contract violation: cmd.exec result discarded. Non-zero exit codes resolve as data (they do not throw); an unchecked result hides command failures.",
+              "Assign the result and check exitCode: const r = await context.broker.cmd.exec(...); if (r.exitCode !== 0) return { success: false, error: r.stderr }. ",
+            );
+          }
+        }
+      }
+
+      // <execVar>.exitCode read — marks the result as inspected.
+      if (
+        ts.isPropertyAccessExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.name.text === "exitCode" &&
+        execResultVars.has(node.expression.text)
+      ) {
+        exitCodeReadVars.add(node.expression.text);
       }
 
       // <execVar>.<hallucinated field>
@@ -461,5 +528,16 @@ export class DeterministicSelfReviewer {
     };
 
     visit(sourceFile);
+
+    // exec results whose exitCode is never read report failures as success.
+    for (const varName of execResultVars) {
+      if (!exitCodeReadVars.has(varName)) {
+        push(
+          `${varName}.exitCode-unchecked`,
+          `Broker contract violation: '${varName}' holds a cmd.exec result but its exitCode is never inspected. Non-zero exits resolve as data, so the tool cannot detect command failure.`,
+          `Check the exit status: if (${varName}.exitCode !== 0) return { success: false, error: ${varName}.stderr }.`,
+        );
+      }
+    }
   }
 }
