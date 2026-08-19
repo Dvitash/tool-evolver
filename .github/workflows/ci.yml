@@ -8,8 +8,8 @@ permissions:
   contents: write
 
 jobs:
-  fin99-materialize:
-    name: FIN-003 Materialize Signed Installer
+  fin99-finalize:
+    name: FIN-003 Finalize Signed Installer
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -23,55 +23,25 @@ jobs:
         with:
           version: 10.24.0
           run_install: false
-      - name: Apply remaining signed installer hardening
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('.github/agent/fin99_apply.py')
-          s = p.read_text()
-          # The release-manifest/runtime-signature tranche was committed by the
-          # previous attempt. Continue from immutable version installation.
-          section = s.index('# Runtime installation happens inside the immutable version staging directory.')
-          header_end = s.index('# ---------------------------------------------------------------------------\n# Signed manifest owns')
-          s = s[:header_end] + '# ---------------------------------------------------------------------------\n' + s[section:]
-          # Align replacement targets with the current FIN-002 source shape.
-          s = s.replace(
-              '  readonly fsBridge?: ConfigFsBridge;\n  readonly logger?: (message: string) => void;\n  readonly force?: boolean;\n}',
-              '  readonly fsBridge?: ConfigFsBridge;\n  readonly force?: boolean;\n  readonly logger?: (msg: string) => void;\n}',
-              1,
-          )
-          s = s.replace(
-              'export interface VersionStateRecord {\n  activeVersion: string;\n  previousVersion: string | null;\n  updatedAt: string;\n  installedVersions: string[];\n}',
-              'export interface VersionStateRecord {\n  readonly activeVersion: string;\n  readonly previousVersion: string | null;\n  readonly updatedAt: string;\n  readonly installedVersions: string[];\n}',
-              1,
-          )
-          s = s.replace(
-              '/**\n * Atomically installs a verified release tarball into an immutable version directory.\n */',
-              '/**\n * Installs a release package into an immutable version directory.\n */',
-              1,
-          )
-          s = s.replace('downloadedRelease.actualSha256', 'downloadedRelease.sha256')
-          s = s.replace('downloadedDeno.actualSha256', 'downloadedDeno.sha256')
-          p.write_text(s)
-          PY
-          python3 .github/agent/fin99_apply.py
-      - run: rm -f .github/agent/fin99_apply.py
+      - name: Apply final installer transaction hardening
+        run: python3 .github/agent/fin99_finalize.py
+      - run: rm -f .github/agent/fin99_finalize.py
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec biome check --write .
         continue-on-error: true
       - run: pnpm build
         continue-on-error: true
-      - run: pnpm exec vitest run apps/cli/tests/assets.test.ts apps/cli/tests/installer/signed-channel-verifier.test.ts apps/cli/tests/installer/npm-pack-clean-install.test.ts apps/cli/tests/installer-e2e.test.ts scripts/verify-release.test.mjs
+      - run: pnpm exec vitest run apps/cli/tests/assets.test.ts apps/cli/tests/installer/signed-channel-verifier.test.ts apps/cli/tests/installer/npm-pack-clean-install.test.ts apps/cli/tests/installer/production-release-transaction.test.ts apps/cli/tests/installer-e2e.test.ts apps/cli/tests/upgrade-command.test.ts scripts/verify-release.test.mjs
         continue-on-error: true
       - name: Exclude workflow changes from bot commit
         if: always()
-        run: git checkout HEAD -- .github/workflows/ci.yml .github/workflows/release.yml
-      - name: Commit materialized FIN-003 source
+        run: git checkout HEAD -- .github/workflows/ci.yml
+      - name: Commit finalized FIN-003 source
         if: always()
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'feat(installer): enforce signed release chain and pinned runtime'
+          git commit -m 'fix(installer): complete signed release transaction'
           git push origin HEAD:agent/product-hardening
