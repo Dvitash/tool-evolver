@@ -357,7 +357,10 @@ export async function installReleaseVersion(
       try {
         const versionMetadata = JSON.parse(
           await fsPromises.readFile(path.join(targetVersionDir, "version.json"), "utf8"),
-        ) as { provenance?: ReleaseProvenance; deno?: { version?: string; sha256?: string } };
+        ) as {
+          provenance?: ReleaseProvenance;
+          denoRuntime?: { version?: string; sha256?: string };
+        };
         reusable =
           versionMetadata.provenance?.manifestSha256 === options.provenance.manifestSha256 &&
           versionMetadata.provenance?.releaseAssetSha256 ===
@@ -366,8 +369,8 @@ export async function installReleaseVersion(
         if (options.denoRuntime) {
           reusable =
             reusable &&
-            versionMetadata.deno?.version === options.denoRuntime.version &&
-            versionMetadata.deno?.sha256 === options.denoRuntime.sha256;
+            versionMetadata.denoRuntime?.version === options.denoRuntime.version &&
+            versionMetadata.denoRuntime?.sha256 === options.denoRuntime.sha256;
         }
       } catch {
         reusable = false;

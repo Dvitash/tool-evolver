@@ -292,7 +292,7 @@ describe("packed CLI production bootstrap", () => {
         ),
       );
       expect(versionMetadata.provenance.manifestSha256).toBe(sha256(manifestBytes));
-      expect(versionMetadata.deno.version).toBe("2.9.5");
+      expect(versionMetadata.denoRuntime.version).toBe("2.9.5");
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
