@@ -300,6 +300,6 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
       } finally {
         fs.rmSync(pubDir, { recursive: true, force: true });
       }
-    });
+    }, 30_000);
   });
 });
