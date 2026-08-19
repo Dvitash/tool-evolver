@@ -193,7 +193,9 @@ function materializePortableTree(deployDir, portableDir) {
     if (typeof specifier === "string" && specifier.startsWith("workspace:")) {
       const version = dependencyVersions.get(name);
       if (!version) {
-        throw new Error(`Portable npm bootstrap retained unresolved workspace dependency '${name}'.`);
+        throw new Error(
+          `Portable npm bootstrap retained unresolved workspace dependency '${name}'.`,
+        );
       }
       rootManifest.dependencies[name] = version;
     }
@@ -238,11 +240,9 @@ export function packNpmBootstrap(options = {}) {
       cwd: rootDir,
     });
     const manifest = materializePortableTree(deployDir, portableDir);
-    const packOutput = run(
-      npm,
-      ["pack", portableDir, "--pack-destination", outputDir, "--json"],
-      { cwd: rootDir },
-    );
+    const packOutput = run(npm, ["pack", portableDir, "--pack-destination", outputDir, "--json"], {
+      cwd: rootDir,
+    });
     const parsed = JSON.parse(packOutput);
     const filename = parsed?.[0]?.filename;
     if (!filename) throw new Error(`npm pack returned no filename: ${packOutput}`);
