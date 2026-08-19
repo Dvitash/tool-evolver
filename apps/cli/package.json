@@ -1,6 +1,6 @@
 {
   "name": "tool-evolver",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Command-line interface and bootstrap installer for Tool Evolver.",
   "private": false,
   "type": "module",
@@ -57,5 +57,19 @@
     "@tool-evolver/protocol": "workspace:*",
     "@tool-evolver/runtime": "workspace:*",
     "zod": "^3.25.76"
-  }
+  },
+  "bundledDependencies": [
+    "@tool-evolver/adapter-claude-code",
+    "@tool-evolver/adapter-codex",
+    "@tool-evolver/adapter-omp",
+    "@tool-evolver/contracts",
+    "@tool-evolver/crypto",
+    "@tool-evolver/db",
+    "@tool-evolver/gateway",
+    "@tool-evolver/harness-contracts",
+    "@tool-evolver/observer",
+    "@tool-evolver/protocol",
+    "@tool-evolver/runtime",
+    "zod"
+  ]
 }
