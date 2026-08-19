@@ -313,3 +313,141 @@ export default defineTool(async (context: ToolContext) => {
     ).toBe(true);
   });
 });
+
+describe("DeterministicSelfReviewer broker result contract", () => {
+  const planner = new CandidatePlanner();
+  const reviewer = new DeterministicSelfReviewer();
+
+  const makeArtifacts = (sourceCode: string): GeneratedArtifactSet => {
+    const opp = createMockOpportunity();
+    const plan = planner.plan(opp);
+    return {
+      plan,
+      manifest: {
+        id: "tool-123",
+        name: plan.name,
+        version: "1.0.0",
+        description: plan.description,
+        parameters: plan.inputSchema,
+        outputSchema: plan.outputSchema,
+        runtime: plan.runtime,
+        capabilities: plan.capabilityRequirements,
+        limits: {
+          timeoutMs: 30000,
+          maxOutputBytes: 1048576,
+          maxMemoryBytes: 134217728,
+          maxConcurrentInvocations: 4,
+        },
+        scope: "workspace",
+        digest: "hash-123",
+        metadata: {},
+        createdAt: new Date().toISOString(),
+      },
+      capabilities: plan.capabilityRequirements,
+      sourceCode,
+      generatedAt: new Date().toISOString(),
+    };
+  };
+
+  const brokerErrors = (sourceCode: string) =>
+    reviewer
+      .review(makeArtifacts(sourceCode))
+      .issues.filter((i) => i.severity === "error" && i.category === "broker");
+
+  it("flags hallucinated result fields (.output/.error/.exit_code) on exec results", () => {
+    const sourceCode = `
+import { defineTool } from "@tool-evolver/runtime";
+export default defineTool(async (context) => {
+  try {
+    const logResult = await context.broker.cmd.exec("git", ["log", "--oneline", "-5"]);
+    const code = logResult.exit_code ?? 0;
+    return { success: code === 0, data: { output: logResult.output, error: logResult.error }, error: null };
+  } catch (err) {
+    await context.logger.error(String(err));
+    return { success: false, data: null, error: String(err) };
+  }
+});
+`;
+    const issues = brokerErrors(sourceCode);
+    expect(issues.some((i) => i.message.includes("logResult.exit_code"))).toBe(true);
+    expect(issues.some((i) => i.message.includes("logResult.output"))).toBe(true);
+    expect(issues.some((i) => i.message.includes("logResult.error"))).toBe(true);
+    expect(issues.every((i) => i.fixHint?.includes("exitCode") || i.fixHint?.includes("stdout"))).toBe(
+      true,
+    );
+  });
+
+  it("flags exec invoked directly on broker/context (missing cmd family)", () => {
+    const sourceCode = `
+import { defineTool } from "@tool-evolver/runtime";
+export default defineTool(async (context) => {
+  try {
+    const result = await context.broker.exec("git status --porcelain", { shell: true });
+    return { success: result.exitCode === 0, data: { stdout: result.stdout }, error: null };
+  } catch (err) {
+    await context.logger.error(String(err));
+    return { success: false, data: null, error: String(err) };
+  }
+});
+`;
+    const issues = brokerErrors(sourceCode);
+    expect(issues.some((i) => i.message.includes("broker.exec"))).toBe(true);
+  });
+
+  it("flags cmd.execute (CmdBrokerClient exposes exec only)", () => {
+    const sourceCode = `
+import { defineTool } from "@tool-evolver/runtime";
+export default defineTool(async (context) => {
+  try {
+    const result = await context.broker.cmd.execute("git", ["status", "--porcelain"]);
+    return { success: result.exitCode === 0, data: { stdout: result.stdout }, error: null };
+  } catch (err) {
+    await context.logger.error(String(err));
+    return { success: false, data: null, error: String(err) };
+  }
+});
+`;
+    const issues = brokerErrors(sourceCode);
+    expect(issues.some((i) => i.message.includes("cmd.execute"))).toBe(true);
+  });
+
+  it("accepts contract-correct cmd.exec usage", () => {
+    const sourceCode = `
+import { defineTool } from "@tool-evolver/runtime";
+export default defineTool(async (context) => {
+  try {
+    const result = await context.broker.cmd.exec("git", ["status", "--porcelain"]);
+    await context.logger.info("git status done");
+    return {
+      success: result.exitCode === 0,
+      data: { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode },
+      error: result.exitCode === 0 ? null : result.stderr,
+    };
+  } catch (err) {
+    await context.logger.error(String(err));
+    return { success: false, data: null, error: String(err) };
+  }
+});
+`;
+    expect(brokerErrors(sourceCode)).toHaveLength(0);
+  });
+
+  it("does not flag .output on non-broker variables", () => {
+    const sourceCode = `
+import { defineTool } from "@tool-evolver/runtime";
+export default defineTool(async (context) => {
+  try {
+    const aggregate = { output: "ok", error: "" };
+    const result = await context.broker.cmd.exec("git", ["log", "--oneline", "-5"]);
+    aggregate.output = result.stdout;
+    await context.logger.info("done");
+    return { success: result.exitCode === 0, data: aggregate, error: null };
+  } catch (err) {
+    await context.logger.error(String(err));
+    return { success: false, data: null, error: String(err) };
+  }
+});
+`;
+    expect(brokerErrors(sourceCode)).toHaveLength(0);
+  });
+});

@@ -184,6 +184,9 @@ export class DeterministicSelfReviewer {
 
     visit(sourceFile);
 
+    // Broker command-result contract validation (generation-gate check)
+    this.checkBrokerResultContract(sourceFile, issues);
+
     // Structure validation
     if (!hasDefineTool && artifacts.plan.targetType !== "workflow") {
       issues.push({
@@ -348,5 +351,115 @@ export class DeterministicSelfReviewer {
       issues,
       reviewedAt: new Date().toISOString(),
     };
+  }
+
+  /**
+   * Flags command-broker contract violations that deterministic validation would
+   * otherwise have to catch at test time:
+   * - `broker.exec(...)` / `context.exec(...)` / `ctx.exec(...)`: the exec method
+   *   exists only on the cmd family (`context.broker.cmd.exec`, `context.cmd.exec`).
+   * - `<chain>.cmd.execute(...)`: CmdBrokerClient exposes `exec`, not `execute`.
+   * - Reading `.output` / `.error` / `.exit_code` off a variable holding an exec
+   *   result: cmd.exec resolves `{ exitCode, stdout, stderr }`.
+   */
+  private checkBrokerResultContract(sourceFile: ts.SourceFile, issues: SelfReviewIssue[]): void {
+    const execResultVars = new Set<string>();
+    const reported = new Set<string>();
+    const hallucinatedResultFields = new Set(["output", "error", "exit_code"]);
+    const brokerRoots = new Set(["broker", "context", "ctx"]);
+
+    const isBrokerishChain = (expr: ts.Expression): boolean => {
+      let cur: ts.Expression = expr;
+      while (ts.isPropertyAccessExpression(cur)) {
+        cur = cur.expression;
+      }
+      return ts.isIdentifier(cur) && brokerRoots.has(cur.text);
+    };
+
+    const push = (key: string, message: string, fixHint: string): void => {
+      if (reported.has(key)) return;
+      reported.add(key);
+      issues.push({ severity: "error", category: "broker", message, fixHint });
+    };
+
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+        const callee = node.expression;
+        const method = callee.name.text;
+        const receiver = callee.expression;
+
+        // Track variables holding broker exec results.
+        // (Handled on the VariableDeclaration below; nothing to do here.)
+
+        // exec/execute invoked without a broker family segment
+        // (broker.exec(...), context.exec(...), context.broker.exec(...)).
+        if (method === "exec" || method === "execute") {
+          const segments: string[] = [];
+          let cur: ts.Expression = receiver;
+          while (ts.isPropertyAccessExpression(cur)) {
+            segments.unshift(cur.name.text);
+            cur = cur.expression;
+          }
+          const rootIsBroker = ts.isIdentifier(cur) && brokerRoots.has(cur.text);
+          const hasFamily = segments.some((s) => ["fs", "net", "cmd", "secret"].includes(s));
+          if (rootIsBroker && !hasFamily) {
+            const rendered = [...(ts.isIdentifier(cur) ? [cur.text] : []), ...segments].join(".");
+            push(
+              `${rendered}.${method}`,
+              `Broker contract violation: '${rendered}.${method}(...)' does not exist. The command broker is 'context.broker.cmd.exec(command, args?, options?)' (also exposed as 'context.cmd.exec').`,
+              "Route command execution through the cmd family: await context.broker.cmd.exec('git', ['status', '--porcelain']).",
+            );
+          }
+        }
+
+        // <chain>.cmd.execute(...) — CmdBrokerClient has exec only.
+        if (
+          method === "execute" &&
+          ts.isPropertyAccessExpression(receiver) &&
+          receiver.name.text === "cmd" &&
+          isBrokerishChain(receiver)
+        ) {
+          push(
+            "cmd.execute",
+            "Broker contract violation: 'cmd.execute(...)' does not exist. CmdBrokerClient exposes 'exec(command, args?, options?)'.",
+            "Rename the call to exec: await context.broker.cmd.exec(command, args).",
+          );
+        }
+      }
+
+      // const x = await <brokerish chain>.exec|execute(...)
+      if (ts.isVariableDeclaration(node) && node.initializer && ts.isIdentifier(node.name)) {
+        let init: ts.Expression = node.initializer;
+        if (ts.isAwaitExpression(init)) {
+          init = init.expression;
+        }
+        if (ts.isCallExpression(init) && ts.isPropertyAccessExpression(init.expression)) {
+          const method = init.expression.name.text;
+          if (
+            (method === "exec" || method === "execute") &&
+            isBrokerishChain(init.expression.expression)
+          ) {
+            execResultVars.add(node.name.text);
+          }
+        }
+      }
+
+      // <execVar>.<hallucinated field>
+      if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)) {
+        const varName = node.expression.text;
+        const field = node.name.text;
+        if (execResultVars.has(varName) && hallucinatedResultFields.has(field)) {
+          push(
+            `${varName}.${field}`,
+            `Broker contract violation: '${varName}.${field}' does not exist. cmd.exec() resolves '{ exitCode, stdout, stderr }'.`,
+            `Use '${varName}.exitCode', '${varName}.stdout', or '${varName}.stderr'.`,
+          );
+        }
+      }
+
+      ts.forEachChild(node, visit);
+    };
+
+    visit(sourceFile);
   }
 }
