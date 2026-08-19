@@ -80,7 +80,9 @@ function preparePortableManifest(stagingDir) {
 
   for (const [name, specifier] of Object.entries(manifest.dependencies ?? {})) {
     if (typeof specifier === "string" && specifier.startsWith("workspace:")) {
-      throw new Error(`Portable npm bootstrap retained workspace protocol for ${name}: ${specifier}`);
+      throw new Error(
+        `Portable npm bootstrap retained workspace protocol for ${name}: ${specifier}`,
+      );
     }
   }
 
