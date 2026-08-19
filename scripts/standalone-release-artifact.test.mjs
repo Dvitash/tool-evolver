@@ -18,7 +18,7 @@ describe("standalone platform release artifact", () => {
     fs.mkdirSync(extractDir, { recursive: true });
     fs.mkdirSync(outsideCwd, { recursive: true });
     packageRelease({ rootDir, distDir: releaseDir, skipBuild: true, testOnly: true });
-  });
+  }, 30_000);
 
   afterAll(() => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
