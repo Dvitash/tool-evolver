@@ -110,7 +110,7 @@ jobs:
             'curl -fsSLo /tmp/node.tar.xz https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.xz',
             'mkdir -p /opt/node',
             'tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1',
-            'export PATH=/opt/node/bin:$PATH',
+            'export PATH=/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
             'npm install -g pnpm@10.24.0',
             'rm -rf /root/tool-evolver',
             "cp -a '$workspace' /root/tool-evolver"
@@ -124,7 +124,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $qualify = @(
             'set -eu',
-            'export PATH=/opt/node/bin:$PATH',
+            'export PATH=/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
             'cd /root/tool-evolver',
             'pnpm install --frozen-lockfile',
             'pnpm build',
