@@ -171,7 +171,7 @@ describe("Release Packaging & Verification Suite", () => {
     it("rejects asset mutation, changed commit binding, unknown key, missing signature, and stale evidence", () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "release-tamper-"));
       try {
-        let packaged = packageRelease({ rootDir, distDir: dir, skipBuild: true, testOnly: true });
+        const packaged = packageRelease({ rootDir, distDir: dir, skipBuild: true, testOnly: true });
         const baseline = () =>
           verifyRelease({
             rootDir,
@@ -183,30 +183,35 @@ describe("Release Packaging & Verification Suite", () => {
         expect(baseline().valid).toBe(true);
 
         const assetPath = path.join(dir, PLATFORMS[0].filename);
+        const manifestPath = path.join(dir, "manifest.json");
+        const evidencePath = path.join(dir, "release-evidence.json");
+        const originalAsset = fs.readFileSync(assetPath);
+        const originalManifest = fs.readFileSync(manifestPath);
+        const originalEvidence = fs.readFileSync(evidencePath);
+
         fs.appendFileSync(assetPath, Buffer.from([0]));
         expect(baseline().violations.some((v) => v.rule === "ASSET_DIGEST_MISMATCH")).toBe(true);
+        fs.writeFileSync(assetPath, originalAsset);
 
-        packaged = packageRelease({ rootDir, distDir: dir, skipBuild: true, testOnly: true });
-        let manifest = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8"));
+        let manifest = JSON.parse(originalManifest.toString("utf8"));
         manifest.releaseIdentity.commitSha = "f".repeat(40);
-        fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify(manifest, null, 2));
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
         expect(baseline().valid).toBe(false);
+        fs.writeFileSync(manifestPath, originalManifest);
 
-        packaged = packageRelease({ rootDir, distDir: dir, skipBuild: true, testOnly: true });
-        manifest = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8"));
+        manifest = JSON.parse(originalManifest.toString("utf8"));
         manifest.signatures[0].keyId = "unknown-key";
-        fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify(manifest, null, 2));
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
         expect(baseline().violations.some((v) => v.rule === "UNKNOWN_SIGNING_KEY")).toBe(true);
+        fs.writeFileSync(manifestPath, originalManifest);
 
-        packaged = packageRelease({ rootDir, distDir: dir, skipBuild: true, testOnly: true });
-        manifest = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8"));
+        manifest = JSON.parse(originalManifest.toString("utf8"));
         manifest.signatures = [];
-        fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify(manifest, null, 2));
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
         expect(baseline().violations.some((v) => v.rule === "MISSING_SIGNATURE")).toBe(true);
+        fs.writeFileSync(manifestPath, originalManifest);
 
-        packaged = packageRelease({ rootDir, distDir: dir, skipBuild: true, testOnly: true });
-        const evidencePath = path.join(dir, "release-evidence.json");
-        const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
+        const evidence = JSON.parse(originalEvidence.toString("utf8"));
         evidence.commitSha = "e".repeat(40);
         fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2));
         const stale = baseline();
