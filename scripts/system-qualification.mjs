@@ -44,10 +44,13 @@ function collectReleaseBinding(releaseDir) {
   const assets = {};
   for (const [id, asset] of Object.entries(manifest.assets ?? {})) {
     const assetPath = path.join(releaseDir, asset.filename);
-    if (!fs.existsSync(assetPath)) throw new Error(`Missing release asset ${id}: ${asset.filename}`);
+    if (!fs.existsSync(assetPath))
+      throw new Error(`Missing release asset ${id}: ${asset.filename}`);
     const actual = sha256File(assetPath);
     if (actual !== asset.sha256) {
-      throw new Error(`Release asset digest mismatch for ${id}: expected ${asset.sha256}, got ${actual}`);
+      throw new Error(
+        `Release asset digest mismatch for ${id}: expected ${asset.sha256}, got ${actual}`,
+      );
     }
     assets[id] = {
       filename: asset.filename,
@@ -96,7 +99,9 @@ function qualifyPackagedCloudBackgroundProcesses(releaseDir, release) {
   const hostAssetId = process.arch === "arm64" ? "linux-arm64" : "linux-x64";
   const asset = release.assets[hostAssetId];
   if (process.platform !== "linux" || !asset) {
-    throw new Error("Full-system packaged cloud-process qualification requires a Linux release asset");
+    throw new Error(
+      "Full-system packaged cloud-process qualification requires a Linux release asset",
+    );
   }
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tool-evolver-system-cloud-"));
@@ -213,11 +218,16 @@ export function runSystemQualification(options = {}) {
   return evidence;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)
+) {
   try {
     runSystemQualification(parseArgs(process.argv.slice(2)));
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+    process.stderr.write(
+      `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+    );
     process.exit(1);
   }
 }
