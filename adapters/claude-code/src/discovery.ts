@@ -242,19 +242,11 @@ export async function probeClaudeInstallation(
       isInstalled = true;
     }
   } else if (executablePath && !parsedVersion) {
-    status = "ready"; // executable found, default to ready if version output is ambiguous
-    isInstalled = true;
-    parsedVersion = "0.2.0";
+    status = "corrupt";
+    isInstalled = false;
   } else {
-    // Check if config exists even without executable
-    const configExists = configPath ? await fsBridge.exists(configPath) : false;
-    if (configExists) {
-      status = "missing_executable";
-      isInstalled = false;
-    } else {
-      status = "missing_executable";
-      isInstalled = false;
-    }
+    status = "missing_executable";
+    isInstalled = false;
   }
 
   // 5. Optional Permissions & Config Check
