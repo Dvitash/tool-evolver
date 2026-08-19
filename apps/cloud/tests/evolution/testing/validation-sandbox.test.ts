@@ -378,5 +378,50 @@ describe("ValidationSandbox (Ephemeral Test Execution & Broker Fakes)", () => {
       expect(report.timeouts + report.failed).toBe(1);
       expect(report.passed).toBe(0);
     });
+
+    it("should honor the structured success:false contract on both happy-path and error tests", async () => {
+      const manifest = createMockManifest({ name: "structured_error_tool" });
+      const structuredErrorSource = `
+        import { defineTool } from "@tool-evolver/runtime";
+        export default defineTool(async (context) => {
+          return { success: false, data: null, error: "simulated backend failure" };
+        });
+      `;
+      const testSuite = {
+        suiteId: "suite-structured-1",
+        toolId: manifest.id,
+        toolName: manifest.name,
+        synthesizedAt: new Date().toISOString(),
+        llmAssisted: false,
+        cases: [
+          {
+            id: "tc_struct_happy",
+            name: "Happy Path - Standard Execution",
+            description: "Tool self-reports failure; happy path must not pass",
+            testType: "happy_path" as const,
+            input: {},
+            expectedOutcome: "success" as const,
+          },
+          {
+            id: "tc_struct_err",
+            name: "Error Mode - Backend Failure",
+            description: "Structured success:false satisfies execution_error",
+            testType: "error_mode" as const,
+            input: {},
+            expectedOutcome: "execution_error" as const,
+            expectedErrorSubstring: "simulated backend failure",
+          },
+        ],
+      };
+
+      const report = await sandbox.executeTestSuite(structuredErrorSource, manifest, testSuite);
+      const happy = report.results.find((r) => r.testId === "tc_struct_happy");
+      const errMode = report.results.find((r) => r.testId === "tc_struct_err");
+      expect(happy?.passed).toBe(false);
+      expect(happy?.error).toContain("simulated backend failure");
+      expect(errMode?.passed).toBe(true);
+      expect(report.failed).toBe(1);
+      expect(report.passed).toBe(1);
+    });
   });
 });

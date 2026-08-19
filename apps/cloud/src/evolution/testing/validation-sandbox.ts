@@ -528,7 +528,17 @@ export class ValidationSandbox {
 
         // Verify outcome matches expectation
         if (testCase.expectedOutcome === "success") {
-          if (execResult.error) {
+          // Structured error contract (mirror of the execution_error branch):
+          // tools whose output schema declares { success: boolean, error?: string }
+          // report failures as success:false results instead of throwing. A happy-path
+          // test must fail when the tool self-reports failure.
+          const out = execResult.output as { success?: unknown; error?: unknown } | undefined;
+          const structuredFailure =
+            !execResult.error &&
+            out !== null &&
+            typeof out === "object" &&
+            out.success === false;
+          if (execResult.error || structuredFailure) {
             failed++;
             results.push({
               testId: testCase.id,
@@ -538,7 +548,10 @@ export class ValidationSandbox {
               durationMs,
               passed: false,
               input: testCase.input,
-              error: execResult.error,
+              error:
+                execResult.error ??
+                `Tool reported success:false on a happy-path test: ${String(out?.error ?? "no error detail")}`,
+              actualOutput: execResult.output,
               logs,
             });
           } else {
