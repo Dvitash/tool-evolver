@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
+import fs from "node:fs";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { doctorCommand, repairCommand } from "../commands/doctor.js";
 import { initCommand } from "../commands/init.js";
 import { logoutCommand } from "../commands/logout.js";
@@ -8,7 +10,27 @@ import { statusCommand } from "../commands/status.js";
 import { uninstallCommand } from "../commands/uninstall.js";
 import { upgradeCommand } from "../commands/upgrade.js";
 
-const VERSION = "0.1.0";
+function resolveVersion(): string {
+  const candidates = [
+    new URL("../../../../package.json", import.meta.url),
+    new URL("../../package.json", import.meta.url),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(fileURLToPath(candidate), "utf8")) as {
+        version?: unknown;
+      };
+      if (typeof parsed.version === "string" && parsed.version.length > 0) {
+        return parsed.version;
+      }
+    } catch {
+      // Continue to the next enclosing package candidate.
+    }
+  }
+  return "0.1.0";
+}
+
+const VERSION = process.env.TOOL_EVOLVER_RELEASE_VERSION ?? resolveVersion();
 
 function printGlobalHelp(): void {
   const text = `
