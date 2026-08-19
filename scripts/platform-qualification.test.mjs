@@ -27,9 +27,9 @@ describe("real host platform qualification", () => {
   });
 
   it("maps supported hosts and WSL without synthetic lane overrides", () => {
-    expect(detectHostLane({ platform: "linux", arch: "x64", release: "6.8.0", procVersion: "Linux" })).toBe(
-      "linux-x64",
-    );
+    expect(
+      detectHostLane({ platform: "linux", arch: "x64", release: "6.8.0", procVersion: "Linux" }),
+    ).toBe("linux-x64");
     expect(
       detectHostLane({ platform: "linux", arch: "arm64", release: "6.8.0", procVersion: "Linux" }),
     ).toBe("linux-arm64");
