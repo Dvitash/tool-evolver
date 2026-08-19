@@ -1,0 +1,128 @@
+#!/usr/bin/env node
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import process from "node:process";
+
+function run(command, args, options) {
+  const result = spawnSync(command, args, {
+    cwd: options.cwd,
+    env: options.env ?? process.env,
+    encoding: "utf8",
+    maxBuffer: 50 * 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    throw new Error(
+      `${command} ${args.join(" ")} failed with exit code ${result.status}:\n${result.stdout ?? ""}\n${result.stderr ?? ""}`,
+    );
+  }
+  return result.stdout ?? "";
+}
+
+function parseArgs(argv) {
+  const options = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--output-dir") options.outputDir = argv[++index];
+    else if (arg.startsWith("--output-dir=")) options.outputDir = arg.slice(13);
+    else if (arg === "--staging-dir") options.stagingDir = argv[++index];
+    else if (arg.startsWith("--staging-dir=")) options.stagingDir = arg.slice(14);
+  }
+  return options;
+}
+
+function assertPortableManifest(stagingDir) {
+  const packagePath = path.join(stagingDir, "package.json");
+  if (!fs.existsSync(packagePath)) {
+    throw new Error(`Deployed npm bootstrap is missing package.json: ${packagePath}`);
+  }
+  const manifest = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+  if (manifest.name !== "tool-evolver" || manifest.version !== "1.0.0") {
+    throw new Error(
+      `Unexpected deployed bootstrap identity: ${manifest.name ?? "<missing>"}@${manifest.version ?? "<missing>"}`,
+    );
+  }
+  for (const [name, specifier] of Object.entries(manifest.dependencies ?? {})) {
+    if (typeof specifier === "string" && specifier.startsWith("workspace:")) {
+      throw new Error(`Deployed npm bootstrap retained workspace protocol for ${name}: ${specifier}`);
+    }
+  }
+  const bundled = new Set(manifest.bundledDependencies ?? manifest.bundleDependencies ?? []);
+  for (const dependency of Object.keys(manifest.dependencies ?? {})) {
+    if (!bundled.has(dependency)) {
+      throw new Error(`Runtime dependency '${dependency}' is not declared as bundled.`);
+    }
+    const dependencyPath = path.join(stagingDir, "node_modules", ...dependency.split("/"));
+    if (!fs.existsSync(dependencyPath)) {
+      throw new Error(`Deployed npm bootstrap is missing bundled dependency '${dependency}'.`);
+    }
+    const stat = fs.lstatSync(dependencyPath);
+    if (stat.isSymbolicLink()) {
+      const resolved = fs.realpathSync(dependencyPath);
+      const relative = path.relative(stagingDir, resolved);
+      if (relative.startsWith("..") || path.isAbsolute(relative)) {
+        throw new Error(`Bundled dependency '${dependency}' resolves outside deployment: ${resolved}`);
+      }
+    }
+  }
+  return manifest;
+}
+
+export function packNpmBootstrap(options = {}) {
+  const rootDir = path.resolve(options.rootDir ?? process.cwd());
+  const outputDir = path.resolve(rootDir, options.outputDir ?? "dist/npm");
+  const ownsStagingDir = !options.stagingDir;
+  const stagingDir = path.resolve(
+    options.stagingDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "tool-evolver-npm-deploy-")),
+  );
+  const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+
+  fs.rmSync(stagingDir, { recursive: true, force: true });
+  fs.mkdirSync(stagingDir, { recursive: true });
+  fs.mkdirSync(outputDir, { recursive: true });
+
+  try {
+    run(
+      pnpm,
+      ["--filter=tool-evolver", "--prod", "deploy", "--legacy", stagingDir],
+      { cwd: rootDir },
+    );
+    const manifest = assertPortableManifest(stagingDir);
+    const packOutput = run(
+      npm,
+      ["pack", stagingDir, "--pack-destination", outputDir, "--json"],
+      { cwd: rootDir },
+    );
+    const parsed = JSON.parse(packOutput);
+    const filename = parsed?.[0]?.filename;
+    if (!filename) throw new Error(`npm pack returned no filename: ${packOutput}`);
+    const tarballPath = path.join(outputDir, filename);
+    if (!fs.existsSync(tarballPath)) {
+      throw new Error(`npm bootstrap tarball was not created: ${tarballPath}`);
+    }
+    return {
+      tarballPath,
+      filename,
+      version: manifest.version,
+      packageName: manifest.name,
+    };
+  } finally {
+    if (ownsStagingDir) fs.rmSync(stagingDir, { recursive: true, force: true });
+  }
+}
+
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)
+) {
+  try {
+    const result = packNpmBootstrap(parseArgs(process.argv.slice(2)));
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
+    process.exit(1);
+  }
+}
