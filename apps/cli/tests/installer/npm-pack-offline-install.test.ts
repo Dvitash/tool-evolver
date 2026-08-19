@@ -54,9 +54,9 @@ describe("public npm bootstrap offline installation", () => {
     );
 
     const packageRoot = path.join(installDir, "node_modules", "tool-evolver");
-    expect(fs.existsSync(path.join(packageRoot, "node_modules", "@tool-evolver", "contracts"))).toBe(
-      true,
-    );
+    expect(
+      fs.existsSync(path.join(packageRoot, "node_modules", "@tool-evolver", "contracts")),
+    ).toBe(true);
     expect(fs.existsSync(path.join(packageRoot, "node_modules", "zod"))).toBe(true);
 
     const cli = path.join(packageRoot, "bin", "tool-evolver.mjs");
