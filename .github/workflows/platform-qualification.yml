@@ -110,7 +110,8 @@ jobs:
             'curl -fsSLo /tmp/node.tar.xz https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.xz',
             'mkdir -p /opt/node',
             'tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1',
-            '/opt/node/bin/npm install -g pnpm@10.24.0',
+            'export PATH=/opt/node/bin:$PATH',
+            'npm install -g pnpm@10.24.0',
             'rm -rf /root/tool-evolver',
             "cp -a '$workspace' /root/tool-evolver"
           ) -join '; '
@@ -123,11 +124,12 @@ jobs:
           $ErrorActionPreference = "Stop"
           $qualify = @(
             'set -eu',
+            'export PATH=/opt/node/bin:$PATH',
             'cd /root/tool-evolver',
-            '/opt/node/bin/pnpm install --frozen-lockfile',
-            '/opt/node/bin/pnpm build',
-            'TOOL_EVOLVER_RELEASE_TEST_ONLY=1 /opt/node/bin/pnpm release:package',
-            '/opt/node/bin/node scripts/platform-qualification.mjs --lane=wsl --release-dir=dist/release/v1.0.0 --output-dir=dist/qualification'
+            'pnpm install --frozen-lockfile',
+            'pnpm build',
+            'TOOL_EVOLVER_RELEASE_TEST_ONLY=1 pnpm release:package',
+            'node scripts/platform-qualification.mjs --lane=wsl --release-dir=dist/release/v1.0.0 --output-dir=dist/qualification'
           ) -join '; '
           wsl.exe -d ToolEvolverQual -- bash -lc $qualify
           if ($LASTEXITCODE -ne 0) { throw "WSL packaged-stack qualification failed" }
