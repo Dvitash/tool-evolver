@@ -112,27 +112,51 @@ afterEach(() => {
 
 describe("packed CLI production bootstrap", () => {
   it("runs the npm-packed CLI entrypoint through a signed channel and HTTP fixture", async () => {
-    const cliDir = path.resolve(process.cwd(), "apps/cli");
+    const rootDir = process.cwd();
+    const cliDir = path.resolve(rootDir, "apps/cli");
     const runDir = fs.mkdtempSync(path.join(cliDir, ".packed-http-e2e-"));
     cleanupPaths.push(runDir);
     const packDir = path.join(runDir, "pack");
-    const extractedDir = path.join(runDir, "extracted");
+    const installDir = path.join(runDir, "install");
     const home = path.join(runDir, "home");
     const workspace = path.join(runDir, "workspace");
     fs.mkdirSync(packDir, { recursive: true });
-    fs.mkdirSync(extractedDir, { recursive: true });
+    fs.mkdirSync(installDir, { recursive: true });
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(workspace, { recursive: true });
 
     const { stdout: packStdout } = await execFileAsync(
-      "npm",
-      ["pack", cliDir, "--pack-destination", packDir],
-      { cwd: process.cwd(), maxBuffer: 10 * 1024 * 1024 },
+      process.execPath,
+      [path.join(rootDir, "scripts", "pack-npm-bootstrap.mjs"), `--output-dir=${packDir}`],
+      { cwd: rootDir, maxBuffer: 20 * 1024 * 1024 },
     );
-    const tarballName = packStdout.trim().split("\n").at(-1)?.trim();
-    if (!tarballName) throw new Error("npm pack did not return a tarball name");
-    await execFileAsync("tar", ["-xzf", path.join(packDir, tarballName), "-C", extractedDir]);
-    const packedBin = path.join(extractedDir, "package", "bin", "tool-evolver.mjs");
+    const packed = JSON.parse(packStdout) as { tarballPath: string };
+    const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+    await execFileAsync(
+      npm,
+      [
+        "install",
+        "--prefix",
+        installDir,
+        "--ignore-scripts",
+        "--offline",
+        "--no-audit",
+        "--no-fund",
+        packed.tarballPath,
+      ],
+      {
+        cwd: installDir,
+        env: { ...process.env, npm_config_update_notifier: "false" },
+        maxBuffer: 20 * 1024 * 1024,
+      },
+    );
+    const packedBin = path.join(
+      installDir,
+      "node_modules",
+      "tool-evolver",
+      "bin",
+      "tool-evolver.mjs",
+    );
     expect(fs.existsSync(packedBin)).toBe(true);
 
     const releaseArchive = createTarGz();
@@ -296,5 +320,5 @@ describe("packed CLI production bootstrap", () => {
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
-  }, 30_000);
+  }, 60_000);
 });

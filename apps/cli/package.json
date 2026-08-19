@@ -1,8 +1,22 @@
 {
   "name": "tool-evolver",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Command-line interface and bootstrap installer for Tool Evolver.",
   "private": false,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dvitash/tool-evolver.git",
+    "directory": "apps/cli"
+  },
+  "homepage": "https://github.com/Dvitash/tool-evolver#readme",
+  "bugs": {
+    "url": "https://github.com/Dvitash/tool-evolver/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

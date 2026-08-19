@@ -10,7 +10,8 @@ import {
   verifyManifest,
 } from "./channel-verifier.js";
 
-export const DEFAULT_PRODUCTION_CHANNEL_URL = "https://releases.tool-evolver.dev/channels.json";
+export const DEFAULT_PRODUCTION_CHANNEL_URL =
+  "https://github.com/Dvitash/tool-evolver/releases/download/v1.0.0/channels.json";
 export const PINNED_DENO_VERSION = "2.9.5";
 
 export interface RuntimeAssetDescriptor {
@@ -102,12 +103,29 @@ async function fetchBytes(
   fetchImpl: typeof fetch,
   allowInsecureHttpForTests: boolean,
 ): Promise<Buffer> {
-  assertTransport(urlString, allowInsecureHttpForTests);
-  const response = await fetchImpl(urlString, { redirect: "error" });
-  if (!response.ok) {
-    throw new Error(`Release download failed for ${urlString}: HTTP ${response.status}.`);
+  let currentUrl = assertTransport(urlString, allowInsecureHttpForTests);
+  for (let redirectCount = 0; redirectCount <= 5; redirectCount++) {
+    const response = await fetchImpl(currentUrl, { redirect: "manual" });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (!location) {
+        throw new Error(`Release download redirect for ${currentUrl} omitted a Location header.`);
+      }
+      if (redirectCount === 5) {
+        throw new Error(`Release download exceeded the maximum redirect count for ${urlString}.`);
+      }
+      currentUrl = assertTransport(
+        new URL(location, currentUrl).toString(),
+        allowInsecureHttpForTests,
+      );
+      continue;
+    }
+    if (!response.ok) {
+      throw new Error(`Release download failed for ${currentUrl}: HTTP ${response.status}.`);
+    }
+    return Buffer.from(await response.arrayBuffer());
   }
-  return Buffer.from(await response.arrayBuffer());
+  throw new Error(`Release download failed to resolve ${urlString}.`);
 }
 
 function parseJson<T>(bytes: Buffer, label: string): T {
