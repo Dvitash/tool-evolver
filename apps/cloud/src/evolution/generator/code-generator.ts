@@ -509,6 +509,31 @@ ${executionBody}
       };`;
       }
 
+      const extraProfiles = (
+        Array.isArray(step?.inputs.commandProfiles)
+          ? step.inputs.commandProfiles.filter(
+              (value): value is string => typeof value === "string",
+            )
+          : []
+      ).filter((profile) => {
+        const [bin, ...rest] = profile.trim().split(/\s+/);
+        return bin && !(bin === commandName && rest.join(" ") === commandArgs.join(" "));
+      });
+
+      const extraBlocks = extraProfiles
+        .map((profile, index) => {
+          const [bin, ...rest] = profile.trim().split(/\s+/);
+          return `      const extraRes${index} = await broker.cmd.exec(${JSON.stringify(bin)}, ${JSON.stringify(rest)});
+      if (extraRes${index}.exitCode !== 0) {
+        throw new Error(\`Command '${bin}' failed with exit code \${extraRes${index}.exitCode}: \${extraRes${index}.stderr}\`);
+      }`;
+        })
+        .join("\n");
+
+      const extraData = extraProfiles
+        .map((_, index) => `extraRes${index}: { stdout: extraRes${index}.stdout, exitCode: extraRes${index}.exitCode }`)
+        .join(", ");
+
       return `      const command = ${JSON.stringify(commandName)};
       const args = ${JSON.stringify(commandArgs)};
       await logger.debug("Executing command via command broker", { command, args });
@@ -516,10 +541,11 @@ ${executionBody}
       if (res.exitCode !== 0) {
         throw new Error(\`Command '\${command}' failed with exit code \${res.exitCode}: \${res.stderr}\`);
       }
+${extraBlocks}
       resultData = {
         stdout: res.stdout,
         stderr: res.stderr,
-        exitCode: res.exitCode,
+        exitCode: res.exitCode,${extraData ? "\n        " + extraData + "," : ""}
       };`;
     }
 

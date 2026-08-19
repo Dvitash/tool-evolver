@@ -261,5 +261,9 @@ export const CatalogChangeSummarySchema = z.object({
   removedToolIds: z.array(IdentifierSchema).default([]),
   catalogVersion: SchemaVersionSchema,
   timestamp: ISOTimestampSchema,
+  /** Rendered catalog instructions markdown for harnesses that inject prompts. */
+  instructionsMarkdown: z.string().optional(),
+  /** Evolved tool names for per-tool invocation snippets. */
+  evolvedToolNames: z.array(z.string()).optional(),
 });
 export type CatalogChangeSummary = z.infer<typeof CatalogChangeSummarySchema>;
