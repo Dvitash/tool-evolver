@@ -239,6 +239,11 @@ describe("packed CLI production bootstrap", () => {
           isLatest: true,
         },
       },
+      rollbackReferences: {
+        targetVersion: "0.1.0",
+        minSafeVersion: "0.1.0",
+      },
+      revokedVersions: [],
     };
     const channel = {
       ...channelPayload,
@@ -269,6 +274,7 @@ describe("packed CLI production bootstrap", () => {
           cwd: path.dirname(packedBin),
           env: {
             ...process.env,
+            NODE_ENV: undefined,
             TOOL_EVOLVER_RELEASE_CHANNEL_URL: `${baseUrl}/channels.json`,
             TOOL_EVOLVER_TRUSTED_RELEASE_PUBLIC_KEYS: publicKeyHex,
             TOOL_EVOLVER_ALLOW_INSECURE_LOOPBACK_RELEASES: "1",

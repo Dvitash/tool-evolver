@@ -176,6 +176,11 @@ describe("production signed release transaction", () => {
           isLatest: true,
         },
       },
+      rollbackReferences: {
+        targetVersion: "0.1.0",
+        minSafeVersion: "0.1.0",
+      },
+      revokedVersions: [],
     };
     channel = {
       ...channelPayload,
