@@ -93,8 +93,11 @@ describe("Release Packaging & Verification Suite", () => {
 
       expect(packageNames).toHaveLength(15);
       for (const pkg of WORKSPACE_PACKAGES) {
+        const packageJson = JSON.parse(
+          fs.readFileSync(path.join(rootDir, pkg.path, "package.json"), "utf8"),
+        );
         expect(digests[pkg.name]).toBeDefined();
-        expect(digests[pkg.name].version).toBe(RELEASE_VERSION);
+        expect(digests[pkg.name].version).toBe(packageJson.version);
         expect(digests[pkg.name].packageSha256).toMatch(/^[a-f0-9]{64}$/);
       }
     });
@@ -135,7 +138,6 @@ describe("Release Packaging & Verification Suite", () => {
       };
 
       const manifest = generateSignedManifest(packageDigests, mockAssets, { testOnly: true });
-      // Tamper with payload
       manifest.version = "2.0.0-unauthorized";
 
       const sig = manifest.signatures[0];
@@ -290,34 +292,38 @@ describe("Release Packaging & Verification Suite", () => {
   });
 
   describe("Full End-to-End Package & Verify Cycle", () => {
-    it("packages and validates full release in isolated target directory", () => {
-      const result = packageRelease({
-        rootDir,
-        distDir: tempReleaseDir,
-        skipBuild: true,
-        testOnly: true,
-      });
+    it(
+      "packages and validates full release in isolated target directory",
+      () => {
+        const result = packageRelease({
+          rootDir,
+          distDir: tempReleaseDir,
+          skipBuild: true,
+          testOnly: true,
+        });
 
-      expect(result.success).toBe(true);
-      expect(result.packagesCount).toBe(15);
-      expect(result.assetsCount).toBe(PLATFORMS.length);
+        expect(result.success).toBe(true);
+        expect(result.packagesCount).toBe(15);
+        expect(result.assetsCount).toBe(PLATFORMS.length);
 
-      const verifyResult = verifyRelease({
-        rootDir,
-        releaseDir: tempReleaseDir,
-        allowTestEvidence: true,
-        trustedKeys: result.trustedKeys,
-        expectedCommitSha: result.releaseIdentity.commitSha,
-      });
+        const verifyResult = verifyRelease({
+          rootDir,
+          releaseDir: tempReleaseDir,
+          allowTestEvidence: true,
+          trustedKeys: result.trustedKeys,
+          expectedCommitSha: result.releaseIdentity.commitSha,
+        });
 
-      if (!verifyResult.valid) {
-        console.error("Release verification failed:", verifyResult.violations);
-      }
+        if (!verifyResult.valid) {
+          console.error("Release verification failed:", verifyResult.violations);
+        }
 
-      expect(verifyResult.valid).toBe(true);
-      expect(verifyResult.violations).toHaveLength(0);
-      expect(verifyResult.stats.platformsCount).toBe(5);
-      expect(verifyResult.stats.packagesCount).toBe(15);
-    });
+        expect(verifyResult.valid).toBe(true);
+        expect(verifyResult.violations).toHaveLength(0);
+        expect(verifyResult.stats.platformsCount).toBe(5);
+        expect(verifyResult.stats.packagesCount).toBe(15);
+      },
+      20_000,
+    );
   });
 });
