@@ -203,6 +203,10 @@ export class DeterministicSelfReviewer {
     // Broker command-result contract validation (generation-gate check)
     this.checkBrokerResultContract(sourceFile, issues);
 
+    // Evidence coverage: every observed command the candidate claims as a
+    // capability must be implemented by a cmd.exec call site (G1).
+    this.checkEvidenceCoverage(sourceFile, artifacts, issues);
+
     // Structure validation
     // Schema exports: validation reports schema_mismatch warnings for missing
     // InputSchema/OutputSchema exports; at command-exec risk tier those warnings
@@ -578,6 +582,116 @@ export class DeterministicSelfReviewer {
           `Check the exit status: if (${varName}.exitCode !== 0) return { success: false, error: ${varName}.stderr }.`,
         );
       }
+    }
+  }
+
+  /**
+   * Flags evidence commands missing from the generated implementation (G1).
+   * Every command profile in the capability manifest must be exercised by at
+   * least one cmd.exec call site; path-alias tokens (`$DOC_FILE`, ...) are
+   * ignored since generated code uses concrete or parameterized paths.
+   */
+  private checkEvidenceCoverage(
+    sourceFile: ts.SourceFile,
+    artifacts: GeneratedArtifactSet,
+    issues: SelfReviewIssue[],
+  ): void {
+    const required = artifacts.capabilities.command?.allowedCommands ?? [];
+    if (required.length === 0) return;
+
+    const callTokens: string[][] = [];
+    const stringVars = new Map<string, string>();
+    const arrayVars = new Map<string, string[]>();
+    const brokerRoots = new Set(["broker", "context", "ctx"]);
+    const isBrokerishChain = (expr: ts.Expression): boolean => {
+      let cur: ts.Expression = expr;
+      while (ts.isPropertyAccessExpression(cur)) {
+        cur = cur.expression;
+      }
+      return ts.isIdentifier(cur) && brokerRoots.has(cur.text);
+    };
+
+    // Deterministic synthesis routes argv through const declarations:
+    //   const command = "git"; const args = ["status"]; broker.cmd.exec(command, args)
+    // Resolve one level of identifier indirection so those call sites count.
+    const collectVars = (node: ts.Node) => {
+      if (
+        ts.isVariableStatement(node) &&
+        node.declarationList.flags & ts.NodeFlags.Const
+      ) {
+        for (const decl of node.declarationList.declarations) {
+          if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
+          if (ts.isStringLiteral(decl.initializer)) {
+            stringVars.set(decl.name.text, decl.initializer.text);
+          } else if (ts.isArrayLiteralExpression(decl.initializer)) {
+            const elements: string[] = [];
+            for (const el of decl.initializer.elements) {
+              if (ts.isStringLiteral(el)) elements.push(el.text);
+            }
+            arrayVars.set(decl.name.text, elements);
+          }
+        }
+      }
+      ts.forEachChild(node, collectVars);
+    };
+    collectVars(sourceFile);
+
+    const visit = (node: ts.Node) => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === "exec" &&
+        isBrokerishChain(node.expression.expression)
+      ) {
+        const tokens: string[] = [];
+        const [cmdArg, argsArg] = node.arguments;
+        if (cmdArg) {
+          if (ts.isStringLiteral(cmdArg)) tokens.push(cmdArg.text);
+          else if (ts.isIdentifier(cmdArg)) {
+            const resolved = stringVars.get(cmdArg.text);
+            if (resolved) tokens.push(...resolved.split(" "));
+          }
+        }
+        if (argsArg) {
+          if (ts.isArrayLiteralExpression(argsArg)) {
+            for (const el of argsArg.elements) {
+              if (ts.isStringLiteral(el)) tokens.push(el.text);
+            }
+          } else if (ts.isIdentifier(argsArg)) {
+            tokens.push(...(arrayVars.get(argsArg.text) ?? []));
+          }
+        }
+        if (tokens.length > 0) callTokens.push(tokens);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+
+    const missing: string[] = [];
+    for (const profile of required) {
+      // Match on binary + leading subcommand tokens only; flag ordering or
+      // spelling (`-n 5` vs `-5`) is the generator's implementation choice.
+      const tokens = profile.split(" ").filter((token) => token.length > 0);
+      const significant: string[] = [];
+      for (const token of tokens) {
+        if (token.startsWith("$") || token.startsWith("-")) break;
+        significant.push(token);
+        if (significant.length === 2) break;
+      }
+      if (significant.length === 0) continue;
+      const covered = callTokens.some((call) =>
+        significant.every((token) => call.includes(token)),
+      );
+      if (!covered) missing.push(profile);
+    }
+
+    if (missing.length > 0) {
+      issues.push({
+        severity: "error",
+        category: "broker",
+        message: `Evidence coverage violation: the generated tool does not implement ${missing.length} observed command(s): ${missing.join(", ")}. One call must replace the whole repeated workflow, not a minimal subset.`,
+        fixHint: `Add cmd.exec call sites covering each missing command: ${missing.join("; ")}. Inspect each result's exitCode and aggregate the outputs.`,
+      });
     }
   }
 }

@@ -326,21 +326,49 @@ export class RepairOrchestrator {
         }
 
         if (error.message.includes("broker.cmd") || error.message.includes("context.cmd")) {
+          // Derive the grant from the source's actual cmd.exec call sites so
+          // the repaired capability set matches what the tool implements;
+          // the evidence-coverage gate rejects orphan allowances.
+          const observedCommands: string[] = [];
+          const execPattern =
+            /(?:broker|context|ctx)(?:\.\w+)*\.cmd\.exec\(\s*["'`]([^"'`]+)["'`](?:\s*,\s*\[([^\]]*)\])?/g;
+          for (const match of sourceCode.matchAll(execPattern)) {
+            const command = match[1]!.trim();
+            const args = (match[2] ?? "")
+              .split(",")
+              .map((part) => part.trim().replace(/^["'`]|["'`]$/g, ""))
+              .filter((part) => part.length > 0);
+            const full = [command, ...args].join(" ").trim();
+            if (!observedCommands.includes(full)) observedCommands.push(full);
+          }
+          const fallback = capabilities.command.allowedCommands.length === 0 &&
+            capabilities.command.allowedBinaries.length === 0;
+          const grantedCommands =
+            observedCommands.length > 0
+              ? observedCommands
+              : fallback
+                ? ["echo"]
+                : capabilities.command.allowedCommands;
+          const grantedBinaries = [
+            ...new Set(
+              grantedCommands.map((command) => command.split(/\s+/)[0]!).filter(Boolean),
+            ),
+          ];
           capabilities = {
             ...capabilities,
             command: {
               ...capabilities.command,
               allowedBinaries:
                 capabilities.command.allowedBinaries.length === 0
-                  ? ["echo"]
+                  ? grantedBinaries
                   : capabilities.command.allowedBinaries,
               allowedCommands:
                 capabilities.command.allowedCommands.length === 0
-                  ? ["echo"]
+                  ? grantedCommands
                   : capabilities.command.allowedCommands,
             },
           };
-          fixedIssues.push("Granted default allowedCommands and allowedBinaries");
+          fixedIssues.push("Granted allowedCommands and allowedBinaries from observed call sites");
         }
 
         if (error.message.includes("Capability envelope violation")) {

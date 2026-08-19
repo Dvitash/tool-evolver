@@ -746,3 +746,155 @@ export default defineTool(async (context) => {
     ).toBe(true);
   });
 });
+
+describe("DeterministicSelfReviewer evidence coverage gate", () => {
+  const planner = new CandidatePlanner();
+  const reviewer = new DeterministicSelfReviewer();
+
+  const makeArtifacts = (
+    sourceCode: string,
+    allowedCommands: string[],
+  ): GeneratedArtifactSet => {
+    const opp = createMockOpportunity();
+    const plan = { ...planner.plan(opp), targetType: "single_tool" as const };
+    const capabilities = {
+      ...plan.capabilityRequirements,
+      command: {
+        allowShellExecution: false,
+        allowedCommands,
+        allowedBinaries: [...new Set(allowedCommands.map((c) => c.split(" ")[0]!))],
+        forbiddenPatterns: [],
+        allowEnvPassthrough: [],
+      },
+    };
+    return {
+      plan,
+      manifest: {
+        id: "tool-123",
+        name: plan.name,
+        version: "1.0.0",
+        description: plan.description,
+        runtime: plan.runtime,
+        capabilities,
+        limits: {
+          timeoutMs: 30000,
+          maxOutputBytes: 1048576,
+          maxMemoryBytes: 134217728,
+          maxConcurrentInvocations: 4,
+        },
+        scope: "workspace",
+        digest: "hash-123",
+        metadata: {},
+        createdAt: new Date().toISOString(),
+      },
+      capabilities,
+      sourceCode,
+      generatedAt: new Date().toISOString(),
+    };
+  };
+
+  const coverageErrors = (verdict: { issues: Array<{ severity: string; message: string }> }) =>
+    verdict.issues.filter(
+      (i) => i.severity === "error" && i.message.includes("Evidence coverage violation"),
+    );
+
+  it("flags evidence commands with no implementing cmd.exec call site", () => {
+    const sourceCode = `
+import { defineTool } from "@tool-evolver/runtime";
+import { z } from "zod";
+export const InputSchema = z.object({}).strict();
+export const OutputSchema = z.object({ success: z.boolean() }).strict();
+export default defineTool(async (context) => {
+  try {
+    const result = await context.broker.cmd.exec("git", ["log", "--oneline", "-5"]);
+    if (result.exitCode !== 0) return { success: false };
+    await context.logger.info("done");
+    return { success: true };
+  } catch (err) {
+    await context.logger.error(String(err));
+    return { success: false };
+  }
+});
+`;
+    const verdict = reviewer.review(
+      makeArtifacts(sourceCode, [
+        "git log --oneline -5",
+        "git status --porcelain",
+        "git diff --stat",
+      ]),
+    );
+    const errors = coverageErrors(verdict);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.message).toContain("git status --porcelain");
+    expect(errors[0]!.message).toContain("git diff --stat");
+    expect(errors[0]!.message).not.toContain("2 observed command(s): git log");
+    expect(errors[0]!.fixHint).toContain("git status --porcelain");
+  });
+
+  it("passes when every evidence command has a covering call site", () => {
+    const sourceCode = `
+import { defineTool } from "@tool-evolver/runtime";
+import { z } from "zod";
+export const InputSchema = z.object({}).strict();
+export const OutputSchema = z.object({ success: z.boolean() }).strict();
+export default defineTool(async (context) => {
+  try {
+    const log = await context.broker.cmd.exec("git", ["log", "--oneline", "-5"]);
+    if (log.exitCode !== 0) return { success: false };
+    const status = await context.broker.cmd.exec("git", ["status", "--porcelain"]);
+    if (status.exitCode !== 0) return { success: false };
+    await context.logger.info("done");
+    return { success: true };
+  } catch (err) {
+    await context.logger.error(String(err));
+    return { success: false };
+  }
+});
+`;
+    const verdict = reviewer.review(
+      makeArtifacts(sourceCode, ["git log --oneline -5", "git status --porcelain"]),
+    );
+    expect(coverageErrors(verdict)).toHaveLength(0);
+  });
+
+  it("ignores path-alias tokens and flag spelling differences", () => {
+    const sourceCode = `
+import { defineTool } from "@tool-evolver/runtime";
+import { z } from "zod";
+export const InputSchema = z.object({}).strict();
+export const OutputSchema = z.object({ success: z.boolean() }).strict();
+export default defineTool(async (context) => {
+  try {
+    const wc = await context.broker.cmd.exec("wc", ["-l", "README.md"]);
+    if (wc.exitCode !== 0) return { success: false };
+    const log = await context.broker.cmd.exec("git", ["log", "-n", "5", "--oneline"]);
+    if (log.exitCode !== 0) return { success: false };
+    await context.logger.info("done");
+    return { success: true };
+  } catch (err) {
+    await context.logger.error(String(err));
+    return { success: false };
+  }
+});
+`;
+    const verdict = reviewer.review(
+      makeArtifacts(sourceCode, ["wc -l $DOC_FILE", "git log --oneline -5"]),
+    );
+    expect(coverageErrors(verdict)).toHaveLength(0);
+  });
+
+  it("is a no-op when the candidate has no command capabilities", () => {
+    const sourceCode = `
+import { defineTool } from "@tool-evolver/runtime";
+import { z } from "zod";
+export const InputSchema = z.object({}).strict();
+export const OutputSchema = z.object({ success: z.boolean() }).strict();
+export default defineTool(async (context) => {
+  await context.logger.info("done");
+  return { success: true };
+});
+`;
+    const verdict = reviewer.review(makeArtifacts(sourceCode, []));
+    expect(coverageErrors(verdict)).toHaveLength(0);
+  });
+});
