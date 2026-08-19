@@ -701,8 +701,15 @@ export class ReplayScenarioBuilder {
       });
     }
 
-    // 4. Malformed input scenario
-    negatives.push({
+    // 4. Malformed input scenario — only meaningful when the tool declares
+    // input properties; zero-parameter tools have no valid/invalid input
+    // distinction to exercise (and production meta-dispatch enforces the
+    // schema before the handler runs).
+    const declaredInputProps = (manifest.parameters as { properties?: Record<string, unknown> } | undefined)
+      ?.properties;
+    const hasDeclaredInputs =
+      declaredInputProps !== undefined && Object.keys(declaredInputProps).length > 0;
+    if (hasDeclaredInputs) negatives.push({
       id: `scenario-neg-input-${rng.nextUuid().slice(0, 8)}`,
       name: `Negative Malformed Input: ${manifest.name ?? "candidate"}`,
       description: `Passes invalid input types and missing required fields to test validation.`,

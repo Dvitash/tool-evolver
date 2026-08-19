@@ -220,3 +220,31 @@ describe("command authorization pattern", () => {
     expect(re.test("curl https://example.com")).toBe(false);
   });
 });
+
+describe("negative malformed-input scenario gating", () => {
+  const builder2 = new ReplayScenarioBuilder();
+
+  it("skips malformed-input scenario for zero-parameter tools", () => {
+    const candidate = createMockCandidateRevision(
+      'import { defineTool } from "@tool-evolver/runtime"; export default defineTool(async (context) => { const r = await context.broker.cmd.exec("git", ["status"]); return { success: r.exitCode === 0 }; });',
+      { parameters: { type: "object", properties: {}, additionalProperties: false } },
+    );
+    const scenarios = builder2.buildScenarios(createMockResolvedEvidenceSet(), candidate);
+    expect(scenarios.some((s) => s.type === "negative_malformed_input")).toBe(false);
+  });
+
+  it("keeps malformed-input scenario when inputs are declared", () => {
+    const candidate = createMockCandidateRevision(
+      'import { defineTool } from "@tool-evolver/runtime"; export default defineTool(async (context) => { const r = await context.broker.cmd.exec("git", ["status"]); return { success: r.exitCode === 0 }; });',
+      {
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string" } },
+          required: ["path"],
+        },
+      },
+    );
+    const scenarios = builder2.buildScenarios(createMockResolvedEvidenceSet(), candidate);
+    expect(scenarios.some((s) => s.type === "negative_malformed_input")).toBe(true);
+  });
+});
