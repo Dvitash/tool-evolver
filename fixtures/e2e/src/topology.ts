@@ -724,14 +724,15 @@ export class RealProcessTopology {
    */
   async generateCandidate(opportunity: unknown, envelope?: unknown): Promise<EvolutionCandidate> {
     const url = `${this.cloudBaseUrl}/v1/evolution/candidates/generate`;
+    const headers = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${this.tenant.accountId}:${this.tenant.workspaceId}`,
+      "x-tenant-account-id": this.tenant.accountId,
+      "x-tenant-workspace-id": this.tenant.workspaceId,
+    };
     const res = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.tenant.accountId}:${this.tenant.workspaceId}`,
-        "x-tenant-account-id": this.tenant.accountId,
-        "x-tenant-workspace-id": this.tenant.workspaceId,
-      },
+      headers,
       body: JSON.stringify({ opportunity, envelope }),
     });
 
@@ -741,9 +742,31 @@ export class RealProcessTopology {
       throw new Error(`Candidate generation failed with status ${res.status}: ${body}`);
     }
 
-    const data = (await res.json()) as { candidate: EvolutionCandidate };
-    this.recordProtocolEvent("http", "POST /v1/evolution/candidates/generate", "ok");
-    return data.candidate;
+    // Generation is asynchronous (job-queue backed, 202 Accepted): the route
+    // enqueues candidate.generate and the candidate appears on the list
+    // endpoint once the worker finishes.
+    const accepted = (await res.json()) as { jobId: string; opportunityId: string };
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const listRes = await fetch(
+        `${this.cloudBaseUrl}/v1/evolution/candidates?opportunityId=${encodeURIComponent(accepted.opportunityId)}`,
+        { headers },
+      );
+      if (listRes.ok) {
+        const list = (await listRes.json()) as {
+          candidates?: Array<{ state?: string; candidate?: EvolutionCandidate }>;
+        };
+        const row = list.candidates?.[0];
+        if (row?.candidate && row.state !== "generating" && row.state !== "pending") {
+          this.recordProtocolEvent("http", "POST /v1/evolution/candidates/generate", "ok");
+          return row.candidate;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    throw new Error(
+      `Candidate generation did not complete within 30s for opportunity ${accepted.opportunityId}`,
+    );
   }
 
   /**

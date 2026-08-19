@@ -560,7 +560,9 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     { category: "functional", evidence: { activatedCount, toolName } },
   );
 
-  const invocationParameters = { path: "." };
+  // Generated tools declare their own input schema; capability-minimized
+  // tools typically take no input (properties: {}, additionalProperties: false).
+  const invocationParameters: Record<string, unknown> = {};
   const nativeOutcome = await env.invokeTool(toolName, invocationParameters);
   const nativeInvocationSuccess = nativeOutcome.success && !nativeOutcome.isError;
 
