@@ -1,51 +1,337 @@
 name: Production Release
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release.yml"
+      - "apps/cli/package.json"
+      - "apps/cli/src/installer/release-client.ts"
+      - "scripts/embed-cli-release-trust.mjs"
+      - "scripts/finalize-public-release.mjs"
+      - "scripts/generate-production-qualification-evidence.mjs"
+      - "scripts/pack-npm-bootstrap.mjs"
+      - "scripts/package-release.mjs"
+      - "scripts/release-trust.mjs"
   workflow_dispatch:
     inputs:
       commit_sha:
-        description: Exact green main commit SHA to release
-        required: true
+        description: Exact green main commit SHA to release (defaults to current main SHA)
+        required: false
         type: string
 
 permissions:
-  contents: read
+  actions: read
+  contents: write
+  id-token: write
+
+concurrency:
+  group: production-release-v1.0.0
+  cancel-in-progress: false
 
 jobs:
-  build-and-verify-release:
+  publish-and-smoke:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     env:
+      RELEASE_VERSION: "1.0.0"
+      RELEASE_TAG: "v1.0.0"
+      RELEASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_sha || github.sha }}
       TOOL_EVOLVER_RELEASE_KEY_ID: ${{ vars.TOOL_EVOLVER_RELEASE_KEY_ID }}
       TOOL_EVOLVER_RELEASE_PUBLIC_KEY_PEM: ${{ vars.TOOL_EVOLVER_RELEASE_PUBLIC_KEY_PEM }}
       TOOL_EVOLVER_RELEASE_PRIVATE_KEY_PEM: ${{ secrets.TOOL_EVOLVER_RELEASE_PRIVATE_KEY_PEM }}
       TOOL_EVOLVER_RELEASE_EVIDENCE_PATH: dist/qualification/production-release-evidence.json
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout exact release candidate
+        uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.commit_sha }}
+          ref: ${{ env.RELEASE_SHA }}
           fetch-depth: 0
-      - name: Verify exact release commit and signing boundary
+
+      - name: Verify exact main release candidate and signing boundary
         shell: bash
         run: |
-          test "$(git rev-parse HEAD)" = "${{ inputs.commit_sha }}"
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          git fetch origin main --tags --force
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+          test "$(node -p "require('./apps/cli/package.json').version")" = "$RELEASE_VERSION"
           test -n "$TOOL_EVOLVER_RELEASE_KEY_ID"
           test -n "$TOOL_EVOLVER_RELEASE_PUBLIC_KEY_PEM"
           test -n "$TOOL_EVOLVER_RELEASE_PRIVATE_KEY_PEM"
-      - uses: actions/setup-node@v4
+          if git rev-parse -q --verify "refs/tags/$RELEASE_TAG" >/dev/null; then
+            test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$RELEASE_SHA"
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 22
-      - uses: pnpm/action-setup@v4
+          registry-url: https://registry.npmjs.org
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
         with:
           version: 10.24.0
           run_install: false
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - name: Embed active public release trust root in packaged CLI
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build exact release candidate
+        run: pnpm build
+
+      - name: Embed active production release trust root
         run: node scripts/embed-cli-release-trust.mjs
-      - run: pnpm test
-      - name: Require production qualification evidence
-        run: test -s "$TOOL_EVOLVER_RELEASE_EVIDENCE_PATH"
-      - name: Package exact signed release
-        run: node scripts/package-release.mjs
-      - name: Verify exact signed release
+
+      - name: Run repository test suite
+        run: pnpm test
+
+      - name: Wait for exact-SHA qualification gates
+        id: gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          wait_for_gate() {
+            local workflow_file="$1"
+            local output_name="$2"
+            local label="$3"
+            local run_id=""
+            local status=""
+            local conclusion=""
+            for _ in $(seq 1 120); do
+              response="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_file/runs?head_sha=$RELEASE_SHA&event=push&per_page=20")"
+              run_id="$(jq -r '.workflow_runs | sort_by(.id) | last | .id // empty' <<<"$response")"
+              if [ -n "$run_id" ]; then
+                status="$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .status' <<<"$response")"
+                conclusion="$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .conclusion // ""' <<<"$response")"
+                if [ "$status" = "completed" ]; then
+                  if [ "$conclusion" != "success" ]; then
+                    echo "$label run $run_id completed with conclusion '$conclusion'" >&2
+                    exit 1
+                  fi
+                  echo "$output_name=$run_id" >> "$GITHUB_OUTPUT"
+                  echo "$label passed in run $run_id"
+                  return 0
+                fi
+              fi
+              sleep 5
+            done
+            echo "Timed out waiting for $label on $RELEASE_SHA" >&2
+            exit 1
+          }
+          wait_for_gate "ci.yml" "ci_run_id" "CI"
+          wait_for_gate "platform-qualification.yml" "platform_run_id" "Platform Qualification"
+          wait_for_gate "system-qualification.yml" "system_run_id" "System Qualification"
+
+      - name: Download upstream qualification artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/upstream-qualification/platform dist/upstream-qualification/system
+          gh run download "${{ steps.gates.outputs.platform_run_id }}" --dir dist/upstream-qualification/platform
+          gh run download "${{ steps.gates.outputs.system_run_id }}" --dir dist/upstream-qualification/system
+
+      - name: Generate production qualification evidence
+        run: >-
+          node scripts/generate-production-qualification-evidence.mjs
+          --ci-run-id=${{ steps.gates.outputs.ci_run_id }}
+          --platform-run-id=${{ steps.gates.outputs.platform_run_id }}
+          --system-run-id=${{ steps.gates.outputs.system_run_id }}
+          --commit-sha=$RELEASE_SHA
+          --output=$TOOL_EVOLVER_RELEASE_EVIDENCE_PATH
+
+      - name: Package exact production-signed release
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "dist/release/v$RELEASE_VERSION"
+          node scripts/package-release.mjs
+          node scripts/finalize-public-release.mjs \
+            --release-dir="dist/release/v$RELEASE_VERSION" \
+            --repository="$GITHUB_REPOSITORY"
+
+      - name: Verify exact production-signed release
         run: node scripts/verify-release.mjs
+
+      - name: Build portable npm bootstrap tarball
+        run: node scripts/pack-npm-bootstrap.mjs --output-dir=dist/npm
+
+      - name: Generate distribution checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            find "dist/release/v$RELEASE_VERSION" -maxdepth 1 -type f -print0 | sort -z | xargs -0 sha256sum
+            find dist/npm -maxdepth 1 -type f -name '*.tgz' -print0 | sort -z | xargs -0 sha256sum
+          } > "dist/release/v$RELEASE_VERSION/SHA256SUMS.txt"
+
+      - name: Upload auditable release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-release-v1.0.0-${{ env.RELEASE_SHA }}
+          path: |
+            dist/release/v1.0.0
+            dist/npm
+            dist/qualification/production-release-evidence.json
+            dist/upstream-qualification
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Create or verify draft GitHub Release
+        id: github_release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/$RELEASE_TAG" >/dev/null; then
+            test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$RELEASE_SHA"
+          fi
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "existing=true" >> "$GITHUB_OUTPUT"
+          else
+            gh release create "$RELEASE_TAG" \
+              --target "$RELEASE_SHA" \
+              --title "Tool Evolver v$RELEASE_VERSION" \
+              --notes-file docs/release/v1.0.0-release-notes.md \
+              --draft
+            echo "existing=false" >> "$GITHUB_OUTPUT"
+          fi
+          gh release upload "$RELEASE_TAG" \
+            "dist/release/v$RELEASE_VERSION"/* \
+            "dist/npm/tool-evolver-$RELEASE_VERSION.tgz" \
+            --clobber
+
+      - name: Publish GitHub Release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')"
+          if [ "$is_draft" = "true" ]; then
+            gh release edit "$RELEASE_TAG" --draft=false --latest
+          fi
+          git fetch origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG" --force
+          test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$RELEASE_SHA"
+
+      - name: Publish npm bootstrap
+        shell: bash
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          npm install --global npm@latest
+          if npm view "tool-evolver@$RELEASE_VERSION" version --silent 2>/dev/null | grep -qx "$RELEASE_VERSION"; then
+            echo "tool-evolver@$RELEASE_VERSION is already published; verifying existing publication."
+          else
+            if [ -n "${NPM_TOKEN:-}" ]; then
+              export NODE_AUTH_TOKEN="$NPM_TOKEN"
+            else
+              unset NODE_AUTH_TOKEN || true
+            fi
+            npm publish "dist/npm/tool-evolver-$RELEASE_VERSION.tgz" --access public --provenance
+          fi
+
+      - name: Verify public npm and GitHub distribution paths
+        id: public_smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke_root="$(mktemp -d)"
+          trap 'rm -rf "$smoke_root"' EXIT
+          npm_cache="$smoke_root/npm-cache"
+          home_dir="$smoke_root/home"
+          workspace="$smoke_root/workspace"
+          mkdir -p "$npm_cache" "$home_dir" "$workspace"
+
+          npm view "tool-evolver@$RELEASE_VERSION" version --silent | grep -qx "$RELEASE_VERSION"
+          npm exec --yes --cache "$npm_cache" --package="tool-evolver@$RELEASE_VERSION" -- \
+            tool-evolver version | grep -qx "tool-evolver v$RELEASE_VERSION"
+          npm exec --yes --cache "$npm_cache" --package="tool-evolver@$RELEASE_VERSION" -- \
+            tool-evolver help | grep -q "Tool Evolver CLI"
+
+          npm exec --yes --cache "$npm_cache" --package="tool-evolver@$RELEASE_VERSION" -- \
+            tool-evolver init \
+            --non-interactive \
+            --auto-approve \
+            --home="$home_dir" \
+            --workspace="$workspace" \
+            --json > "$smoke_root/init.json"
+          grep -q '"success": true' "$smoke_root/init.json"
+
+          version_json="$home_dir/.tool-evolver/versions/v$RELEASE_VERSION/version.json"
+          test -s "$version_json"
+          node -e '
+            const fs = require("node:fs");
+            const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (value.version !== process.env.RELEASE_VERSION) process.exit(1);
+            if (value.provenance?.commitSha !== process.env.RELEASE_SHA) process.exit(1);
+          ' "$version_json"
+
+          daemon="$home_dir/.tool-evolver/current/bin/tool-evolver-daemon"
+          socket="$smoke_root/daemon.sock"
+          node "$daemon" --foreground --home "$home_dir" --socket "$socket" > "$smoke_root/daemon.log" 2>&1 &
+          daemon_pid=$!
+          daemon_ready=0
+          for _ in $(seq 1 50); do
+            if node "$daemon" --status --home "$home_dir" --socket "$socket" > "$smoke_root/status.json" 2>/dev/null; then
+              daemon_ready=1
+              break
+            fi
+            sleep 0.2
+          done
+          test "$daemon_ready" = "1"
+          node "$daemon" --diagnostics --home "$home_dir" --socket "$socket" > "$smoke_root/diagnostics.json"
+          node "$daemon" --stop --home "$home_dir" --socket "$socket"
+          wait "$daemon_pid"
+
+          manifest_url="https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/manifest.json"
+          channels_url="https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/channels.json"
+          curl --fail --location --silent --show-error "$manifest_url" -o "$smoke_root/public-manifest.json"
+          curl --fail --location --silent --show-error "$channels_url" -o "$smoke_root/public-channels.json"
+          node -e '
+            const fs = require("node:fs");
+            const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (manifest.version !== process.env.RELEASE_VERSION) process.exit(1);
+            if (manifest.releaseIdentity?.commitSha !== process.env.RELEASE_SHA) process.exit(1);
+          ' "$smoke_root/public-manifest.json"
+
+          node -e '
+            const fs = require("node:fs");
+            const crypto = require("node:crypto");
+            const out = {
+              schemaVersion: "1.0.0",
+              status: "PASSED",
+              version: process.env.RELEASE_VERSION,
+              tag: process.env.RELEASE_TAG,
+              commitSha: process.env.RELEASE_SHA,
+              githubRepository: process.env.GITHUB_REPOSITORY,
+              githubRunId: process.env.GITHUB_RUN_ID,
+              npmPackage: `tool-evolver@${process.env.RELEASE_VERSION}`,
+              publicManifestSha256: crypto.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"),
+              verified: {
+                npmRegistryResolution: true,
+                publicCliVersion: true,
+                publicCliHelp: true,
+                publicInit: true,
+                signedReleaseDownload: true,
+                provenanceCommitBinding: true,
+                daemonStartup: true,
+                authenticatedDaemonStatus: true,
+                diagnostics: true,
+                gracefulShutdown: true
+              },
+              generatedAt: new Date().toISOString()
+            };
+            fs.writeFileSync(process.argv[2], `${JSON.stringify(out, null, 2)}\n`);
+          ' "$smoke_root/public-manifest.json" "dist/release/v$RELEASE_VERSION/public-release-smoke.json"
+          echo "smoke_file=dist/release/v$RELEASE_VERSION/public-release-smoke.json" >> "$GITHUB_OUTPUT"
+
+      - name: Publish final public smoke evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum "${{ steps.public_smoke.outputs.smoke_file }}" > "${{ steps.public_smoke.outputs.smoke_file }}.sha256"
+          gh release upload "$RELEASE_TAG" \
+            "${{ steps.public_smoke.outputs.smoke_file }}" \
+            "${{ steps.public_smoke.outputs.smoke_file }}.sha256" \
+            --clobber
