@@ -768,6 +768,15 @@ export class CandidatePlanner {
       inputs.command = executable;
       inputs.args = commandArgs;
       inputs.commandProfile = commandProfile;
+      const allProfiles = [
+        ...new Set([
+          ...(opportunity.classification.commandProfiles ?? []),
+          commandProfile,
+        ]),
+      ];
+      if (allProfiles.length > 1) {
+        inputs.commandProfiles = allProfiles;
+      }
       inputs.toolClass = "command";
     } else if (
       taskClass === "network" ||

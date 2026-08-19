@@ -126,3 +126,90 @@ describe("CapabilityMapper", () => {
     expect(manifest.net.allowOutbound).toBe(false);
   });
 });
+
+describe("CapabilityMapper composite command derivation", () => {
+  it("splits composite shell strings into per-segment commands and binaries", () => {
+    const mapper = new CapabilityMapper();
+    const steps: WorkflowStep[] = [
+      {
+        id: "step_cmd",
+        name: "Run git workflow",
+        toolClass: "command",
+        action: "cmd.exec",
+        service: "cmd",
+        inputs: { command: "git log --oneline -5 && git status --porcelain" },
+        dependsOn: [],
+      },
+    ];
+
+    const manifest = mapper.mapRequiredCapabilities(steps);
+
+    expect(manifest.command.allowedCommands).toContain("git log --oneline -5");
+    expect(manifest.command.allowedCommands).toContain("git status --porcelain");
+    expect(manifest.command.allowedCommands).not.toContain(
+      "git log --oneline -5 && git status --porcelain",
+    );
+    expect(manifest.command.allowedBinaries).toEqual(["git"]);
+  });
+
+  it("derives binaries and commands from every threaded command profile", () => {
+    const mapper = new CapabilityMapper();
+    const steps: WorkflowStep[] = [
+      {
+        id: "step_cmd",
+        name: "Run git workflow",
+        toolClass: "command",
+        action: "cmd.exec",
+        service: "cmd",
+        inputs: {
+          command: "git",
+          args: ["log", "--oneline", "-5"],
+          commandProfiles: [
+            "git log --oneline -5",
+            "git status --porcelain",
+            "git diff --stat",
+            "wc -l README.md",
+            "head -5 out.txt",
+          ],
+        },
+        dependsOn: [],
+      },
+    ];
+
+    const manifest = mapper.mapRequiredCapabilities(steps);
+
+    expect(manifest.command.allowedCommands).toEqual(
+      expect.arrayContaining([
+        "git log --oneline -5",
+        "git status --porcelain",
+        "git diff --stat",
+        "wc -l README.md",
+        "head -5 out.txt",
+      ]),
+    );
+    expect(manifest.command.allowedBinaries).toEqual(
+      expect.arrayContaining(["git", "wc", "head"]),
+    );
+  });
+
+  it("rejects dynamic placeholders inside threaded command profiles", () => {
+    const mapper = new CapabilityMapper();
+    const steps: WorkflowStep[] = [
+      {
+        id: "step_cmd",
+        name: "Run git workflow",
+        toolClass: "command",
+        action: "cmd.exec",
+        service: "cmd",
+        inputs: {
+          command: "git",
+          args: ["status"],
+          commandProfiles: ["git status", "$dynamicCommand"],
+        },
+        dependsOn: [],
+      },
+    ];
+
+    expect(() => mapper.mapRequiredCapabilities(steps)).toThrow(/Dynamic command placeholders/);
+  });
+});

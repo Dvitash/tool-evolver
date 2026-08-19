@@ -5,6 +5,7 @@ import {
   classifyToolOrCommand,
   normalizeCommandProfile,
   normalizePathAlias,
+  splitCompositeCommand,
 } from "../../../src/evolution/opportunity/signature.js";
 import {
   createCommandExecEvent,
@@ -97,5 +98,69 @@ describe("SignatureExtractor", () => {
     expect(sigA.structuralHash).toBe(sigB.structuralHash);
     expect(sigA.operationSequence).toEqual(sigB.operationSequence);
     expect(sigA.toolClasses).toEqual(sigB.toolClasses);
+  });
+});
+
+describe("splitCompositeCommand", () => {
+  it("splits composite shell strings on control operators", () => {
+    expect(splitCompositeCommand("git log --oneline -5 && git status --porcelain")).toEqual([
+      "git log --oneline -5",
+      "git status --porcelain",
+    ]);
+    expect(splitCompositeCommand("git diff || git branch; git rev-parse HEAD")).toEqual([
+      "git diff",
+      "git branch",
+      "git rev-parse HEAD",
+    ]);
+    expect(splitCompositeCommand("cat out.txt | wc -l")).toEqual(["cat out.txt", "wc -l"]);
+  });
+
+  it("returns a single segment for simple commands", () => {
+    expect(splitCompositeCommand("git status --porcelain")).toEqual(["git status --porcelain"]);
+    expect(splitCompositeCommand("")).toEqual([]);
+  });
+});
+
+describe("SignatureExtractor composite commands", () => {
+  it("derives one command pattern per simple command in composite tool_call strings", () => {
+    const segmenter = new EpisodeSegmenter();
+    const extractor = new SignatureExtractor();
+    const events = [
+      createToolCallEvent({
+        eventId: "c1",
+        sessionId: "sess-c",
+        toolName: "bash",
+        parameters: { command: "git log --oneline -5 && git status --porcelain" },
+      }),
+      createToolCallEvent({
+        eventId: "c2",
+        sessionId: "sess-c",
+        toolName: "bash",
+        parameters: { command: "wc -l README.md | head -5" },
+      }),
+    ];
+    const [episode] = segmenter.segmentEvents(events);
+    const sig = extractor.extractSignature(episode);
+    expect(sig.commandPatterns).toContain("git log --oneline -5");
+    expect(sig.commandPatterns).toContain("git status --porcelain");
+    expect(sig.commandPatterns).toContain("wc -l $DOC_FILE");
+    expect(sig.commandPatterns).toContain("head -5");
+    expect(sig.commandPatterns).not.toContain("git log --oneline -5 && git status --porcelain");
+  });
+
+  it("splits composite command_exec events into per-segment profiles", () => {
+    const segmenter = new EpisodeSegmenter();
+    const extractor = new SignatureExtractor();
+    const events = [
+      createCommandExecEvent({
+        eventId: "d1",
+        sessionId: "sess-d",
+        command: "git diff --stat && git branch --show-current",
+      }),
+    ];
+    const [episode] = segmenter.segmentEvents(events);
+    const sig = extractor.extractSignature(episode);
+    expect(sig.commandPatterns).toContain("git diff --stat");
+    expect(sig.commandPatterns).toContain("git branch --show-current");
   });
 });

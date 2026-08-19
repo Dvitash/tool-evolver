@@ -8,6 +8,7 @@ import {
   type NetCapability,
   type SecretCapability,
 } from "@tool-evolver/contracts";
+import { splitCompositeCommand } from "../opportunity/signature.js";
 import type { CapabilityDiff, WorkflowStep } from "./types.js";
 
 /**
@@ -186,6 +187,7 @@ export class CapabilityMapper {
       ) {
         needsCmd = true;
         const commandVal = step.inputs.command ?? step.inputs.cmd ?? step.inputs.binary;
+        const rawCommands: string[] = [];
         if (typeof commandVal === "string" && commandVal.trim().length > 0) {
           if (commandVal.trim().startsWith("$")) {
             throw new Error("Dynamic command placeholders cannot be converted into capabilities");
@@ -193,13 +195,29 @@ export class CapabilityMapper {
           const commandArgs = Array.isArray(step.inputs.args)
             ? step.inputs.args.filter((value): value is string => typeof value === "string")
             : [];
-          const binary = commandVal.trim().split(/\s+/)[0];
-          const fullCmd = [commandVal.trim(), ...commandArgs].join(" ").trim();
-          if (binary && !cmdCap.allowedBinaries.includes(binary)) {
-            cmdCap.allowedBinaries.push(binary);
+          rawCommands.push([commandVal.trim(), ...commandArgs].join(" ").trim());
+        }
+        // Composite evidence threads every observed command profile through
+        // step inputs; each profile may itself be a composite shell string.
+        if (Array.isArray(step.inputs.commandProfiles)) {
+          for (const profile of step.inputs.commandProfiles) {
+            if (typeof profile === "string" && profile.trim().length > 0) {
+              rawCommands.push(profile.trim());
+            }
           }
-          if (fullCmd && !cmdCap.allowedCommands.includes(fullCmd)) {
-            cmdCap.allowedCommands.push(fullCmd);
+        }
+        for (const rawCommand of rawCommands) {
+          for (const segment of splitCompositeCommand(rawCommand)) {
+            if (segment.startsWith("$")) {
+              throw new Error("Dynamic command placeholders cannot be converted into capabilities");
+            }
+            const binary = segment.split(/\s+/)[0];
+            if (binary && !cmdCap.allowedBinaries.includes(binary)) {
+              cmdCap.allowedBinaries.push(binary);
+            }
+            if (!cmdCap.allowedCommands.includes(segment)) {
+              cmdCap.allowedCommands.push(segment);
+            }
           }
         }
       }

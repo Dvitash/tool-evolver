@@ -95,6 +95,20 @@ export function normalizeCommandProfile(rawCommand: string): string {
 }
 
 /**
+ * Splits a composite shell command string into individual simple commands.
+ * Splits on shell control operators (`&&`, `||`, `;`, `|`) so that evidence
+ * like `git log --oneline -5 && git status --porcelain` yields one profile
+ * per simple command instead of a single lossy verbatim composite.
+ */
+export function splitCompositeCommand(rawCommand: string): string[] {
+  const cleaned = rawCommand.replace(/[\r\n\0]/g, " ");
+  return cleaned
+    .split(/&&|\|\||[;|]/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+}
+
+/**
  * Classifies a tool or command into a high-level ToolClass.
  */
 export function classifyToolOrCommand(name: string, commandText?: string): ToolClass {
@@ -290,8 +304,10 @@ export class SignatureExtractor {
         const cls = classifyToolOrCommand(toolEvt.toolName, commandText);
         toolClasses.push(cls);
         if (commandText) {
-          const commandProfile = normalizeCommandProfile(commandText);
-          if (commandProfile) commandPatterns.push(commandProfile);
+          for (const segment of splitCompositeCommand(commandText)) {
+            const commandProfile = normalizeCommandProfile(segment);
+            if (commandProfile) commandPatterns.push(commandProfile);
+          }
         }
 
         const argHash = extractArgumentShape(toolEvt.parameters);
@@ -318,10 +334,12 @@ export class SignatureExtractor {
         const cls = classifyToolOrCommand(cmdName, cmdEvt.command);
         toolClasses.push(cls);
 
-        const commandProfile = normalizeCommandProfile(
+        for (const segment of splitCompositeCommand(
           [cmdEvt.command, ...(cmdEvt.args ?? [])].join(" "),
-        );
-        if (commandProfile) commandPatterns.push(commandProfile);
+        )) {
+          const commandProfile = normalizeCommandProfile(segment);
+          if (commandProfile) commandPatterns.push(commandProfile);
+        }
 
         const argHash = extractArgumentShape(cmdEvt.args);
         argumentShapeHashes.push(argHash);
