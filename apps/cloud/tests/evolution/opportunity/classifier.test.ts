@@ -88,11 +88,122 @@ describe("OpportunityClassifier & Model Invariants", () => {
       cluster,
       "repeated_pattern",
     );
-
     expect(classification.commandProfiles).toEqual(["git status --porcelain"]);
     expect(classification.inferredInputs).toEqual([]);
+    expect(classification.title).toBe("Inspect Git Working Tree Status");
+    expect(classification.description).toBe(
+      "Inspects Git working tree status. Use this instead of running: git status --porcelain — one call replaces the repeated command(s).",
+    );
+    expect(classification.description).toContain("Use this instead of running: git status --porcelain");
   });
 
+  it("generates adoption-oriented description and title for git diff command profile", async () => {
+    const classifier = new OpportunityClassifier();
+    const cluster: WorkflowCluster = {
+      clusterId: "cluster-git-diff",
+      workspaceId: "ws-1",
+      version: "1.0.0",
+      structuralHash: "diff-hash",
+      representativeSignature: {
+        signatureId: "sig-diff",
+        structuralHash: "diff-hash",
+        operationSequence: ["vcs:git diff"],
+        toolClasses: ["vcs"],
+        commandPatterns: ["git diff"],
+        normalizedPaths: [],
+        argumentShapeHashes: [],
+        stepCount: 1,
+        totalDurationMs: 10,
+        totalTokens: 0,
+        retryCount: 0,
+        estimatedCostUsd: 0,
+        errorTypes: [],
+      },
+      episodes: [],
+      episodeCount: 1,
+      distinctSessionIds: ["sess-1"],
+      completedOccurrences: 1,
+      metrics: {
+        totalDurationMs: 10,
+        avgDurationMs: 10,
+        totalTokens: 0,
+        avgTokens: 0,
+        totalCostUsd: 0,
+        totalRetries: 0,
+        totalStepCount: 1,
+        avgStepCount: 1,
+      },
+      firstSeenAt: "2026-08-18T00:00:00.000Z",
+      lastSeenAt: "2026-08-18T00:00:00.000Z",
+      evidenceEventIds: ["evt-diff"],
+    };
+
+    const classification = await classifier.classifyOpportunity(
+      "tenant-1",
+      cluster,
+      "repeated_pattern",
+    );
+
+    expect(classification.title).toBe("Inspect Git Working Tree Diff");
+    expect(classification.commandProfiles).toEqual(["git diff"]);
+    expect(classification.description).toBe(
+      "Inspects Git working tree diff. Use this instead of running: git diff — one call replaces the repeated command(s).",
+    );
+    expect(classification.description).toContain("Use this instead of running: git diff");
+    expect(classification.description).toContain("instead of");
+  });
+
+  it("formats multiple command profiles in adoption guidance", async () => {
+    const classifier = new OpportunityClassifier();
+    const cluster: WorkflowCluster = {
+      clusterId: "cluster-multi-cmd",
+      workspaceId: "ws-1",
+      version: "1.0.0",
+      structuralHash: "multi-hash",
+      representativeSignature: {
+        signatureId: "sig-multi",
+        structuralHash: "multi-hash",
+        operationSequence: ["vcs:git status", "vcs:git diff"],
+        toolClasses: ["vcs"],
+        commandPatterns: ["git status", "git diff"],
+        normalizedPaths: [],
+        argumentShapeHashes: [],
+        stepCount: 2,
+        totalDurationMs: 20,
+        totalTokens: 0,
+        retryCount: 0,
+        estimatedCostUsd: 0,
+        errorTypes: [],
+      },
+      episodes: [],
+      episodeCount: 1,
+      distinctSessionIds: ["sess-1"],
+      completedOccurrences: 1,
+      metrics: {
+        totalDurationMs: 20,
+        avgDurationMs: 20,
+        totalTokens: 0,
+        avgTokens: 0,
+        totalCostUsd: 0,
+        totalRetries: 0,
+        totalStepCount: 2,
+        avgStepCount: 2,
+      },
+      firstSeenAt: "2026-08-18T00:00:00.000Z",
+      lastSeenAt: "2026-08-18T00:00:00.000Z",
+      evidenceEventIds: ["evt-multi"],
+    };
+
+    const classification = await classifier.classifyOpportunity(
+      "tenant-1",
+      cluster,
+      "repeated_pattern",
+    );
+
+    expect(classification.description).toBe(
+      "Inspects Git working tree status. Use this instead of running: git status, git diff — one call replaces the repeated command(s).",
+    );
+  });
   it("should enrich opportunity classification using InferenceService", async () => {
     const fakeProvider = new FakeModelProvider({ id: "mock-model-provider" });
     const inferenceService = createInferenceService();

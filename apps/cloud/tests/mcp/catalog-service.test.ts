@@ -5,7 +5,11 @@
 import type { StreamCatalogInvalidation } from "@tool-evolver/protocol";
 import { describe, expect, it } from "vitest";
 import { MemoryDatabasePool, OutboxRepository } from "../../src/db/index.js";
-import { CloudCatalogService, createCloudCatalogService } from "../../src/mcp/index.js";
+import {
+  CloudCatalogService,
+  createCloudCatalogService,
+  renderCatalogInstructions,
+} from "../../src/mcp/index.js";
 
 describe("CloudCatalogService - Snapshots, Revisions & Invalidation", () => {
   const tenant = {
@@ -128,5 +132,60 @@ describe("CloudCatalogService - Snapshots, Revisions & Invalidation", () => {
     // Platform tools like echo are kept, workspace_tool_y is filtered out
     expect(platformOnlySnapshot.tools.map((t) => t.id)).toContain("echo");
     expect(platformOnlySnapshot.tools.map((t) => t.id)).not.toContain("workspace_tool_y");
+  });
+
+  it("renderCatalogInstructions produces comment block for empty or platform-only catalog", async () => {
+    expect(renderCatalogInstructions(null)).toContain("No evolved tools");
+    expect(renderCatalogInstructions(undefined)).toContain("No evolved tools");
+    expect(
+      renderCatalogInstructions({
+        snapshotVersion: "v1-0",
+        generatedAt: new Date().toISOString(),
+        checksum: "abc",
+        tools: [],
+        activeDeployments: [],
+      }),
+    ).toContain("No evolved tools");
+
+    const service = createCloudCatalogService();
+    const snapshot = await service.getCatalogSnapshot(tenant);
+    // Default service has only platform tools, so renderCatalogInstructions returns comment block
+    expect(renderCatalogInstructions(snapshot)).toContain("<!-- No evolved tools currently active in this workspace catalog. -->");
+  });
+
+  it("renderCatalogInstructions renders active evolved tools with name, description, and input hints", async () => {
+    const service = createCloudCatalogService({ includeDefaultPlatformTools: false });
+    service.registerTool({
+      name: "git_status_checker",
+      description:
+        "Inspects Git working tree status. Use this instead of running: git status --porcelain — one call replaces the repeated command(s).",
+      source: "registry",
+      scope: "workspace",
+      inputSchema: {
+        type: "object",
+        properties: {
+          targetPaths: {
+            type: "array",
+            description: "Target file or directory paths to operate on.",
+          },
+          verbose: {
+            type: "boolean",
+          },
+        },
+        required: ["targetPaths"],
+      },
+      handler: async () => ({ content: [], isError: false }),
+    });
+
+    const snapshot = await service.getCatalogSnapshot(tenant);
+    const markdown = renderCatalogInstructions(snapshot);
+
+    expect(markdown).toContain("## Evolved Tools");
+    expect(markdown).toContain("### `git_status_checker`");
+    expect(markdown).toContain(
+      "Inspects Git working tree status. Use this instead of running: git status --porcelain — one call replaces the repeated command(s).",
+    );
+    expect(markdown).toContain("targetPaths (array, required): Target file or directory paths to operate on.");
+    expect(markdown).toContain("verbose (boolean, optional)");
   });
 });

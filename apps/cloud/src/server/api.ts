@@ -711,7 +711,7 @@ export class CloudServer {
       if (path.startsWith("/v1/evolution/")) {
         assertRequestScope(
           authContext,
-          path === "/v1/evolution/catalog" && req.method === "GET"
+          path.startsWith("/v1/evolution/catalog") && req.method === "GET"
             ? "catalog:read"
             : "deployments:write",
         );

@@ -78,6 +78,7 @@ import {
   type CloudMcpServer,
   createCloudCatalogService,
   createCloudMcpServer,
+  renderCatalogInstructions,
 } from "./mcp/index.js";
 import {
   type InferenceService,
@@ -424,6 +425,13 @@ export class CloudService {
       await this.observationConsumer.processJob(typedJob);
     });
 
+    this.worker.registerHandler("observation-available", async (job) => {
+      const payload = job.payload as { sessionIds?: string[] } | undefined;
+      if (payload?.sessionIds && payload.sessionIds.length > 0) {
+        // observation-available event acknowledged cleanly
+      }
+    });
+
     // Transactional outbox records are durable intent, not completed work. Bridge every
     // record into the durable queue before the publisher marks it published. The outbox
     // record ID is the queue idempotency key, so retries cannot fork downstream work.
@@ -550,6 +558,7 @@ export class CloudService {
       config: this.config,
       dbPool: this.dbPool,
       authService: this.authService,
+      queue: this.queue,
       ingestionService: this.ingestionService,
       objectStore: this.objectStore,
       outboxPublisher: this.outboxPublisher,
@@ -586,22 +595,52 @@ export class CloudService {
             sendJson(res, 409, { error: `Opportunity is ${opportunity.status}` }, headers);
             return true;
           }
-          const generated = await this.candidateGenerationService.generateCandidate(
+          const jobId = await this.queue.enqueue(
+            createJobEnvelope({
+              jobType: "candidate.generate",
+              version: "1.0.0",
+              tenantContext: tenant,
+              idempotencyKey: `candidate.generate:${opportunityId}`,
+              payload: {
+                opportunityId,
+                options: parsedObj.options as Record<string, unknown> | undefined,
+              },
+            }),
+          );
+          sendJson(res, 202, { jobId, opportunityId }, headers);
+          return true;
+        }
+
+        if (path === "/v1/evolution/candidates" && req.method === "GET") {
+          const url = new URL(req.url ?? "/", "http://localhost");
+          const opportunityId = url.searchParams.get("opportunityId") ?? undefined;
+          const candidates = await this.candidateRepo.listCandidates(
             tenant,
-            opportunity,
-            parsedObj.options as Record<string, unknown> | undefined,
+            opportunityId ? { opportunityId } : {},
           );
-          const lifecycle = await this.candidateLifecycleOrchestrator.startLifecycle(
-            tenant,
-            generated.candidate,
-            generated.activeRevision,
+          const candidateResults = await Promise.all(
+            candidates.map(async (c) => {
+              const activeRevision = await this.candidateRepo.getActiveRevision(tenant, c.id);
+              const sourceCode = c.sourceCode ?? activeRevision?.artifacts.sourceCode;
+              return {
+                id: c.id,
+                status: c.state,
+                state: c.state,
+                toolName: c.proposedTool.name,
+                sourceCode,
+                activeRevision: activeRevision
+                  ? {
+                      revisionId: activeRevision.revisionId,
+                      sourceCode: activeRevision.artifacts.sourceCode,
+                      artifacts: activeRevision.artifacts,
+                      selfReview: activeRevision.selfReview,
+                    }
+                  : undefined,
+                candidate: c,
+              };
+            }),
           );
-          sendJson(
-            res,
-            202,
-            { candidate: generated.candidate, candidateId: generated.candidate.id, lifecycle },
-            headers,
-          );
+          sendJson(res, 200, { candidates: candidateResults }, headers);
           return true;
         }
 
@@ -726,6 +765,12 @@ export class CloudService {
         if (path === "/v1/evolution/catalog" && req.method === "GET") {
           const catalog = this.catalogService.getSnapshot(tenant.workspaceId);
           sendJson(res, 200, { catalog }, headers);
+          return true;
+        }
+        if (path === "/v1/evolution/catalog/instructions" && req.method === "GET") {
+          const catalog = this.catalogService.getSnapshot(tenant.workspaceId);
+          const markdown = renderCatalogInstructions(catalog);
+          sendJson(res, 200, { markdown }, headers);
           return true;
         }
         return false;

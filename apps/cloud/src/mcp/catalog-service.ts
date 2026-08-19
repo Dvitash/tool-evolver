@@ -614,3 +614,89 @@ export function createCloudCatalogService(
 ): CloudCatalogService {
   return new CloudCatalogService(options);
 }
+
+const BUILTIN_TOOL_NAMES: Record<string, true> = {
+  get_evolution_status: true,
+  get_tool_lineage: true,
+  echo: true,
+  status: true,
+  test_failure: true,
+  echo_fixture: true,
+  status_fixture: true,
+  test_failure_fixture: true,
+};
+
+const BUILTIN_SOURCES: Record<string, true> = {
+  platform: true,
+  fixture: true,
+};
+
+function formatInputHint(parameters?: {
+  properties?: Record<string, unknown>;
+  required?: string[];
+}): string {
+  if (!parameters || !parameters.properties || Object.keys(parameters.properties).length === 0) {
+    return "Inputs: none";
+  }
+
+  const requiredList = Array.isArray(parameters.required) ? parameters.required : [];
+  const entries = Object.entries(parameters.properties).map(([name, rawProp]) => {
+    const prop = (rawProp && typeof rawProp === "object" ? rawProp : {}) as {
+      type?: string;
+      description?: string;
+    };
+    const isReq = requiredList.includes(name);
+    const reqStr = isReq ? "required" : "optional";
+    const typeStr = prop.type ?? "any";
+    const desc = prop.description ? `: ${prop.description}` : "";
+    return `${name} (${typeStr}, ${reqStr})${desc}`;
+  });
+
+  return `Inputs: ${entries.join("; ")}`;
+}
+
+/**
+ * Renders a markdown harness-instructions fragment from a catalog snapshot record or response.
+ */
+export function renderCatalogInstructions(
+  snapshot: CloudCatalogSnapshotRecord | CatalogSnapshotResponse | null | undefined,
+): string {
+  if (!snapshot || !Array.isArray(snapshot.tools) || snapshot.tools.length === 0) {
+    return "<!-- No evolved tools currently active in this workspace catalog. -->";
+  }
+
+  const evolvedTools = snapshot.tools.filter(
+    (tool) =>
+      !BUILTIN_SOURCES[tool.metadata?.source as string] &&
+      !BUILTIN_TOOL_NAMES[tool.name] &&
+      !BUILTIN_TOOL_NAMES[tool.id],
+  );
+
+  if (evolvedTools.length === 0) {
+    return "<!-- No evolved tools currently active in this workspace catalog. -->";
+  }
+
+  const lines: string[] = [
+    "## Evolved Tools",
+    "",
+    "The following workspace-specific tools have been evolved from observed workflows. Prefer these over running equivalent manual CLI commands:",
+    "",
+  ];
+
+  for (const tool of evolvedTools) {
+    const rawSchema = tool.parameters as
+      | {
+          properties?: Record<string, unknown>;
+          required?: string[];
+        }
+      | undefined;
+    const inputHint = formatInputHint(rawSchema);
+
+    lines.push(`### \`${tool.name}\``);
+    lines.push(`- **Description**: ${tool.description}`);
+    lines.push(`- **${inputHint}**`);
+    lines.push("");
+  }
+
+  return lines.join("\n").trimEnd();
+}

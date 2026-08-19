@@ -121,28 +121,44 @@ export function createGetEvolutionStatusTool(
       if (dbPool) {
         try {
           // Count observations
-          const obsResult = await dbPool.query<{ raw_payload?: unknown }>(
-            "SELECT raw_payload FROM observations WHERE workspace_id = $1",
-            [targetWorkspaceId],
-          );
-          totalEvents = obsResult.rows.length;
-          for (const row of obsResult.rows) {
-            try {
-              const payload =
-                typeof row.raw_payload === "string" ? JSON.parse(row.raw_payload) : row.raw_payload;
-              if (
-                payload &&
-                (payload.isError === true ||
-                  payload.isError === "true" ||
-                  payload.error !== undefined)
-              ) {
-                errorEvents++;
-              }
-            } catch {
-              // Ignore json parse error
+          let obsResult = await dbPool
+            .query<{ payload?: unknown; raw_payload?: unknown }>(
+              "SELECT payload FROM normalized_events WHERE workspace_id = $1",
+              [targetWorkspaceId],
+            )
+            .catch(() => null);
+
+          if (!obsResult || obsResult.rows.length === 0) {
+            const fallbackResult = await dbPool
+              .query<{ payload?: unknown; raw_payload?: unknown }>(
+                "SELECT raw_payload FROM observations WHERE workspace_id = $1",
+                [targetWorkspaceId],
+              )
+              .catch(() => null);
+            if (fallbackResult && fallbackResult.rows.length > 0) {
+              obsResult = fallbackResult;
             }
           }
-
+          if (obsResult) {
+            totalEvents = obsResult.rows.length;
+            for (const row of obsResult.rows) {
+              try {
+                const raw = row.payload ?? row.raw_payload;
+                const payload =
+                  typeof raw === "string" ? JSON.parse(raw) : raw;
+                if (
+                  payload &&
+                  (payload.isError === true ||
+                    payload.isError === "true" ||
+                    payload.error !== undefined)
+                ) {
+                  errorEvents++;
+                }
+              } catch {
+                // Ignore json parse error
+              }
+            }
+          }
           // Count sessions
           const sessResult = await dbPool.query<{ count: string }>(
             "SELECT COUNT(*) as count FROM sessions WHERE workspace_id = $1",

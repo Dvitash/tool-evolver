@@ -16,10 +16,11 @@ function generateHeuristicClassification(sig: EpisodeSignature): OpportunityClas
   let title = `Automate ${primaryClass.replace(/_/g, " ")} workflow`;
   let pattern = `sequential_${primaryClass}`;
   let suggestedToolName = `auto_${primaryClass}`;
+  let actionSentence = `Automates ${primaryClass.replace(/_/g, " ")} workflow.`;
   let description = `Recurring sequence of operations: ${opsSummary}.`;
 
   const inferredInputs: OpportunityInferredInput[] = [];
-  const commandProfiles = [...sig.commandPatterns];
+  const commandProfiles = [...new Set(sig.commandPatterns)];
 
   if (sig.normalizedPaths.length > 0) {
     inferredInputs.push({
@@ -38,18 +39,26 @@ function generateHeuristicClassification(sig: EpisodeSignature): OpportunityClas
     const profile = commandProfiles[0] ?? "git status --porcelain";
     title = profile.startsWith("git status")
       ? "Inspect Git Working Tree Status"
-      : "Automate Repeated Git Operation";
+      : profile.startsWith("git diff")
+        ? "Inspect Git Working Tree Diff"
+        : "Automate Repeated Git Operation";
     pattern = `vcs_${profile.replace(/[^a-z0-9]+/gi, "_").replace(/^_+|_+$/g, "")}`;
     suggestedToolName = profile.startsWith("git status")
       ? "git_status_checker"
       : "git_operation_helper";
-    description = `Executes the observed immutable command profile: ${profile}.`;
+    actionSentence = profile.startsWith("git status")
+      ? "Inspects Git working tree status."
+      : profile.startsWith("git diff")
+        ? "Inspects Git working tree diff."
+        : "Automates repeated Git operations.";
+    description = actionSentence;
   } else if (sig.toolClasses.includes("test_runner")) {
     title = "Automated Test Discovery and Execution";
     pattern = "test_execution_flow";
     suggestedToolName = "run_test_suite";
-    description =
+    actionSentence =
       "Executes test runner commands and parses results with automated failure recovery.";
+    description = actionSentence;
     inferredInputs.push({
       name: "testPattern",
       type: "string",
@@ -60,12 +69,18 @@ function generateHeuristicClassification(sig: EpisodeSignature): OpportunityClas
     title = "Batch File Inspection and Modification";
     pattern = "read_edit_cycle";
     suggestedToolName = "batch_file_modifier";
-    description = "Inspects target files and applies structured edits across matching files.";
+    actionSentence = "Inspects target files and applies structured edits across matching files.";
+    description = actionSentence;
   } else if (sig.toolClasses.includes("search")) {
     title = "Targeted Codebase Search and Aggregation";
     pattern = "search_and_extract";
     suggestedToolName = "codebase_search_helper";
-    description = "Performs structural search and extracts relevant matches.";
+    actionSentence = "Performs structural search and extracts relevant matches.";
+    description = actionSentence;
+  }
+
+  if (commandProfiles.length > 0) {
+    description = `${actionSentence} Use this instead of running: ${commandProfiles.join(", ")} — one call replaces the repeated command(s).`;
   }
 
   return {
@@ -148,9 +163,18 @@ export class OpportunityClassifier {
 
       if (output && Array.isArray(output.opportunities) && output.opportunities.length > 0) {
         const opp = output.opportunities[0];
+        let description = opp.description || fallback.description;
+        if (
+          fallback.commandProfiles &&
+          fallback.commandProfiles.length > 0 &&
+          !description.includes("Use this instead of running:")
+        ) {
+          const base = description.trim().replace(/\.+$/, "");
+          description = `${base}. Use this instead of running: ${fallback.commandProfiles.join(", ")} — one call replaces the repeated command(s).`;
+        }
         return {
           title: opp.title || fallback.title,
-          description: opp.description || fallback.description,
+          description,
           taskClass: opp.taskClass || fallback.taskClass,
           pattern: opp.pattern || fallback.pattern,
           confidenceScore:

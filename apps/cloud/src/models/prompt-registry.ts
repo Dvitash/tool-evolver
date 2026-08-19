@@ -561,7 +561,7 @@ export class PromptRegistry {
     }
 
     let userMessage = template.userTemplate;
-    const inputObj = inputs as Record<string, unknown>;
+    const inputObj = { feedback: "", ...(inputs as Record<string, unknown>) };
 
     for (const [key, value] of Object.entries(inputObj)) {
       const serialized = typeof value === "object" ? JSON.stringify(value, null, 2) : String(value);
@@ -724,7 +724,7 @@ export class PromptRegistry {
       systemInstruction:
         "You are the Tool Evolver Tool Synthesis Engine. Synthesize complete, runnable, sandboxed tool code in TypeScript for Deno worker execution. Hard output contract (a static gate rejects violating output): the `code` field must be a complete TypeScript module that imports `defineTool` from \"@tool-evolver/runtime\" and contains `export default defineTool`; route every side effect through the tool context broker (context.broker.fs, context.broker.net, context.broker.cmd, context.broker.secret) — command steps must call `broker.cmd.exec(command, args)`; use exactly the broker families required by the plan steps and never a family the capability envelope does not permit; direct runtime APIs (child_process, Deno.Command, Deno.readFile, fetch, process.env) are forbidden.",
       userTemplate:
-        "Plan ID: {{planId}}\nSpecification:\n{{specification}}\nCapability envelope (the only broker families you may use):\n{{requiredCapabilities}}\nExisting Code:\n{{existingCode}}\nSynthesize tool implementation. The `code` field must contain `export default defineTool` and must route every side effect through the tool context broker (command steps via `broker.cmd.exec`).",
+        "Plan ID: {{planId}}\nSpecification:\n{{specification}}\nCapability envelope (the only broker families you may use):\n{{requiredCapabilities}}\nExisting Code:\n{{existingCode}}\n{{feedback}}\nSynthesize tool implementation. The `code` field must contain `export default defineTool` and must route every side effect through the tool context broker (command steps via `broker.cmd.exec`).",
       outputSchema: ToolSynthesisOutputSchema,
       jsonSchema: {
         type: "object",

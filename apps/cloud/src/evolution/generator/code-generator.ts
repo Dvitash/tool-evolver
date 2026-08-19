@@ -53,57 +53,63 @@ export class CodeGenerator {
     // 1. Structured Inference with prompt template
     if (options.inferenceService) {
       const allowFallback = options.allowDeterministicFallback ?? false;
-      try {
-        const response = await options.inferenceService.infer<Record<string, unknown>, unknown>({
-          promptTemplateId: "tool_synthesis",
-          tenantId: options.tenantId || "system",
-          taskClass: "tool_synthesis",
-          inputs: {
-            planId: plan.planId || plan.id,
-            specification: JSON.stringify({
-              name: plan.name,
-              description: plan.description,
-              inputSchema: plan.inputSchema,
-              outputSchema: plan.outputSchema,
-              variableInputs: plan.variableInputs,
-              invariantInputs: plan.invariantInputs,
-              steps: plan.steps,
-              evidence: options.workflowEvidence,
-            }),
-            existingCode: "",
-            requiredCapabilities: JSON.stringify(plan.capabilities),
-          },
-        });
+      const maxAttempts = 3;
+      let feedback = "";
+      let lastError: Error | undefined;
 
-        let parsed: ToolSynthesisOutput | undefined;
-        if (response.output) {
-          parsed = ToolSynthesisOutputSchema.parse(response.output);
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const response = await options.inferenceService.infer<Record<string, unknown>, unknown>({
+            promptTemplateId: "tool_synthesis",
+            tenantId: options.tenantId || "system",
+            taskClass: "tool_synthesis",
+            inputs: {
+              planId: plan.planId || plan.id,
+              specification: JSON.stringify({
+                name: plan.name,
+                description: plan.description,
+                inputSchema: plan.inputSchema,
+                outputSchema: plan.outputSchema,
+                variableInputs: plan.variableInputs,
+                invariantInputs: plan.invariantInputs,
+                steps: plan.steps,
+                evidence: options.workflowEvidence,
+              }),
+              existingCode: "",
+              requiredCapabilities: JSON.stringify(plan.capabilities),
+              feedback,
+            },
+          });
 
-          if (
-            parsed.code &&
-            parsed.code.includes("defineTool") &&
-            parsed.code.includes("export default defineTool") &&
-            this.isBrokerUsageCompatible(plan, parsed.code)
-          ) {
-            return {
-              sourceCode: parsed.code,
-              toolName: parsed.name,
-              provenance: response.provenance,
-              usage: response.provenance?.usage,
-            };
-          }
+          let parsed: ToolSynthesisOutput | undefined;
+          if (response.output) {
+            parsed = ToolSynthesisOutputSchema.parse(response.output);
 
-          const customLogic = parsed.executionBody || parsed.transformationLogic || parsed.code;
-          if (
-            customLogic &&
-            !customLogic.includes("defineTool") &&
-            this.isBrokerUsageCompatible(plan, customLogic)
-          ) {
-            const zodInputSchemaSource = this.schemaGenerator.generateZodSource(plan.inputSchema);
-            const zodOutputSchemaSource = this.schemaGenerator.generateOutputZodSource(
-              plan.outputSchema,
-            );
-            const sourceCode = `import { defineTool, type ToolContext } from "@tool-evolver/runtime";
+            if (
+              parsed.code &&
+              parsed.code.includes("defineTool") &&
+              parsed.code.includes("export default defineTool") &&
+              this.isBrokerUsageCompatible(plan, parsed.code)
+            ) {
+              return {
+                sourceCode: parsed.code,
+                toolName: parsed.name,
+                provenance: response.provenance,
+                usage: response.provenance?.usage,
+              };
+            }
+
+            const customLogic = parsed.executionBody || parsed.transformationLogic || parsed.code;
+            if (
+              customLogic &&
+              !customLogic.includes("defineTool") &&
+              this.isBrokerUsageCompatible(plan, customLogic)
+            ) {
+              const zodInputSchemaSource = this.schemaGenerator.generateZodSource(plan.inputSchema);
+              const zodOutputSchemaSource = this.schemaGenerator.generateOutputZodSource(
+                plan.outputSchema,
+              );
+              const sourceCode = `import { defineTool, type ToolContext } from "@tool-evolver/runtime";
 import { z } from "zod";
 
 export const InputSchema = ${zodInputSchemaSource};
@@ -138,24 +144,31 @@ ${customLogic}
   },
 );
 `;
-            return {
-              sourceCode,
-              toolName: parsed.name,
-              provenance: response.provenance,
-              usage: response.provenance?.usage,
-            };
+              return {
+                sourceCode,
+                toolName: parsed.name,
+                provenance: response.provenance,
+                usage: response.provenance?.usage,
+              };
+            }
           }
-        }
 
-        if (!allowFallback) {
-          throw new Error(
-            `Structured inference did not return capability-compatible tool source: ${this.describeGateRejection(plan, parsed)}`,
+          const rejectionDetail = this.describeGateRejection(plan, parsed);
+          feedback = rejectionDetail;
+          lastError = new Error(
+            `Structured inference did not return capability-compatible tool source: ${rejectionDetail}`,
           );
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error(String(error));
+          feedback = lastError.message;
         }
-      } catch (error) {
-        if (!allowFallback) {
-          throw error;
-        }
+      }
+
+      if (!allowFallback) {
+        throw (
+          lastError ??
+          new Error("Structured inference did not return capability-compatible tool source")
+        );
       }
     } else if (options.allowDeterministicFallback === false) {
       throw new Error("Structured inference is required for candidate synthesis");
