@@ -187,3 +187,36 @@ describe("ReplayScenarioBuilder", () => {
     });
   });
 });
+
+describe("command authorization pattern", () => {
+  it("matches allowed binaries at a word boundary (regression: \\s in template literal)", () => {
+    const builder = new ReplayScenarioBuilder();
+    const candidate = createMockCandidateRevision(
+      'import { defineTool } from "@tool-evolver/runtime"; export default defineTool(async (context) => { const r = await context.broker.cmd.exec("git", ["status", "--porcelain"]); return { success: r.exitCode === 0 }; });',
+      {},
+      {
+        command: {
+          allowShellExecution: false,
+          allowedCommands: ["git log --oneline -5 && git status --porcelain"],
+          allowedBinaries: ["git"],
+          forbiddenPatterns: [],
+          allowEnvPassthrough: [],
+        },
+      },
+    );
+    const scenarios = builder.buildScenarios(createMockResolvedEvidenceSet(), candidate);
+    const cmdOps = scenarios
+      .flatMap((s) => s.allowedBrokerOperations)
+      .filter((o) => o.service === "cmd");
+    expect(cmdOps.length).toBeGreaterThan(0);
+    const pattern = cmdOps[0]!.commandPattern!;
+    // Must not contain a mangled escape ("(?:s|$)" instead of "(?:\\s|$)").
+    expect(pattern).toContain("(?:\\s|$)");
+    const re = new RegExp(pattern);
+    expect(re.test("git log --oneline -5")).toBe(true);
+    expect(re.test("git status --porcelain")).toBe(true);
+    expect(re.test("git")).toBe(true);
+    expect(re.test("gitsum")).toBe(false);
+    expect(re.test("curl https://example.com")).toBe(false);
+  });
+});

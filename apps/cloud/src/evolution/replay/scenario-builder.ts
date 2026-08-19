@@ -362,7 +362,7 @@ export class ReplayScenarioBuilder {
         ? ".*"
         : `^(?:${[
             ...commandProfiles.map((value) => escapeRegex(value)),
-            ...commandBinaries.map((value) => `${escapeRegex(value)}(?:\s|$)`),
+            ...commandBinaries.map((value) => `${escapeRegex(value)}(?:\\s|$)`),
           ].join("|")})`;
       allowed.push({ service: "cmd", operation: "*", commandPattern });
     }
