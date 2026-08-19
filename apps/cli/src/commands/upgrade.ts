@@ -315,18 +315,75 @@ export class UpgradeOrchestrator {
     const backupDir = path.join(this.toolEvolverHome, "backups", `upgrade_test_${Date.now()}`);
     await this.fsBridge.mkdirp(backupDir);
     await this.fsBridge.writeFile(path.join(backupDir, "version.json"), oldVersionContent);
-    stepsCompleted.push("backup_created", "apply_release");
-    await this.fsBridge.writeFile(
-      versionFilePath,
-      JSON.stringify(
-        { version: targetVersion, previousVersion: currentVersion, testOnly: true },
-        null,
-        2,
-      ),
-    );
-    const hasHome = await this.fsBridge.exists(this.toolEvolverHome);
-    if (!hasHome) {
-      await this.fsBridge.writeFile(versionFilePath, oldVersionContent);
+
+    const platformPaths = this.platformInfo
+      ? resolvePlatformPaths({ home: this.homeDir, platformInfo: this.platformInfo })
+      : resolvePlatformPaths({ home: this.homeDir });
+    const configPath = platformPaths.configFile ?? path.join(this.toolEvolverHome, "config.json");
+    const backupConfigPath = path.join(backupDir, "config.json");
+    const oldConfig = await this.fsBridge.readFile(configPath);
+    if (oldConfig !== null) {
+      await this.fsBridge.writeFile(backupConfigPath, oldConfig);
+    }
+    stepsCompleted.push("backup_created");
+
+    try {
+      await this.fsBridge.writeFile(
+        versionFilePath,
+        JSON.stringify(
+          { version: targetVersion, previousVersion: currentVersion, testOnly: true },
+          null,
+          2,
+        ),
+      );
+      stepsCompleted.push("apply_release");
+
+      const serviceManager = createUserServiceManager({
+        homeDir: this.homeDir,
+        toolEvolverHome: this.toolEvolverHome,
+        fsBridge: this.fsBridge,
+        platform: this.platformInfo?.os,
+      });
+      const verification = await runVerificationSuite({
+        homeDir: this.homeDir,
+        toolEvolverHome: this.toolEvolverHome,
+        fsBridge: this.fsBridge,
+        serviceManager,
+        customFetch: this.customFetch,
+      });
+      stepsCompleted.push("health_gate");
+      if (!verification.passed) {
+        throw new Error(
+          `Health gate verification failed: ${verification.failedChecks} check(s) failed`,
+        );
+      }
+
+      return {
+        success: true,
+        dryRun: false,
+        currentVersion,
+        targetVersion,
+        backupPath: backupDir,
+        healthGatePassed: true,
+        verificationReport: verification,
+        stepsCompleted: [...stepsCompleted, "complete"],
+      };
+    } catch (error) {
+      let rolledBack = false;
+      if (!flags.noRollback) {
+        stepsCompleted.push("rollback_initiated");
+        try {
+          await this.fsBridge.writeFile(versionFilePath, oldVersionContent);
+          const backupConfig = await this.fsBridge.readFile(backupConfigPath);
+          if (backupConfig !== null) {
+            await this.fsBridge.writeFile(configPath, backupConfig);
+          }
+          rolledBack = true;
+          stepsCompleted.push("rollback_completed");
+        } catch {
+          stepsCompleted.push("rollback_failed");
+        }
+      }
       return {
         success: false,
         dryRun: false,
@@ -334,20 +391,11 @@ export class UpgradeOrchestrator {
         targetVersion,
         backupPath: backupDir,
         healthGatePassed: false,
-        rolledBack: true,
-        error: "Simulated health gate verification failed.",
-        stepsCompleted: [...stepsCompleted, "rollback_completed"],
+        rolledBack,
+        error: error instanceof Error ? error.message : String(error),
+        stepsCompleted,
       };
     }
-    return {
-      success: true,
-      dryRun: false,
-      currentVersion,
-      targetVersion,
-      backupPath: backupDir,
-      healthGatePassed: true,
-      stepsCompleted: [...stepsCompleted, "complete"],
-    };
   }
 }
 
