@@ -6,56 +6,99 @@ import type { CompilerOptions, TypeCheckDiagnostic, TypeCheckResult } from "./ty
  */
 export const PINNED_SDK_DECLARATIONS = `
 declare module "@tool-evolver/runtime" {
+  // Mirrors the real worker SDK (packages/runtime/src/worker/sdk.ts). The sandboxed
+  // runner builds this exact shape via createToolContext; keep in sync with sdk.ts.
   export interface ToolContext<TInput = Record<string, unknown>> {
-    input: TInput;
-    sessionId?: string;
-    invocationId?: string;
-    workspaceRoot?: string;
-    scratchDir?: string;
-    signal?: AbortSignal;
-    brokers?: ToolBrokerClient;
-    log?: (message: string, details?: Record<string, unknown>) => void;
-    progress?: (progress: number, message?: string) => void;
+    readonly input: TInput;
+    readonly invocationId: string;
+    readonly workspaceRoot: string;
+    readonly scratchDir: string;
+    readonly metadata?: Record<string, unknown>;
+    readonly progress: (percent: number, message?: string, stage?: string) => Promise<void>;
+    readonly log: (
+      level: "debug" | "info" | "warn" | "error",
+      message: string,
+      data?: unknown,
+    ) => Promise<void>;
+    readonly logger: ToolLogger;
+    readonly broker: ToolBrokerClient;
+    readonly fs: FsBrokerClient;
+    readonly net: NetBrokerClient;
+    readonly cmd: CmdBrokerClient;
+    readonly secret: SecretBrokerClient;
+  }
+
+  export interface ToolLogger {
+    debug(message: string, data?: unknown): Promise<void>;
+    info(message: string, data?: unknown): Promise<void>;
+    warn(message: string, data?: unknown): Promise<void>;
+    error(message: string, data?: unknown): Promise<void>;
   }
 
   export interface ToolBrokerClient {
-    fs?: FsBrokerClient;
-    cmd?: CmdBrokerClient;
-    net?: NetBrokerClient;
-    secrets?: SecretBrokerClient;
+    readonly fs: FsBrokerClient;
+    readonly net: NetBrokerClient;
+    readonly cmd: CmdBrokerClient;
+    readonly secret: SecretBrokerClient;
   }
 
   export interface FsBrokerClient {
-    readFile(path: string): Promise<Uint8Array>;
-    readTextFile(path: string): Promise<string>;
-    writeFile(path: string, content: Uint8Array | string): Promise<void>;
-    listDirectory(path: string): Promise<string[]>;
-    stat(path: string): Promise<{ size: number; isFile: boolean; isDirectory: boolean }>;
-    exists(path: string): Promise<boolean>;
-    deleteFile(path: string): Promise<void>;
+    readFile(filePath: string, encoding?: "utf-8" | "base64" | "buffer"): Promise<string | Uint8Array>;
+    writeFile(filePath: string, content: string | Uint8Array): Promise<void>;
+    exists(filePath: string): Promise<boolean>;
+    listDir(dirPath?: string): Promise<string[]>;
+    stat(targetPath: string): Promise<{ size: number; isFile: boolean; isDirectory: boolean; mtime: string }>;
+    removeFile(filePath: string): Promise<void>;
   }
 
   export interface CommandExecutionResult {
+    exitCode: number;
     stdout: string;
     stderr: string;
-    exitCode: number;
-    durationMs: number;
   }
 
   export interface CmdBrokerClient {
-    exec(command: string, args: string[], options?: { timeoutMs?: number; env?: Record<string, string>; cwd?: string }): Promise<CommandExecutionResult>;
+    exec(
+      command: string,
+      args?: string[],
+      options?: {
+        cwd?: string;
+        env?: Record<string, string | SecretReference>;
+        stdin?: string | SecretReference;
+        timeoutMs?: number;
+        maxOutputSizeBytes?: number;
+        secretEnv?: Record<string, SecretReference | string>;
+      },
+    ): Promise<CommandExecutionResult>;
   }
 
-  export interface HttpResponse {
+  export interface BrokeredFetchResponse {
     status: number;
     statusText: string;
     headers: Record<string, string>;
-    body: string;
+    ok?: boolean;
+    url?: string;
+    redirected?: boolean;
+    text(): Promise<string>;
     json<T = unknown>(): Promise<T>;
+    arrayBuffer?(): Promise<ArrayBuffer>;
+    bytes?(): Promise<Uint8Array>;
   }
 
   export interface NetBrokerClient {
-    fetch(url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }): Promise<HttpResponse>;
+    fetch(
+      url: string,
+      init?: {
+        method?: string;
+        headers?: Record<string, string | SecretReference>;
+        body?: string;
+        auth?: SecretReference | { bearer: SecretReference | string };
+        secretReferences?: Record<string, SecretReference>;
+        timeoutMs?: number;
+        redirect?: "follow" | "error" | "manual";
+        maxRedirects?: number;
+      },
+    ): Promise<BrokeredFetchResponse>;
   }
 
   export type SecretMediationMode = "opaque_reference" | "injected_header" | "redacted_body";
@@ -70,22 +113,44 @@ declare module "@tool-evolver/runtime" {
   }
 
   export interface SecretBrokerClient {
-    resolveReference(key: string, mode?: SecretMediationMode): Promise<SecretReference>;
-    bearerToken(key: string): Promise<SecretReference>;
-    formatTemplate(template: string, replacements: Record<string, string>): Promise<SecretReference>;
+    createReference(
+      name: string,
+      options?: {
+        modes?: SecretMediationMode[];
+        workspaceId?: string;
+        toolId?: string;
+        expiresAt?: string;
+        metadata?: Record<string, unknown>;
+      },
+    ): SecretReference;
+    bearerToken(name: string): SecretReference;
+    envSecret(name: string): SecretReference;
   }
 
   export interface ToolDefinition<TInput = Record<string, unknown>, TOutput = unknown> {
-    execute: (context: ToolContext<TInput>) => Promise<TOutput> | TOutput;
+    name?: string;
+    description?: string;
+    inputSchema?: Record<string, unknown>;
+    outputSchema?: Record<string, unknown>;
+    handler: (input: TInput, context: ToolContext<TInput>) => Promise<TOutput> | TOutput;
   }
 
   export function defineTool<TInput = Record<string, unknown>, TOutput = unknown>(
-    handler: ((context: ToolContext<TInput>) => Promise<TOutput> | TOutput) | ToolDefinition<TInput, TOutput>
-  ): ToolDefinition<TInput, TOutput>;
+    handlerOrDefinition:
+      | ((context: ToolContext<TInput>) => Promise<TOutput> | TOutput)
+      | ToolDefinition<TInput, TOutput>,
+  ): (context: ToolContext<TInput>) => Promise<TOutput> | TOutput;
 
-  export function bearerToken(key: string): Promise<SecretReference>;
-  export function formatSecretTemplate(template: string, replacements: Record<string, string>): Promise<SecretReference>;
-  export function createSecretReference(key: string, mode?: SecretMediationMode, template?: string, headerName?: string): SecretReference;
+  export function bearerToken(nameOrRef: string | SecretReference): SecretReference;
+  export function envSecret(nameOrRef: string | SecretReference): SecretReference;
+  export function createSecretReference(init: {
+    name: string;
+    permittedModes?: SecretMediationMode[];
+    workspaceId?: string;
+    toolId?: string;
+    expiresAt?: string;
+    metadata?: Record<string, unknown>;
+  }): SecretReference;
 }
 
 declare module "zod" {

@@ -22,8 +22,8 @@ describe("Candidate Compiler and TypeScript Type-Check Verifier", () => {
       }
 
       export default defineTool<InputType, OutputType>(async (context: ToolContext<InputType>) => {
-        context.log?.("Executing search query", { query: context.input.query });
-        context.progress?.(0.5, "Searching");
+        await context.log("info", "Executing search query", { query: context.input.query });
+        await context.progress(50, "Searching");
 
         const upperQuery = context.input.query.toUpperCase();
         return {
@@ -49,11 +49,11 @@ describe("Candidate Compiler and TypeScript Type-Check Verifier", () => {
       }
 
       export default defineTool<FetchInput, { status: number }>(async (ctx: ToolContext<FetchInput>) => {
-        if (!ctx.brokers?.net) {
+        if (!ctx.broker.net) {
           throw new Error("Network broker required");
         }
 
-        const resp = await ctx.brokers.net.fetch(ctx.input.url);
+        const resp = await ctx.broker.net.fetch(ctx.input.url);
         return { status: resp.status };
       });
     `;
@@ -84,7 +84,7 @@ describe("Candidate Compiler and TypeScript Type-Check Verifier", () => {
       import { defineTool, type ToolContext } from "@tool-evolver/runtime";
 
       export default defineTool(async (ctx: ToolContext) => {
-        await ctx.brokers?.fs?.nonExistentFsMethod();
+        await ctx.broker.fs.nonExistentFsMethod();
         return { done: true };
       });
     `;

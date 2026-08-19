@@ -148,7 +148,7 @@ export function staticAnalyzeCandidate(
           "forbidden_import",
           `Forbidden host module import '${specifier}'. Worker sandbox isolates direct host I/O.`,
           node,
-          "Use context.brokers for mediated access.",
+          "Use context.broker for mediated access.",
         );
         return;
       }
@@ -221,7 +221,7 @@ export function staticAnalyzeCandidate(
           "forbidden_api",
           "Global fetch() without broker mediation is forbidden.",
           node,
-          "Use context.brokers.net.fetch() for audited network access.",
+          "Use context.broker.net.fetch() for audited network access.",
         );
       }
     }
@@ -269,7 +269,7 @@ export function staticAnalyzeCandidate(
             "forbidden_api",
             "Direct access to 'Deno' global host runtime is forbidden.",
             node,
-            "Use context.brokers for mediated access.",
+            "Use context.broker for mediated access.",
           );
         } else if (idText === "process") {
           hasRawHostApis = true;
@@ -278,7 +278,7 @@ export function staticAnalyzeCandidate(
             "forbidden_api",
             "Direct access to 'process' host runtime is forbidden.",
             node,
-            "Use context.brokers for mediated access.",
+            "Use context.broker for mediated access.",
           );
         }
       }
@@ -311,7 +311,7 @@ export function staticAnalyzeCandidate(
           );
         }
       }
-      if (/(?:context\.)?brokers(?:\.|\?\.)fs/.test(fullText)) {
+      if (/(?:context\.)?brokers?(?:\.|\?\.)fs/.test(fullText)) {
         inferredCapabilities.fs = FsCapabilitySchema.parse({
           readPaths: [],
           writePaths: [],
@@ -320,14 +320,14 @@ export function staticAnalyzeCandidate(
           maxFileSizeBytes: 10 * 1024 * 1024,
         });
       }
-      if (/(?:context\.)?brokers(?:\.|\?\.)(?:cmd|command)/.test(fullText)) {
+      if (/(?:context\.)?brokers?(?:\.|\?\.)(?:cmd|command)/.test(fullText)) {
         inferredCapabilities.command = CommandCapabilitySchema.parse({
           allowedCommands: [],
           allowedBinaries: [],
           allowShellExecution: false,
         });
       }
-      if (/(?:context\.)?brokers(?:\.|\?\.)(?:net|network)/.test(fullText)) {
+      if (/(?:context\.)?brokers?(?:\.|\?\.)(?:net|network)/.test(fullText)) {
         inferredCapabilities.net = NetCapabilitySchema.parse({
           allowedDomains: [],
           allowedHosts: [],
@@ -336,7 +336,7 @@ export function staticAnalyzeCandidate(
           allowOutbound: true,
         });
       }
-      if (/(?:context\.)?brokers(?:\.|\?\.)(?:secret|secrets)/.test(fullText)) {
+      if (/(?:context\.)?brokers?(?:\.|\?\.)(?:secret|secrets)/.test(fullText)) {
         inferredCapabilities.secrets = SecretCapabilitySchema.parse({
           allowedSecretNames: [],
         });
@@ -386,7 +386,7 @@ export function staticAnalyzeCandidate(
         severity: "error",
         category: "undeclared_capability",
         message:
-          "Tool source references context.brokers.fs but manifest does not declare 'fs' capability.",
+          "Tool source references context.broker.fs but manifest does not declare 'fs' capability.",
         fixHint: "Declare required filesystem capability in manifest.",
       });
     }
@@ -396,7 +396,7 @@ export function staticAnalyzeCandidate(
         severity: "error",
         category: "undeclared_capability",
         message:
-          "Tool source references context.brokers.cmd but manifest does not declare 'cmd' capability.",
+          "Tool source references context.broker.cmd but manifest does not declare 'cmd' capability.",
         fixHint: "Declare required command capability in manifest.",
       });
     }
@@ -406,7 +406,7 @@ export function staticAnalyzeCandidate(
         severity: "error",
         category: "undeclared_capability",
         message:
-          "Tool source references context.brokers.net but manifest does not declare 'net' capability.",
+          "Tool source references context.broker.net but manifest does not declare 'net' capability.",
         fixHint: "Declare required network capability in manifest.",
       });
     }
@@ -421,7 +421,7 @@ export function staticAnalyzeCandidate(
           severity: "error",
           category: "undeclared_capability",
           message:
-            "Tool source references context.brokers.secrets but manifest does not allowlist any secret names or prefixes.",
+            "Tool source references context.broker.secrets but manifest does not allowlist any secret names or prefixes.",
           fixHint: "Declare required secret names or prefixes in manifest capabilities.",
         });
       }
