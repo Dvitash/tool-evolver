@@ -35,8 +35,8 @@
     "@biomejs/biome": "1.9.4",
     "@types/node": "^22.13.4",
     "turbo": "^2.4.4",
-    "typescript": "^5.9.3",
-    "vitest": "^3.2.7"
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["@biomejs/biome", "esbuild"]
