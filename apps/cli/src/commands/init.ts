@@ -138,6 +138,8 @@ export async function initCommand(
     rollbackInstall: flags.rollbackInstall,
     gatewayUrl: flags.gatewayUrl,
     customHome: flags.home,
+    releaseMode: flags.dryRun ? "local-test" : "production",
+    releaseChannelUrl: process.env.TOOL_EVOLVER_RELEASE_CHANNEL_URL,
     fsBridge: customFsBridge,
   };
 

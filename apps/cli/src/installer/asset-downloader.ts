@@ -7,6 +7,7 @@ import zlib from "node:zlib";
 import type { ConfigFsBridge } from "@tool-evolver/harness-contracts";
 import { defaultFsBridge } from "@tool-evolver/harness-contracts";
 import type { ManifestAsset } from "./channel-verifier.js";
+import type { ReleaseProvenance } from "./release-client.js";
 
 export interface AssetDownloadOptions {
   readonly asset: ManifestAsset;
@@ -30,8 +31,15 @@ export interface VersionInstallOptions {
   readonly tarballPathOrBuffer: string | Buffer;
   readonly toolEvolverHome: string;
   readonly fsBridge?: ConfigFsBridge;
+  readonly logger?: (message: string) => void;
   readonly force?: boolean;
-  readonly logger?: (msg: string) => void;
+  readonly provenance?: ReleaseProvenance;
+  readonly denoRuntime?: {
+    readonly archivePathOrBuffer: string | Buffer;
+    readonly version: string;
+    readonly sha256: string;
+    readonly executable: string;
+  };
 }
 
 export interface VersionInstallResult {
@@ -74,10 +82,11 @@ export interface VersionRollbackResult {
 }
 
 export interface VersionStateRecord {
-  readonly activeVersion: string;
-  readonly previousVersion: string | null;
-  readonly updatedAt: string;
-  readonly installedVersions: string[];
+  activeVersion: string;
+  previousVersion: string | null;
+  updatedAt: string;
+  installedVersions: string[];
+  provenanceByVersion?: Record<string, ReleaseProvenance>;
 }
 
 /**
@@ -266,6 +275,51 @@ export async function downloadAndVerifyAsset(
 }
 
 /**
+ * Extracts one named file from a ZIP archive using the central directory. Deno
+ * release archives contain one executable and use either store or deflate.
+ */
+export function extractSingleFileZip(zipBuffer: Buffer, expectedBasename: string): Buffer {
+  const centralSignature = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
+  let offset = 0;
+  while (offset < zipBuffer.length - 46) {
+    const central = zipBuffer.indexOf(centralSignature, offset);
+    if (central < 0) break;
+    if (central + 46 > zipBuffer.length) break;
+    const method = zipBuffer.readUInt16LE(central + 10);
+    const compressedSize = zipBuffer.readUInt32LE(central + 20);
+    const uncompressedSize = zipBuffer.readUInt32LE(central + 24);
+    const fileNameLength = zipBuffer.readUInt16LE(central + 28);
+    const extraLength = zipBuffer.readUInt16LE(central + 30);
+    const commentLength = zipBuffer.readUInt16LE(central + 32);
+    const localOffset = zipBuffer.readUInt32LE(central + 42);
+    const fileName = zipBuffer
+      .subarray(central + 46, central + 46 + fileNameLength)
+      .toString("utf8")
+      .replace(/\\/g, "/");
+    const basename = path.posix.basename(fileName);
+    if (basename === expectedBasename) {
+      if (zipBuffer.readUInt32LE(localOffset) !== 0x04034b50) {
+        throw new Error("Deno runtime ZIP contains an invalid local file header.");
+      }
+      const localNameLength = zipBuffer.readUInt16LE(localOffset + 26);
+      const localExtraLength = zipBuffer.readUInt16LE(localOffset + 28);
+      const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+      const compressed = zipBuffer.subarray(dataOffset, dataOffset + compressedSize);
+      let output: Buffer;
+      if (method === 0) output = Buffer.from(compressed);
+      else if (method === 8) output = zlib.inflateRawSync(compressed);
+      else throw new Error(`Unsupported ZIP compression method ${method}.`);
+      if (output.length !== uncompressedSize) {
+        throw new Error("Deno runtime ZIP entry size mismatch.");
+      }
+      return output;
+    }
+    offset = central + 46 + fileNameLength + extraLength + commentLength;
+  }
+  throw new Error(`Deno runtime ZIP does not contain '${expectedBasename}'.`);
+}
+
+/**
  * Installs a release package into an immutable version directory.
  */
 export async function installReleaseVersion(
@@ -329,6 +383,22 @@ export async function installReleaseVersion(
   const expectedCli = path.join(stagingDir, "bin", "tool-evolver");
   const expectedDeno = path.join(stagingDir, "deno", "deno");
 
+  if (options.denoRuntime) {
+    const runtimeBuffer = Buffer.isBuffer(options.denoRuntime.archivePathOrBuffer)
+      ? options.denoRuntime.archivePathOrBuffer
+      : await fsPromises.readFile(options.denoRuntime.archivePathOrBuffer);
+    const runtimeDigest = sha256Hex(runtimeBuffer);
+    const expectedRuntimeDigest = options.denoRuntime.sha256.replace(/^sha256:/i, "").toLowerCase();
+    if (runtimeDigest !== expectedRuntimeDigest) {
+      throw new Error(
+        `Pinned Deno runtime digest mismatch: expected ${expectedRuntimeDigest}, got ${runtimeDigest}.`,
+      );
+    }
+    const denoBytes = extractSingleFileZip(runtimeBuffer, options.denoRuntime.executable);
+    await fsBridge.mkdirp(path.dirname(expectedDeno));
+    await fsPromises.writeFile(expectedDeno, denoBytes, { mode: 0o755 });
+  }
+
   // Create bin shims if archive contains apps structure
   const observerDistBin = path.join(stagingDir, "apps", "observer", "dist", "bin", "daemon.js");
   const gatewayDistBin = path.join(stagingDir, "apps", "gateway", "dist", "bin", "mcp-shim.js");
@@ -380,6 +450,10 @@ export async function installReleaseVersion(
     version: cleanVersion,
     installedAt: new Date().toISOString(),
     sha256: sha256Hex(tarGzBuffer),
+    provenance: options.provenance,
+    denoRuntime: options.denoRuntime
+      ? { version: options.denoRuntime.version, sha256: options.denoRuntime.sha256 }
+      : undefined,
   };
   await fsPromises.writeFile(versionMetadataPath, JSON.stringify(versionInfo, null, 2), "utf8");
 
@@ -507,11 +581,26 @@ export async function switchActiveVersion(
         .map((d) => d.replace(/^v/, ""))
     : [cleanTarget];
 
+  let existingProvenance: Record<string, ReleaseProvenance> = {};
+  if (fs.existsSync(versionStatePath)) {
+    try {
+      const state = JSON.parse(fs.readFileSync(versionStatePath, "utf8")) as VersionStateRecord;
+      existingProvenance = { ...(state.provenanceByVersion ?? {}) };
+    } catch {}
+  }
+  try {
+    const versionMetadata = JSON.parse(
+      fs.readFileSync(path.join(targetVersionDir, "version.json"), "utf8"),
+    ) as { provenance?: ReleaseProvenance };
+    if (versionMetadata.provenance) existingProvenance[cleanTarget] = versionMetadata.provenance;
+  } catch {}
+
   const newState: VersionStateRecord = {
     activeVersion: cleanTarget,
     previousVersion,
     updatedAt: new Date().toISOString(),
     installedVersions: installedList,
+    provenanceByVersion: existingProvenance,
   };
 
   await fsPromises.writeFile(versionStatePath, JSON.stringify(newState, null, 2), "utf8");

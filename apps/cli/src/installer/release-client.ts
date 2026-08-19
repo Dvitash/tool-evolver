@@ -70,7 +70,10 @@ export interface ResolveProductionReleaseOptions {
 }
 
 function normalizeSha256(value: string): string {
-  return value.replace(/^sha256:/i, "").trim().toLowerCase();
+  return value
+    .replace(/^sha256:/i, "")
+    .trim()
+    .toLowerCase();
 }
 
 function sha256Hex(value: Buffer): string {
@@ -88,7 +91,8 @@ function assertSha256(value: string, label: string): string {
 function assertTransport(urlString: string, allowInsecureHttpForTests: boolean): URL {
   const url = new URL(urlString);
   if (url.protocol === "https:") return url;
-  const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1";
+  const loopback =
+    url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1";
   if (allowInsecureHttpForTests && url.protocol === "http:" && loopback) return url;
   throw new Error(`Release metadata and assets must use HTTPS: ${urlString}`);
 }
@@ -110,7 +114,9 @@ function parseJson<T>(bytes: Buffer, label: string): T {
   try {
     return JSON.parse(bytes.toString("utf8")) as T;
   } catch (error) {
-    throw new Error(`${label} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `${label} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -144,7 +150,8 @@ export async function loadBundledTrustedPublicKeys(
 }
 
 function platformKey(platform: { os: string; arch: string; isWsl?: boolean }): string {
-  const arch = platform.arch === "x86_64" ? "x64" : platform.arch === "aarch64" ? "arm64" : platform.arch;
+  const arch =
+    platform.arch === "x86_64" ? "x64" : platform.arch === "aarch64" ? "arm64" : platform.arch;
   if (platform.isWsl || platform.os === "wsl") return `wsl-${arch}`;
   return `${platform.os}-${arch}`;
 }
@@ -163,7 +170,8 @@ function resolveDenoAsset(
   }
   const key = platformKey(platform);
   const linuxFallback = key.startsWith("wsl-") ? `linux-${key.slice(4)}` : undefined;
-  const asset = descriptor.assets[key] ?? (linuxFallback ? descriptor.assets[linuxFallback] : undefined);
+  const asset =
+    descriptor.assets[key] ?? (linuxFallback ? descriptor.assets[linuxFallback] : undefined);
   if (!asset) throw new Error(`No pinned Deno runtime asset exists for '${key}'.`);
   assertTransport(asset.url, false);
   assertSha256(asset.sha256, `Deno ${descriptor.version} asset`);
@@ -175,12 +183,17 @@ export async function resolveProductionRelease(
 ): Promise<ResolvedProductionRelease> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const allowInsecure = options.allowInsecureHttpForTests === true;
-  const channelUrl = options.channelUrl ?? options.env?.TOOL_EVOLVER_RELEASE_CHANNEL_URL ?? DEFAULT_PRODUCTION_CHANNEL_URL;
+  const channelUrl =
+    options.channelUrl ??
+    options.env?.TOOL_EVOLVER_RELEASE_CHANNEL_URL ??
+    DEFAULT_PRODUCTION_CHANNEL_URL;
   const trustedPublicKeys = options.trustedPublicKeys?.length
     ? [...options.trustedPublicKeys]
     : await loadBundledTrustedPublicKeys(options.env);
   if (trustedPublicKeys.length === 0) {
-    throw new Error("Production release resolution requires at least one independently pinned public key.");
+    throw new Error(
+      "Production release resolution requires at least one independently pinned public key.",
+    );
   }
 
   const channelBytes = await fetchBytes(channelUrl, fetchImpl, allowInsecure);
@@ -193,7 +206,9 @@ export async function resolveProductionRelease(
     throw new Error(`Signed release channel rejected: ${channelResult.errors.join("; ")}`);
   }
   if (!channelResult.targetVersion || !channelResult.manifestUrl || !channelResult.manifestDigest) {
-    throw new Error("Signed release channel is incomplete: version, manifest URL, and digest are required.");
+    throw new Error(
+      "Signed release channel is incomplete: version, manifest URL, and digest are required.",
+    );
   }
 
   const manifestUrl = assertTransport(channelResult.manifestUrl, allowInsecure).toString();
@@ -219,7 +234,10 @@ export async function resolveProductionRelease(
 
   const releaseAsset = selectPlatformAsset(manifest, options.platform);
   const releaseAssetSha256 = assertSha256(releaseAsset.sha256, "Release platform asset");
-  const releaseAssetUrl = assertTransport(new URL(releaseAsset.filename, manifestUrl).toString(), allowInsecure).toString();
+  const releaseAssetUrl = assertTransport(
+    new URL(releaseAsset.filename, manifestUrl).toString(),
+    allowInsecure,
+  ).toString();
   const denoAsset = resolveDenoAsset(manifest.runtimes?.deno, options.platform);
   const signingKeyIds = [
     ...(channel.signatures ?? []).map((entry) => entry.keyId),

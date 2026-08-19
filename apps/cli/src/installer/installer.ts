@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -8,6 +9,7 @@ import type { ServiceCommandRunner } from "../service/manager.js";
 import {
   type VersionSwitchResult,
   downloadAndVerifyAsset,
+  getActiveVersion,
   installReleaseVersion,
   rollbackActiveVersion,
   switchActiveVersion,
@@ -39,6 +41,11 @@ import {
 } from "./harness-config.js";
 import { InstallationJournal, type JournalData } from "./journal.js";
 import { type PlatformInfo, detectPlatform, validatePlatform } from "./platform.js";
+import {
+  type ReleaseProvenance,
+  type ResolvedProductionRelease,
+  resolveProductionRelease,
+} from "./release-client.js";
 import { type SetupDaemonServiceResult, setupAndStartDaemonService } from "./user-service.js";
 
 export interface InstallerOptions {
@@ -59,6 +66,11 @@ export interface InstallerOptions {
   signedManifest?: SignedManifest;
   assetTarball?: string | Buffer;
   targetVersion?: string;
+  releaseMode?: "production" | "local-test";
+  releaseChannelUrl?: string;
+  trustedReleasePublicKeys?: string[];
+  fetchImpl?: typeof fetch;
+  allowInsecureReleaseTransportForTests?: boolean;
   setupService?: boolean;
   autoStartService?: boolean;
   serviceRunner?: ServiceCommandRunner;
@@ -156,41 +168,128 @@ export class ToolEvolverInstaller {
 
       let channelResult: ChannelVerificationResult | undefined;
       let selectedAsset: ManifestAsset | undefined;
-
-      if (options.channelMetadata) {
-        channelResult = verifyChannelMetadata(options.channelMetadata, {
-          channel: options.channel || "stable",
-        });
-        if (!channelResult.valid) {
-          throw new Error(`Channel verification failed: ${channelResult.errors.join("; ")}`);
-        }
-      }
-
-      if (options.signedManifest) {
-        selectedAsset = selectPlatformAsset(options.signedManifest, platformInfo);
-      }
-
+      let productionRelease: ResolvedProductionRelease | undefined;
+      let releaseTarball: string | Buffer | undefined = options.assetTarball;
+      let denoRuntimeArchive: string | Buffer | undefined;
+      const releaseMode = options.releaseMode ?? "local-test";
       const toolEvolverHome = path.join(customHome, ".tool-evolver");
       const downloadsDir = path.join(toolEvolverHome, "downloads");
 
-      if (selectedAsset && options.assetTarball) {
-        await downloadAndVerifyAsset({
-          asset: selectedAsset,
+      let assetResult: AssetVerificationResult;
+      if (releaseMode === "production") {
+        if (options.channelMetadata || options.signedManifest || options.assetTarball) {
+          throw new Error(
+            "Production installation rejects caller-authored channel, manifest, or tarball state; use the signed release channel.",
+          );
+        }
+        productionRelease = await resolveProductionRelease({
+          platform: platformInfo,
+          channel: options.channel || "stable",
+          channelUrl: options.releaseChannelUrl,
+          trustedPublicKeys: options.trustedReleasePublicKeys,
+          fetchImpl: options.fetchImpl,
+          env: process.env,
+          allowInsecureHttpForTests: options.allowInsecureReleaseTransportForTests,
+        });
+        const downloadedRelease = await downloadAndVerifyAsset({
+          asset: productionRelease.releaseAsset,
           downloadDir: downloadsDir,
-          sourceBuffer: Buffer.isBuffer(options.assetTarball) ? options.assetTarball : undefined,
-          sourceUrlOrPath:
-            typeof options.assetTarball === "string" ? options.assetTarball : undefined,
+          sourceUrlOrPath: productionRelease.releaseAssetUrl,
           fsBridge: this.fsBridge,
           logger: this.log.bind(this),
         });
+        releaseTarball = downloadedRelease.path;
+        const denoAsset = productionRelease.denoAsset;
+        const downloadedDeno = await downloadAndVerifyAsset({
+          asset: {
+            filename: denoAsset.filename,
+            platform: platformInfo.os,
+            arch: platformInfo.arch,
+            isWsl: platformInfo.isWsl,
+            sizeBytes: 0,
+            sha256: denoAsset.sha256,
+            path: denoAsset.filename,
+          },
+          downloadDir: downloadsDir,
+          sourceUrlOrPath: denoAsset.url,
+          fsBridge: this.fsBridge,
+          logger: this.log.bind(this),
+        });
+        denoRuntimeArchive = downloadedDeno.path;
+        this.journal.metadata.releaseProvenance = productionRelease.provenance;
+        assetResult = {
+          allVerified: true,
+          missingRequired: [],
+          digestMismatches: [],
+          assets: [
+            {
+              name: "daemon",
+              version: productionRelease.version,
+              path: downloadedRelease.path,
+              expectedSha256: productionRelease.releaseAsset.sha256,
+              actualSha256: downloadedRelease.sha256,
+              required: true,
+              verified: true,
+            },
+            {
+              name: "runtime",
+              version: productionRelease.version,
+              path: downloadedRelease.path,
+              expectedSha256: productionRelease.releaseAsset.sha256,
+              actualSha256: downloadedRelease.sha256,
+              required: true,
+              verified: true,
+            },
+            {
+              name: "mcp-shim",
+              version: productionRelease.version,
+              path: downloadedRelease.path,
+              expectedSha256: productionRelease.releaseAsset.sha256,
+              actualSha256: downloadedRelease.sha256,
+              required: true,
+              verified: true,
+            },
+            {
+              name: "deno",
+              version: productionRelease.provenance.deno.version,
+              path: downloadedDeno.path,
+              expectedSha256: productionRelease.provenance.deno.sha256,
+              actualSha256: downloadedDeno.sha256,
+              required: true,
+              verified: true,
+            },
+          ],
+        };
+      } else {
+        if (options.channelMetadata) {
+          channelResult = verifyChannelMetadata(options.channelMetadata, {
+            channel: options.channel || "stable",
+            skipSignatureVerification: true,
+          });
+          if (!channelResult.valid) {
+            throw new Error(`Channel verification failed: ${channelResult.errors.join("; ")}`);
+          }
+        }
+        if (options.signedManifest)
+          selectedAsset = selectPlatformAsset(options.signedManifest, platformInfo);
+        if (selectedAsset && options.assetTarball) {
+          await downloadAndVerifyAsset({
+            asset: selectedAsset,
+            downloadDir: downloadsDir,
+            sourceBuffer: Buffer.isBuffer(options.assetTarball) ? options.assetTarball : undefined,
+            sourceUrlOrPath:
+              typeof options.assetTarball === "string" ? options.assetTarball : undefined,
+            fsBridge: this.fsBridge,
+            logger: this.log.bind(this),
+          });
+        }
+        assetResult = await discoverAndVerifyAssets({
+          fsBridge: this.fsBridge,
+          manifest: options.assetManifest,
+          denoExecutable: options.denoExecutable,
+          allowMissingOptional: true,
+        });
       }
-
-      const assetResult = await discoverAndVerifyAssets({
-        fsBridge: this.fsBridge,
-        manifest: options.assetManifest,
-        denoExecutable: options.denoExecutable,
-        allowMissingOptional: true,
-      });
       this.journal.completeStep("assets", {
         allVerified: assetResult.allVerified,
         assetCount: assetResult.assets.length,
@@ -214,15 +313,53 @@ export class ToolEvolverInstaller {
         await this.fsBridge.mkdirp(daemonPaths.stateDir);
         await this.fsBridge.mkdirp(daemonPaths.logDir);
 
-        if (options.assetTarball) {
-          const installVersion = channelResult?.targetVersion || options.targetVersion || "1.0.0";
-          await installReleaseVersion({
+        if (releaseTarball) {
+          const installVersion =
+            productionRelease?.version ||
+            channelResult?.targetVersion ||
+            options.targetVersion ||
+            "1.0.0";
+          const previousVersion = getActiveVersion(toolEvolverHome);
+          const installed = await installReleaseVersion({
             version: installVersion,
-            tarballPathOrBuffer: options.assetTarball,
+            tarballPathOrBuffer: releaseTarball,
             toolEvolverHome,
             fsBridge: this.fsBridge,
             logger: this.log.bind(this),
+            provenance: productionRelease?.provenance,
+            denoRuntime:
+              productionRelease && denoRuntimeArchive
+                ? {
+                    archivePathOrBuffer: denoRuntimeArchive,
+                    version: productionRelease.provenance.deno.version,
+                    sha256: productionRelease.provenance.deno.sha256,
+                    executable: productionRelease.denoAsset.executable,
+                  }
+                : undefined,
           });
+
+          this.journal.addRollbackAction(
+            "directories",
+            `Restore exact prior release after failed activation of v${installVersion}`,
+            async () => {
+              if (previousVersion) {
+                await switchActiveVersion({
+                  toolEvolverHome,
+                  targetVersion: previousVersion,
+                  fsBridge: this.fsBridge,
+                  logger: this.log.bind(this),
+                });
+              } else {
+                await fs.rm(path.join(toolEvolverHome, "current"), { force: true }).catch(() => {});
+                await fs
+                  .rm(path.join(toolEvolverHome, "current-version"), { force: true })
+                  .catch(() => {});
+              }
+              if (installVersion !== previousVersion) {
+                await fs.rm(installed.versionDir, { recursive: true, force: true });
+              }
+            },
+          );
 
           versionSwitchResult = await switchActiveVersion({
             toolEvolverHome,

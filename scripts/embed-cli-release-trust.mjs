@@ -10,7 +10,9 @@ export function embedCliReleaseTrust(options = {}) {
   const trusted = loadTrustedReleaseKeysFromEnv(options.env || process.env);
   const records = Object.values(trusted);
   if (records.length !== 1) {
-    throw new Error(`Production bootstrap requires exactly one active release trust root, found ${records.length}.`);
+    throw new Error(
+      `Production bootstrap requires exactly one active release trust root, found ${records.length}.`,
+    );
   }
   const signingKey = records[0];
   const payload = {
@@ -26,5 +28,7 @@ export function embedCliReleaseTrust(options = {}) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const result = embedCliReleaseTrust();
-  console.log(`Embedded production release trust root '${result.signingKey.keyId}' into ${result.outputPath}.`);
+  console.log(
+    `Embedded production release trust root '${result.signingKey.keyId}' into ${result.outputPath}.`,
+  );
 }
