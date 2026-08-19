@@ -138,6 +138,10 @@ export async function initCommand(
     rollbackInstall: flags.rollbackInstall,
     gatewayUrl: flags.gatewayUrl,
     customHome: flags.home,
+    releaseMode: flags.dryRun ? "local-test" : "production",
+    releaseChannelUrl: process.env.TOOL_EVOLVER_RELEASE_CHANNEL_URL,
+    allowInsecureReleaseTransportForTests:
+      process.env.TOOL_EVOLVER_ALLOW_INSECURE_LOOPBACK_RELEASES === "1",
     fsBridge: customFsBridge,
   };
 

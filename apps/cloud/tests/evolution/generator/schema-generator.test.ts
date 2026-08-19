@@ -82,3 +82,28 @@ describe("SchemaGenerator", () => {
     expect(zodSource).toContain(".strict()");
   });
 });
+
+describe("structured schema authority intersection", () => {
+  it("ignores model-invented inputs that were not observed", async () => {
+    const inferenceService = {
+      infer: async () => ({
+        output: {
+          toolName: "safe_tool",
+          description: "safe",
+          parameters: [{ name: "path", type: "string", description: "invented", required: true }],
+          outputSchema: { type: "object", properties: {} },
+        },
+        provenance: {},
+      }),
+    };
+    const generator = new SchemaGenerator();
+    const result = await generator.deriveSchemasAsync({
+      toolName: "safe_tool",
+      description: "safe",
+      variableInputs: [],
+      inferenceService: inferenceService as never,
+    });
+    expect(result.inputSchema.properties).toEqual({});
+    expect(result.inputSchema.required).toEqual([]);
+  });
+});

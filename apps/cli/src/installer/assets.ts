@@ -90,7 +90,13 @@ export async function findDenoExecutable(
     } else {
       const exists = await fsBridge.exists(candidate);
       if (exists) {
-        return { path: candidate, version: "2.0.0" };
+        try {
+          const { stdout } = await execFileAsync(candidate, ["--version"]);
+          const match = stdout.match(/deno\s+([\d.]+)/i);
+          if (match?.[1]) return { path: candidate, version: match[1] };
+        } catch {
+          // Existing path is not a working Deno executable.
+        }
       }
     }
   }
@@ -146,7 +152,9 @@ export async function discoverAndVerifyAssets(
     expectedSha256: daemonExpected,
     actualSha256: daemonActualSha256,
     required: manifest?.assets.daemon?.required ?? true,
-    verified: daemonVerified || (options.allowMissingOptional ?? false),
+    verified:
+      daemonVerified ||
+      (!(manifest?.assets.daemon?.required ?? true) && (options.allowMissingOptional ?? false)),
   });
 
   // 2. Runtime Asset
@@ -178,7 +186,9 @@ export async function discoverAndVerifyAssets(
     expectedSha256: runtimeExpected,
     actualSha256: runtimeActualSha256,
     required: manifest?.assets.runtime?.required ?? true,
-    verified: (runtimeExists && runtimeDigestOk) || (options.allowMissingOptional ?? false),
+    verified:
+      (runtimeExists && runtimeDigestOk) ||
+      (!(manifest?.assets.runtime?.required ?? true) && (options.allowMissingOptional ?? false)),
   });
 
   // 3. MCP Shim Asset
@@ -210,7 +220,10 @@ export async function discoverAndVerifyAssets(
     expectedSha256: shimExpected,
     actualSha256: shimActualSha256,
     required: manifest?.assets["mcp-shim"]?.required ?? true,
-    verified: (shimExists && shimDigestOk) || (options.allowMissingOptional ?? false),
+    verified:
+      (shimExists && shimDigestOk) ||
+      (!(manifest?.assets["mcp-shim"]?.required ?? true) &&
+        (options.allowMissingOptional ?? false)),
   });
 
   // 4. Deno Sandbox Asset
@@ -225,8 +238,7 @@ export async function discoverAndVerifyAssets(
     }
   }
 
-  const denoDigestOk =
-    !denoExpected || (denoActualSha256 ? denoActualSha256 === denoExpected : true);
+  const denoDigestOk = !denoExpected || denoActualSha256 === denoExpected;
   if (denoExpected && denoActualSha256 && !denoDigestOk) {
     digestMismatches.push({
       name: "deno",
@@ -235,20 +247,23 @@ export async function discoverAndVerifyAssets(
     });
   }
 
+  const denoRequired = manifest?.assets.deno?.required ?? true;
   const denoVerified =
-    (Boolean(denoInfo) && denoDigestOk) || (options.allowMissingOptional ?? false);
+    Boolean(denoInfo) && denoDigestOk
+      ? true
+      : !denoRequired && (options.allowMissingOptional ?? false);
 
   results.push({
     name: "deno",
-    version: denoInfo?.version ?? manifest?.assets.deno?.version ?? "2.0.0",
+    version: denoInfo?.version ?? manifest?.assets.deno?.version ?? "unknown",
     path: denoInfo?.path ?? options.denoExecutable ?? "deno",
     expectedSha256: denoExpected,
     actualSha256: denoActualSha256,
-    required: manifest?.assets.deno?.required ?? false,
+    required: manifest?.assets.deno?.required ?? true,
     verified: denoVerified,
     notes: denoInfo
       ? `Found Deno at ${denoInfo.path}`
-      : "Deno not detected; worker will use fallback sandboxing",
+      : "Required Deno runtime was not detected or failed verification.",
   });
 
   // Determine overall success

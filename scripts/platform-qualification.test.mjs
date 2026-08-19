@@ -5,175 +5,99 @@ import process from "node:process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { packageRelease } from "./package-release.mjs";
 import {
-  QUALIFICATION_LANE_CONFIGS,
   REQUIRED_QUALIFICATION_LANES,
-  createLaneSandbox,
-  qualifyLane,
+  detectHostLane,
+  qualifyPlatformLane,
   runPlatformQualification,
 } from "./platform-qualification.mjs";
 
-describe("Platform Matrix Qualification Script Suite", () => {
+describe("real host platform qualification", () => {
   const rootDir = process.cwd();
-  const testOutputDir = path.join(os.tmpdir(), `test-platform-qual-${Date.now()}`);
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tool-evolver-platform-qual-"));
+  const releaseDir = path.join(tempRoot, "release");
+  const outputDir = path.join(tempRoot, "evidence");
 
   beforeAll(() => {
-    fs.mkdirSync(testOutputDir, { recursive: true });
-    // Package release tarballs in isolated test directory
-    packageRelease({
-      rootDir,
-      distDir: testOutputDir,
-      skipBuild: true,
-    });
-  });
+    fs.mkdirSync(releaseDir, { recursive: true });
+    packageRelease({ rootDir, distDir: releaseDir, skipBuild: true, testOnly: true });
+  }, 30_000);
 
   afterAll(() => {
-    try {
-      fs.rmSync(testOutputDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it("maps supported hosts and WSL without synthetic lane overrides", () => {
+    expect(
+      detectHostLane({ platform: "linux", arch: "x64", release: "6.8.0", procVersion: "Linux" }),
+    ).toBe("linux-x64");
+    expect(
+      detectHostLane({ platform: "linux", arch: "arm64", release: "6.8.0", procVersion: "Linux" }),
+    ).toBe("linux-arm64");
+    expect(detectHostLane({ platform: "darwin", arch: "x64" })).toBe("darwin-x64");
+    expect(detectHostLane({ platform: "darwin", arch: "arm64" })).toBe("darwin-arm64");
+    expect(
+      detectHostLane({
+        platform: "linux",
+        arch: "x64",
+        release: "6.8.0-microsoft-standard-WSL2",
+        procVersion: "Linux version Microsoft WSL2",
+      }),
+    ).toBe("wsl");
+    expect(detectHostLane({ platform: "win32", arch: "x64" })).toBeNull();
+    expect(REQUIRED_QUALIFICATION_LANES).toEqual([
+      "linux-x64",
+      "linux-arm64",
+      "darwin-x64",
+      "darwin-arm64",
+      "wsl",
+    ]);
+  });
+
+  it("marks a non-executing lane unavailable instead of fabricating a pass", async () => {
+    const hostLane = detectHostLane();
+    const otherLane = REQUIRED_QUALIFICATION_LANES.find((lane) => lane !== hostLane);
+    expect(otherLane).toBeDefined();
+    const result = await qualifyPlatformLane(otherLane, { releaseDir, outputDir });
+    expect(result.passed).toBe(false);
+    expect(result.status).toBe("UNAVAILABLE");
+    expect(result.error).toContain("Host mismatch");
+  });
+
+  it("qualifies the exact packaged artifact through real local processes on the executing host", async () => {
+    const hostLane = detectHostLane();
+    expect(hostLane).not.toBeNull();
+    const result = await runPlatformQualification({
+      lane: hostLane,
+      releaseDir,
+      outputDir,
+    });
+
+    if (!result.passed) {
+      console.error(JSON.stringify(result, null, 2));
     }
-  });
 
-  describe("Qualification Configuration & Sandbox", () => {
-    it("defines all 6 required qualification lanes", () => {
-      expect(REQUIRED_QUALIFICATION_LANES).toHaveLength(6);
-      expect(REQUIRED_QUALIFICATION_LANES).toEqual([
-        "linux-x64",
-        "linux-arm64",
-        "darwin-x64",
-        "darwin-arm64",
-        "wsl-systemd",
-        "wsl-fallback",
-      ]);
-    });
-
-    it("creates and cleans up an isolated sandbox directory", () => {
-      const sandbox = createLaneSandbox("linux-x64", testOutputDir);
-      expect(fs.existsSync(sandbox.root)).toBe(true);
-      expect(fs.existsSync(sandbox.home)).toBe(true);
-      expect(fs.existsSync(sandbox.npmCache)).toBe(true);
-
-      sandbox.cleanup();
-      expect(fs.existsSync(sandbox.root)).toBe(false);
-    });
-  });
-
-  describe("Single Lane Qualification", () => {
-    it("successfully qualifies Linux x64 lane with all checks", async () => {
-      const linuxConfig = QUALIFICATION_LANE_CONFIGS.find((l) => l.id === "linux-x64");
-      expect(linuxConfig).toBeDefined();
-
-      const result = await qualifyLane(linuxConfig, {
-        rootDir,
-        releaseDir: testOutputDir,
-        tmpDir: testOutputDir,
-      });
-
-      expect(result.id).toBe("linux-x64");
-      expect(result.status).toBe("passed");
-      expect(result.serviceManager).toBe("systemd");
-      expect(result.checks).toHaveLength(9);
-
-      const checkNames = result.checks.map((c) => c.name);
-      expect(checkNames).toContain("clean_install");
-      expect(checkNames).toContain("service_registration");
-      expect(checkNames).toContain("service_lifecycle");
-      expect(checkNames).toContain("deno_runtime_assets");
-      expect(checkNames).toContain("path_canonicalization_and_security");
-      expect(checkNames).toContain("harness_matrix_integration");
-      expect(checkNames).toContain("transactional_state");
-      expect(checkNames).toContain("upgrade_and_rollback");
-      expect(checkNames).toContain("channel_rules_and_revocation");
-
-      for (const check of result.checks) {
-        expect(check.passed).toBe(true);
-      }
-    });
-
-    it("successfully qualifies macOS Apple Silicon (darwin-arm64) lane with launchd", async () => {
-      const macConfig = QUALIFICATION_LANE_CONFIGS.find((l) => l.id === "darwin-arm64");
-      expect(macConfig).toBeDefined();
-
-      const result = await qualifyLane(macConfig, {
-        rootDir,
-        releaseDir: testOutputDir,
-        tmpDir: testOutputDir,
-      });
-
-      expect(result.id).toBe("darwin-arm64");
-      expect(result.status).toBe("passed");
-      expect(result.serviceManager).toBe("launchd");
-      expect(result.artifacts.unitPath).toContain("LaunchAgents");
-    });
-
-    it("successfully qualifies WSL fallback supervisor lane without systemd", async () => {
-      const wslFallbackConfig = QUALIFICATION_LANE_CONFIGS.find((l) => l.id === "wsl-fallback");
-      expect(wslFallbackConfig).toBeDefined();
-
-      const result = await qualifyLane(wslFallbackConfig, {
-        rootDir,
-        releaseDir: testOutputDir,
-        tmpDir: testOutputDir,
-      });
-
-      expect(result.id).toBe("wsl-fallback");
-      expect(result.status).toBe("passed");
-      expect(result.serviceManager).toBe("wsl-fallback");
-      expect(result.artifacts.unitPath).toContain("tool-evolver-service.sh");
-    });
-  });
-
-  describe("Full Platform Matrix Qualification Run", () => {
-    it("runs complete matrix qualification across all 6 lanes and outputs platform-matrix.json", async () => {
-      const qualResult = await runPlatformQualification({
-        rootDir,
-        releaseDir: testOutputDir,
-        outputDir: testOutputDir,
-        tmpDir: testOutputDir,
-        skipPackaging: true,
-      });
-
-      expect(qualResult.valid).toBe(true);
-      expect(fs.existsSync(qualResult.reportPath)).toBe(true);
-
-      const report = qualResult.report;
-      expect(report.schemaVersion).toBe("1.0.0");
-      expect(report.releaseVersion).toBe("1.0.0");
-      expect(report.overallStatus).toBe("passed");
-      expect(report.totalLanes).toBe(6);
-      expect(report.passedLanes).toBe(6);
-      expect(report.failedLanes).toBe(0);
-
-      // Verify all 3 harnesses are covered across the qualification lanes
-      expect(report.harnessCoverage["claude-code"]).toBe(true);
-      expect(report.harnessCoverage["codex-cli"]).toBe(true);
-      expect(report.harnessCoverage.omp).toBe(true);
-
-      // Verify each lane's integrity
-      expect(report.lanes).toHaveLength(6);
-      for (const lane of report.lanes) {
-        expect(lane.status).toBe("passed");
-        expect(lane.checks.every((c) => c.passed)).toBe(true);
-        expect(lane.artifacts.releaseTarball).toBeDefined();
-        expect(lane.artifacts.sha256).toMatch(/^[a-f0-9]{64}$/);
-      }
-    });
-
-    it("detects and flags failure when an artifact is missing", async () => {
-      const emptyDir = path.join(testOutputDir, "empty-release");
-      fs.mkdirSync(emptyDir, { recursive: true });
-
-      const linuxConfig = QUALIFICATION_LANE_CONFIGS[0];
-      const result = await qualifyLane(linuxConfig, {
-        rootDir,
-        releaseDir: emptyDir,
-        tmpDir: testOutputDir,
-      });
-
-      expect(result.status).toBe("failed");
-      const cleanInstallCheck = result.checks.find((c) => c.name === "clean_install");
-      expect(cleanInstallCheck?.passed).toBe(false);
-      expect(cleanInstallCheck?.error).toContain("Release candidate tarball not found");
-    });
-  });
+    expect(result.passed).toBe(true);
+    expect(result.status).toBe("QUALIFIED");
+    expect(result.totalLanes).toBe(1);
+    expect(result.passedLanes).toBe(1);
+    const lane = result.lanes[0];
+    expect(lane.host.lane).toBe(hostLane);
+    expect(lane.release.commitSha).toMatch(/^[0-9a-f]{40}$/i);
+    expect(lane.release.assetSha256).toMatch(/^[0-9a-f]{64}$/i);
+    expect(lane.release.manifestSha256).toMatch(/^[0-9a-f]{64}$/i);
+    expect(lane.checks.artifactDigest).toBe(true);
+    expect(lane.checks.packagedCli.initDryRun).toBe(true);
+    expect(lane.checks.daemon.authenticatedStatus).toBe(true);
+    expect(lane.checks.daemon.diagnostics).toBe(true);
+    expect(lane.checks.mcp.catalogRefresh).toBe(true);
+    expect(lane.checks.mcp.toolInvocation).toBe(true);
+    expect(lane.checks.cloud.live).toBe(true);
+    expect(lane.checks.cloud.ready).toBe(true);
+    expect(lane.harnesses).toHaveLength(3);
+    for (const harness of lane.harnesses) {
+      expect(["ready", "unavailable"]).toContain(harness.status);
+      expect(harness.status === "ready").toBe(harness.qualified);
+    }
+    expect(fs.existsSync(path.join(outputDir, `${hostLane}.json`))).toBe(true);
+  }, 60_000);
 });

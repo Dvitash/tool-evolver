@@ -3,6 +3,32 @@ import type { CapabilityEnvelope } from "@tool-evolver/contracts";
 import type { OpportunityDetection } from "../../../src/evolution/opportunity/types.js";
 import type { TenantContext } from "../../../src/tenant.js";
 
+interface LegacyCapabilityOverrides {
+  fs?: Partial<CapabilityEnvelope["fs"]>;
+  net?: Partial<CapabilityEnvelope["net"]> & {
+    denyHosts?: string[];
+    allowInsecure?: boolean;
+    maxResponseBodyBytes?: number;
+  };
+  command?: Partial<CapabilityEnvelope["command"]> & {
+    environmentVariables?: Record<string, string>;
+    denyCommands?: string[];
+  };
+  secret?: {
+    allowedSecretNames?: string[];
+    allowedKeyPrefixes?: string[];
+    denyKeyPrefixes?: string[];
+    denyDirectRead?: boolean;
+    injectAsEnv?: boolean;
+  };
+  secrets?: Partial<CapabilityEnvelope["secrets"]>;
+  limits?: Partial<CapabilityEnvelope["limits"]>;
+}
+
+type MockEnvelopeOverrides = Partial<CapabilityEnvelope> & {
+  capabilities?: LegacyCapabilityOverrides;
+};
+
 export function createMockTenant(overrides: Partial<TenantContext> = {}): TenantContext {
   return {
     accountId: overrides.accountId ?? "acct-test-123",
@@ -83,54 +109,105 @@ export function createMockOpportunity(
   };
 }
 
-export function createMockEnvelope(
-  overrides: Partial<CapabilityEnvelope> = {},
-): CapabilityEnvelope {
+export function createMockEnvelope(overrides: MockEnvelopeOverrides = {}): CapabilityEnvelope {
+  const legacy = overrides.capabilities;
+  const legacySecret =
+    legacy?.secrets ??
+    (legacy?.secret
+      ? {
+          allowedSecretNames: legacy.secret.allowedSecretNames,
+          allowedPrefixes: legacy.secret.allowedKeyPrefixes,
+          denyDirectRead: legacy.secret.denyDirectRead,
+          injectAsEnv: legacy.secret.injectAsEnv,
+        }
+      : undefined);
+  const legacyCommands = legacy?.command?.allowedCommands ?? [];
+  const legacyBinaries = [
+    ...new Set(
+      legacyCommands
+        .map((command) => command.trim().split(/\s+/)[0])
+        .filter((command): command is string => Boolean(command)),
+    ),
+  ];
+
   return {
     envelopeId: overrides.envelopeId ?? `env-${randomUUID().slice(0, 8)}`,
     workspaceId: overrides.workspaceId ?? "ws-test-456",
     version: overrides.version ?? "1.0.0",
     fs: {
-      readPaths: ["."],
-      writePaths: ["."],
-      allowWorkspaceRoot: true,
-      allowTemp: true,
-      denyPaths: [".env", ".git/secrets"],
-      maxFileSizeBytes: 10485760,
-      ...overrides.fs,
+      readPaths: overrides.fs?.readPaths ?? legacy?.fs?.readPaths ?? ["."],
+      writePaths: overrides.fs?.writePaths ?? legacy?.fs?.writePaths ?? ["."],
+      allowWorkspaceRoot:
+        overrides.fs?.allowWorkspaceRoot ?? legacy?.fs?.allowWorkspaceRoot ?? true,
+      allowTemp: overrides.fs?.allowTemp ?? legacy?.fs?.allowTemp ?? true,
+      denyPaths: overrides.fs?.denyPaths ?? legacy?.fs?.denyPaths ?? [".env", ".git/secrets"],
+      maxFileSizeBytes: Math.max(
+        1,
+        overrides.fs?.maxFileSizeBytes ?? legacy?.fs?.maxFileSizeBytes ?? 10_485_760,
+      ),
     },
     net: {
-      allowOutbound: true,
-      allowedDomains: ["api.example.com", "registry.npmjs.org"],
-      allowedHosts: ["api.example.com", "registry.npmjs.org"],
-      allowedPorts: [443, 80],
-      allowedProtocols: ["https"],
-      allowLocalhost: false,
-      denyPrivateRanges: true,
-      ...overrides.net,
+      allowOutbound: overrides.net?.allowOutbound ?? legacy?.net?.allowOutbound ?? !legacy?.net,
+      allowedDomains:
+        overrides.net?.allowedDomains ??
+        legacy?.net?.allowedDomains ??
+        (legacy?.net ? [] : ["api.example.com", "registry.npmjs.org"]),
+      allowedHosts:
+        overrides.net?.allowedHosts ??
+        legacy?.net?.allowedHosts ??
+        (legacy?.net ? [] : ["api.example.com", "registry.npmjs.org"]),
+      allowedPorts:
+        overrides.net?.allowedPorts ?? legacy?.net?.allowedPorts ?? (legacy?.net ? [] : [443, 80]),
+      allowedProtocols:
+        overrides.net?.allowedProtocols ??
+        legacy?.net?.allowedProtocols ??
+        (legacy?.net?.allowInsecure ? ["http", "https"] : ["https"]),
+      allowLocalhost: overrides.net?.allowLocalhost ?? legacy?.net?.allowLocalhost ?? false,
+      denyPrivateRanges: overrides.net?.denyPrivateRanges ?? legacy?.net?.denyPrivateRanges ?? true,
     },
     command: {
-      allowShellExecution: false,
-      allowedCommands: ["git status", "pnpm test", "npm run build"],
-      allowedBinaries: ["git", "pnpm", "npm", "node"],
-      forbiddenPatterns: ["rm -rf /", "mkfs", "> /dev/"],
-      allowEnvPassthrough: ["PATH", "NODE_ENV"],
-      ...overrides.command,
+      allowShellExecution:
+        overrides.command?.allowShellExecution ?? legacy?.command?.allowShellExecution ?? false,
+      allowedCommands: overrides.command?.allowedCommands ??
+        legacy?.command?.allowedCommands ?? ["git status", "pnpm test", "npm run build"],
+      allowedBinaries:
+        overrides.command?.allowedBinaries ??
+        legacy?.command?.allowedBinaries ??
+        (legacy?.command ? legacyBinaries : ["git", "pnpm", "npm", "node"]),
+      forbiddenPatterns: overrides.command?.forbiddenPatterns ??
+        legacy?.command?.forbiddenPatterns ??
+        legacy?.command?.denyCommands ?? ["rm -rf /", "mkfs", "> /dev/"],
+      allowEnvPassthrough:
+        overrides.command?.allowEnvPassthrough ??
+        legacy?.command?.allowEnvPassthrough ??
+        (legacy?.command?.environmentVariables
+          ? Object.keys(legacy.command.environmentVariables)
+          : legacy?.command
+            ? []
+            : ["PATH", "NODE_ENV"]),
     },
     secrets: {
-      allowedSecretNames: ["API_KEY", "NPM_TOKEN"],
-      allowedPrefixes: ["APP_"],
-      denyDirectRead: true,
-      injectAsEnv: true,
-      ...overrides.secrets,
+      allowedSecretNames:
+        overrides.secrets?.allowedSecretNames ??
+        legacySecret?.allowedSecretNames ??
+        (legacySecret ? [] : ["API_KEY", "NPM_TOKEN"]),
+      allowedPrefixes:
+        overrides.secrets?.allowedPrefixes ??
+        legacySecret?.allowedPrefixes ??
+        (legacySecret ? [] : ["APP_"]),
+      denyDirectRead: overrides.secrets?.denyDirectRead ?? legacySecret?.denyDirectRead ?? true,
+      injectAsEnv: overrides.secrets?.injectAsEnv ?? legacySecret?.injectAsEnv ?? true,
     },
     limits: {
-      maxConcurrentExecutions: 4,
-      maxCpuUsagePercent: 100,
-      maxMemoryMb: 256,
-      maxExecutionTimeMs: 60000,
-      maxOutputSizeBytes: 2097152,
-      ...overrides.limits,
+      maxConcurrentExecutions:
+        overrides.limits?.maxConcurrentExecutions ?? legacy?.limits?.maxConcurrentExecutions ?? 4,
+      maxCpuUsagePercent:
+        overrides.limits?.maxCpuUsagePercent ?? legacy?.limits?.maxCpuUsagePercent ?? 100,
+      maxMemoryMb: overrides.limits?.maxMemoryMb ?? legacy?.limits?.maxMemoryMb ?? 256,
+      maxExecutionTimeMs:
+        overrides.limits?.maxExecutionTimeMs ?? legacy?.limits?.maxExecutionTimeMs ?? 60_000,
+      maxOutputSizeBytes:
+        overrides.limits?.maxOutputSizeBytes ?? legacy?.limits?.maxOutputSizeBytes ?? 2_097_152,
     },
     isFrozen: overrides.isFrozen ?? false,
     createdAt: overrides.createdAt ?? new Date().toISOString(),

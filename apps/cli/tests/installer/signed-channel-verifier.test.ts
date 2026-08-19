@@ -2,7 +2,6 @@ import crypto from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   type ChannelMetadata,
-  DEFAULT_RELEASE_PUBLIC_KEY,
   type ManifestAsset,
   type SignedManifest,
   canonicalJson,
@@ -15,13 +14,17 @@ import {
   verifyManifest,
 } from "../../src/installer/channel-verifier.js";
 
-// Deterministic test Ed25519 keypair
+// Test-only key material is generated at runtime and is never a production trust root.
+const generatedTestKeyPair = crypto.generateKeyPairSync("ed25519");
 const TEST_KEYPAIR = {
-  keyId: "test-release-key-v1",
-  publicKeyHex: "a4b9318ac386c0e21c30aba1e211c54883ceb53a39689980f2e27387c6c5ea95",
-  privateKeyPkcs8Pem:
-    // secret-scanner:ignore gitleaks:allow
-    "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIKHrfxWS03wRJJBHc6iyHjaoz93NxyMnlkCPd0XkQJcC\n-----END PRIVATE KEY-----\n",
+  keyId: "test-only-runtime-key",
+  publicKeyHex: generatedTestKeyPair.publicKey
+    .export({ type: "spki", format: "der" })
+    .subarray(-32)
+    .toString("hex"),
+  privateKeyPkcs8Pem: generatedTestKeyPair.privateKey
+    .export({ type: "pkcs8", format: "pem" })
+    .toString(),
 };
 
 function signPayload(payload: unknown, privateKeyPem = TEST_KEYPAIR.privateKeyPkcs8Pem): string {

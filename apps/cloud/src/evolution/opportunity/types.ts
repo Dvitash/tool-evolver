@@ -211,6 +211,7 @@ export interface OpportunityClassification {
   inferredInputs?: OpportunityInferredInput[];
   candidateOutputSchema?: Record<string, unknown>;
   suggestedToolName?: string;
+  commandProfiles?: string[];
   provenance?: Record<string, unknown>;
 }
 

@@ -17,14 +17,16 @@ describe("E2E - Autonomous Evolution Happy Path", () => {
   it("completes full autonomous tool lifecycle from repeated sessions to native & meta invocation", async () => {
     const result = await runHappyPathScenario(env);
 
-    expect(result.success).toBe(true);
-    expect(result.candidateValidated).toBe(true);
-    expect(result.candidateReplayed).toBe(true);
-    expect(result.candidateEvaluated).toBe(true);
-    expect(result.artifactPublished).toBe(true);
-    expect(result.localActivated).toBe(true);
-    expect(result.nativeInvocationSuccess).toBe(true);
-    expect(result.metaToolInvocationSuccess).toBe(true);
+    expect(result).toMatchObject({
+      success: true,
+      candidateValidated: true,
+      candidateReplayed: true,
+      candidateEvaluated: true,
+      artifactPublished: true,
+      localActivated: true,
+      nativeInvocationSuccess: true,
+      metaToolInvocationSuccess: true,
+    });
     expect(result.toolName).toBeTruthy();
 
     // Verify trace assertions recorded cleanly

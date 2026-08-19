@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+/** Runtime deployment environment. */
+export const EnvironmentSchema = z
+  .enum(["development", "test", "staging", "production"])
+  .default("development");
+export type CloudEnvironment = z.infer<typeof EnvironmentSchema>;
+
 /**
  * Log levels supported by the cloud service.
  */
@@ -73,6 +79,7 @@ export const AuthConfigSchema = z.object({
   issuer: z.string().default("tool-evolver-cloud"),
   audience: z.string().default("tool-evolver-client"),
   tokenTtlSeconds: z.coerce.number().int().positive().default(86400),
+  allowDevAuth: z.boolean().default(false),
 });
 export type AuthConfig = z.infer<typeof AuthConfigSchema>;
 
@@ -85,27 +92,47 @@ export const ServerConfigSchema = z.object({
   logLevel: LogLevelSchema,
   bodyLimitBytes: z.coerce.number().int().positive().default(10485760), // 10MB
   requestTimeoutMs: z.coerce.number().int().positive().default(30000),
-  corsOrigins: z.array(z.string()).default(["*"]),
+  corsOrigins: z.array(z.string()).default(["http://127.0.0.1:9400", "http://localhost:9400"]),
 });
 export type ServerConfig = z.infer<typeof ServerConfigSchema>;
+
+/** Model provider used by the structured inference gateway. */
+export const ModelProviderSchema = z.enum(["disabled", "openai-compatible"]).default("disabled");
+export type ModelProviderKind = z.infer<typeof ModelProviderSchema>;
+
+export const ModelConfigSchema = z.object({
+  provider: ModelProviderSchema,
+  providerId: z.string().min(1).default("primary"),
+  baseUrl: z.string().url().optional(),
+  apiKey: z.string().optional(),
+  organizationId: z.string().optional(),
+  model: z.string().min(1).default("gpt-4o-mini"),
+  timeoutMs: z.coerce.number().int().positive().default(30000),
+  allowDeterministicFallback: z.boolean().default(true),
+});
+export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 
 /**
  * Comprehensive Cloud Configuration schema.
  */
 export const CloudConfigSchema = z.object({
+  environment: EnvironmentSchema,
   database: DatabaseConfigSchema,
   storage: StorageConfigSchema,
   queue: QueueConfigSchema,
   auth: AuthConfigSchema,
+  models: ModelConfigSchema.default({}),
   server: ServerConfigSchema,
 });
 export type CloudConfig = z.infer<typeof CloudConfigSchema>;
 export type RawCloudConfig = z.input<typeof CloudConfigSchema>;
 
 export type RedactedCloudConfig = {
+  environment: CloudEnvironment;
   database: Omit<DatabaseConfig, "password"> & { password: string };
   storage: Omit<StorageConfig, "secretAccessKey"> & { secretAccessKey: string };
   queue: QueueConfig;
+  models: Omit<ModelConfig, "apiKey"> & { apiKey?: string };
   auth: Omit<AuthConfig, "jwtSecret" | "deviceTokenSecret"> & {
     jwtSecret: string;
     deviceTokenSecret: string;
@@ -133,6 +160,7 @@ export function redactDatabaseUrl(url: string): string {
  */
 export function redactConfig(config: CloudConfig): RedactedCloudConfig {
   return {
+    environment: config.environment,
     database: {
       ...config.database,
       url: redactDatabaseUrl(config.database.url),
@@ -145,6 +173,10 @@ export function redactConfig(config: CloudConfig): RedactedCloudConfig {
     queue: {
       ...config.queue,
     },
+    models: {
+      ...config.models,
+      apiKey: config.models.apiKey ? "[REDACTED]" : undefined,
+    },
     auth: {
       ...config.auth,
       jwtSecret: "[REDACTED]",
@@ -156,14 +188,65 @@ export function redactConfig(config: CloudConfig): RedactedCloudConfig {
   };
 }
 
+const DEFAULT_JWT_SECRET = "dev-jwt-secret-min-16-characters-long";
+const DEFAULT_DEVICE_SECRET = "dev-device-token-secret-16-chars-long";
+
+/**
+ * Reject configurations that would expose development trust shortcuts or
+ * ephemeral infrastructure in staging/production.
+ */
+export function assertSecureCloudConfig(config: CloudConfig): void {
+  if (config.environment !== "staging" && config.environment !== "production") {
+    return;
+  }
+
+  const violations: string[] = [];
+  if (config.auth.allowDevAuth) violations.push("development authentication is enabled");
+  if (config.auth.jwtSecret === DEFAULT_JWT_SECRET) violations.push("default JWT secret is in use");
+  if (config.auth.deviceTokenSecret === DEFAULT_DEVICE_SECRET) {
+    violations.push("default device-token secret is in use");
+  }
+  if (config.server.corsOrigins.includes("*")) violations.push("wildcard CORS is enabled");
+  if (config.storage.provider === "memory") violations.push("memory object storage is configured");
+  if (config.queue.provider === "memory") violations.push("memory queue is configured");
+  if (config.database.url.startsWith("memory://")) violations.push("memory database is configured");
+  if (config.models.provider === "disabled") {
+    violations.push("structured inference provider is disabled");
+  }
+  if (config.models.provider === "openai-compatible" && !config.models.baseUrl) {
+    violations.push("structured inference base URL is missing");
+  }
+  if (config.models.allowDeterministicFallback) {
+    violations.push("deterministic synthesis fallback is enabled");
+  }
+  if (
+    config.storage.provider === "minio" &&
+    config.storage.accessKeyId === "minioadmin" &&
+    config.storage.secretAccessKey === "minioadmin"
+  ) {
+    violations.push("default MinIO credentials are in use");
+  }
+
+  if (violations.length > 0) {
+    throw new Error(`Unsafe ${config.environment} cloud configuration: ${violations.join("; ")}`);
+  }
+}
+
 /**
  * Parse environment variables and apply configuration precedence:
  * Default < Environment Variables < Explicit Overrides.
  */
 export function loadConfig(overrides?: Partial<RawCloudConfig>): CloudConfig {
   const env = process.env;
+  const environment = EnvironmentSchema.parse(
+    env.TOOL_EVOLVER_ENV ?? env.NODE_ENV ?? "development",
+  );
+  const allowDevAuth = env.AUTH_ALLOW_DEV_AUTH
+    ? env.AUTH_ALLOW_DEV_AUTH === "true" || env.AUTH_ALLOW_DEV_AUTH === "1"
+    : environment === "development" || environment === "test";
 
   const rawFromEnv: RawCloudConfig = {
+    environment,
     database: {
       url: env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/tool_evolver",
       host: env.DB_HOST ?? "localhost",
@@ -202,12 +285,26 @@ export function loadConfig(overrides?: Partial<RawCloudConfig>): CloudConfig {
         : 3,
       backoffBaseMs: env.QUEUE_BACKOFF_BASE_MS ? Number(env.QUEUE_BACKOFF_BASE_MS) : 1000,
     },
+    models: {
+      provider: (env.MODEL_PROVIDER as "disabled" | "openai-compatible" | undefined) ?? "disabled",
+      providerId: env.MODEL_PROVIDER_ID ?? "primary",
+      baseUrl: env.MODEL_BASE_URL,
+      apiKey: env.MODEL_API_KEY,
+      organizationId: env.MODEL_ORGANIZATION_ID,
+      model: env.MODEL_ID ?? "gpt-4o-mini",
+      timeoutMs: env.MODEL_TIMEOUT_MS ? Number(env.MODEL_TIMEOUT_MS) : 30000,
+      allowDeterministicFallback: env.MODEL_ALLOW_DETERMINISTIC_FALLBACK
+        ? env.MODEL_ALLOW_DETERMINISTIC_FALLBACK === "true" ||
+          env.MODEL_ALLOW_DETERMINISTIC_FALLBACK === "1"
+        : environment === "development" || environment === "test",
+    },
     auth: {
       jwtSecret: env.AUTH_JWT_SECRET ?? "dev-jwt-secret-min-16-characters-long",
       deviceTokenSecret: env.AUTH_DEVICE_TOKEN_SECRET ?? "dev-device-token-secret-16-chars-long",
       issuer: env.AUTH_ISSUER ?? "tool-evolver-cloud",
       audience: env.AUTH_AUDIENCE ?? "tool-evolver-client",
       tokenTtlSeconds: env.AUTH_TOKEN_TTL_SECONDS ? Number(env.AUTH_TOKEN_TTL_SECONDS) : 86400,
+      allowDevAuth,
     },
     server: {
       host: env.HOST ?? "0.0.0.0",
@@ -215,18 +312,24 @@ export function loadConfig(overrides?: Partial<RawCloudConfig>): CloudConfig {
       logLevel: (env.LOG_LEVEL as LogLevel) ?? "info",
       bodyLimitBytes: env.BODY_LIMIT_BYTES ? Number(env.BODY_LIMIT_BYTES) : 10485760,
       requestTimeoutMs: env.REQUEST_TIMEOUT_MS ? Number(env.REQUEST_TIMEOUT_MS) : 30000,
-      corsOrigins: env.CORS_ORIGINS ? env.CORS_ORIGINS.split(",").map((s) => s.trim()) : ["*"],
+      corsOrigins: env.CORS_ORIGINS
+        ? env.CORS_ORIGINS.split(",").map((s) => s.trim())
+        : ["http://127.0.0.1:9400", "http://localhost:9400"],
     },
   };
 
   // Merge overrides
   const merged: RawCloudConfig = {
+    environment: overrides?.environment ?? rawFromEnv.environment,
     database: { ...rawFromEnv.database, ...overrides?.database },
     storage: { ...rawFromEnv.storage, ...overrides?.storage },
     queue: { ...rawFromEnv.queue, ...overrides?.queue },
+    models: { ...rawFromEnv.models, ...overrides?.models },
     auth: { ...rawFromEnv.auth, ...overrides?.auth },
     server: { ...rawFromEnv.server, ...overrides?.server },
   };
 
-  return CloudConfigSchema.parse(merged);
+  const parsed = CloudConfigSchema.parse(merged);
+  assertSecureCloudConfig(parsed);
+  return parsed;
 }

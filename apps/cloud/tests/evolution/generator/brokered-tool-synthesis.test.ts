@@ -186,7 +186,7 @@ describe("Brokered Tool Synthesis [REM-010]", () => {
     expect(genResult.candidate.state).toBe("synthesized");
 
     const sourceCode = genResult.candidate.sourceCode!;
-    expect(sourceCode).toContain("broker.secret.getSecretRef");
+    expect(sourceCode).toContain("broker.secret.createReference");
     expect(sourceCode).toContain("broker.net.fetch");
     expect(sourceCode).not.toContain(".secretValue");
     expect(sourceCode).not.toContain(".value");
@@ -272,7 +272,7 @@ describe("Brokered Tool Synthesis [REM-010]", () => {
     expect(genResult.status).toBe("synthesized");
     const sourceCode = genResult.candidate.sourceCode!;
     expect(sourceCode).toContain("broker.cmd.exec");
-    expect(sourceCode).toContain("broker.secret.getSecretRef");
+    expect(sourceCode).toContain("broker.secret.createReference");
 
     // Capabilities must forbid shell execution
     expect(genResult.candidate.requiredCapabilities.command.allowShellExecution).toBe(false);

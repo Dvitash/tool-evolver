@@ -280,6 +280,8 @@ jobs:
   release-verification:
     name: Release Artifact Verification
     runs-on: ubuntu-latest
+    env:
+      TOOL_EVOLVER_RELEASE_TEST_ONLY: "1"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

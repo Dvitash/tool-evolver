@@ -222,7 +222,6 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     },
   ];
 
-  // Ingest sessions into cloud observation repository
   await env.ingestSessionEvents(session1Events);
   await env.ingestSessionEvents(session2Events);
   await env.ingestSessionEvents(session3Events);
@@ -235,8 +234,6 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
   );
 
   const allEvents = [...session1Events, ...session2Events, ...session3Events];
-
-  // 2. Trigger Opportunity Detection across ingested episodes
   const oppResult = await env.cloudService.opportunityService.detectOpportunities({
     accountId: env.tenant.accountId,
     workspaceId: env.tenant.workspaceId,
@@ -287,7 +284,6 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     { category: "functional", evidence: { oppId: opp.id, title: opp.classification.title } },
   );
 
-  // 3. Trigger Candidate Generation
   const candidateResult = await env.cloudService.candidateGenerationService.generateCandidate(
     env.tenant,
     opp,
@@ -300,9 +296,7 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     description: "Optimized tool for rapid git status inspection.",
     parameters: {
       type: "object" as const,
-      properties: {
-        command: { type: "string", description: "Command argument" },
-      },
+      properties: {},
       required: [],
       additionalProperties: false,
     },
@@ -381,7 +375,6 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     createdAt: nowIso(),
   };
 
-  // Ensure candidate proposedTool digest matches canonical hash
   const { digest: _, ...mWithoutDigest } = candidate.proposedTool;
   candidate.proposedTool.digest = hashCanonicalContent(mWithoutDigest);
 
@@ -395,7 +388,6 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     { category: "functional", evidence: { candidateId: candidate.id, toolName } },
   );
 
-  // 4. Candidate Validation
   const validationResult = await env.cloudService.candidateValidationService.validateCandidate(
     candidate,
     { skipLlmTestSynthesis: true },
@@ -428,7 +420,6 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     { category: "functional", evidence: { typecheckPassed: validationResult.typecheckPassed } },
   );
 
-  // 5. Candidate Replay Simulation
   const replayResult = await env.cloudService.historicalReplayService.replayCandidate(env.tenant, {
     candidate,
     evidence: session1Events,
@@ -445,7 +436,6 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     { category: "functional", evidence: { passedCount: replayResult.passedScenarioCount } },
   );
 
-  // 6. Candidate Evaluation Scoring Gates
   const evalResult = await env.cloudService.candidateEvaluationService.evaluateCandidate({
     candidate,
     replayResult,
@@ -460,7 +450,6 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     { category: "functional", evidence: { score: evalResult.overallDecision.score } },
   );
 
-  // 7. Artifact Building and Publishing
   const publishResult = await runWithTenant(env.tenant, async () => {
     return env.cloudService.artifactRegistryService.publishCandidate(candidate, evalResult);
   });
@@ -477,7 +466,6 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     },
   );
 
-  // 8. Rollout Creation
   await runWithTenant(env.tenant, async () => {
     await env.cloudService.rolloutController.createRolloutForPublishedVersion(env.tenant, {
       toolId: candidate.proposedTool.id,
@@ -487,7 +475,6 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     });
   });
 
-  // 9. Local Activation into SQLite and Gateway Registry
   await env.toolRepo.saveManifest(candidate.proposedTool);
   const toolVersion: ToolVersion = {
     toolId: candidate.proposedTool.id,
@@ -573,8 +560,8 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     { category: "functional", evidence: { activatedCount, toolName } },
   );
 
-  // 10. Native Tool Invocation via Local MCP Gateway
-  const nativeOutcome = await env.invokeTool(toolName, { command: "status" });
+  const invocationParameters = { path: "." };
+  const nativeOutcome = await env.invokeTool(toolName, invocationParameters);
   const nativeInvocationSuccess = nativeOutcome.success && !nativeOutcome.isError;
 
   reporter.assertRequirement(
@@ -584,7 +571,6 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     { category: "functional", evidence: { outcome: nativeOutcome.content } },
   );
 
-  // 11. Meta-Tool Invocations (search_tools, get_tool_schema, invoke_tool)
   const searchOutcome = await env.invokeTool(SYSTEM_META_TOOL_NAMES.SEARCH_TOOLS, {
     query: toolName,
   });
@@ -592,12 +578,12 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     name: toolName,
   });
   const invokeOutcome = await env.invokeTool(SYSTEM_META_TOOL_NAMES.INVOKE_TOOL, {
-    toolId: candidate.proposedTool.id,
     name: toolName,
-    parameters: { command: "git status" },
+    parameters: invocationParameters,
   });
   const metaToolInvocationSuccess =
     searchOutcome.success && schemaOutcome.success && invokeOutcome.success;
+
   reporter.assertRequirement(
     "TE-REQ-010",
     "Meta-tool discovery, schema retrieval, and dynamic dispatch",
@@ -608,9 +594,11 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
         searchSuccess: searchOutcome.success,
         schemaSuccess: schemaOutcome.success,
         invokeSuccess: invokeOutcome.success,
+        invokeOutcome: invokeOutcome.content,
       },
     },
   );
+
   const overallSuccess =
     candidateValidated &&
     candidateReplayed &&

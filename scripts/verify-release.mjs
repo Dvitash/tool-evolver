@@ -24,6 +24,7 @@ import {
   fileSha256,
   packageRelease,
 } from "./package-release.mjs";
+import { loadTrustedReleaseKeysFromEnv, verifyReleasePayloadSignature } from "./release-trust.mjs";
 
 export const REQUIRED_USER_DOCS = [
   "getting-started.md",
@@ -57,6 +58,7 @@ export const REQUIRED_RELEASE_DOCS = [
   "compatibility-matrix.md",
   "release-evidence.md",
   "rollback-procedure.md",
+  "signing-trust.md",
 ];
 
 /**
@@ -83,6 +85,7 @@ export function verifyReleaseFiles(releaseDir) {
     "channels.json",
     "release-evidence.json",
     "RELEASE-EVIDENCE.md",
+    "release-trust.json",
   ];
 
   for (const f of requiredFiles) {
@@ -124,192 +127,142 @@ export function verifyReleaseFiles(releaseDir) {
  * @param {string} releaseDir
  * @returns {Array<{ rule: string, file: string, message: string }>}
  */
-export function verifyReleaseEvidence(releaseDir) {
-  /** @type {Array<{ rule: string, file: string, message: string }>} */
+export function verifyReleaseEvidence(releaseDir, options = {}) {
   const violations = [];
-
   const evidenceJsonPath = path.join(releaseDir, "release-evidence.json");
   const evidenceMdPath = path.join(releaseDir, "RELEASE-EVIDENCE.md");
-
   if (!fs.existsSync(evidenceJsonPath)) {
-    violations.push({
-      rule: "MISSING_EVIDENCE_JSON",
-      file: "release-evidence.json",
-      message: "release-evidence.json is missing from release directory.",
-    });
-    return violations;
+    return [
+      {
+        rule: "MISSING_EVIDENCE_JSON",
+        file: "release-evidence.json",
+        message: "release-evidence.json is missing.",
+      },
+    ];
   }
-
   if (!fs.existsSync(evidenceMdPath)) {
     violations.push({
       rule: "MISSING_EVIDENCE_MD",
       file: "RELEASE-EVIDENCE.md",
-      message: "RELEASE-EVIDENCE.md is missing from release directory.",
+      message: "RELEASE-EVIDENCE.md is missing.",
     });
   }
 
   try {
     const evidence = JSON.parse(fs.readFileSync(evidenceJsonPath, "utf8"));
-
     if (evidence.release !== RELEASE_VERSION) {
       violations.push({
         rule: "INVALID_EVIDENCE_VERSION",
         file: "release-evidence.json",
-        message: `Evidence release version '${evidence.release}' does not match expected '${RELEASE_VERSION}'.`,
+        message: "Evidence release version mismatch.",
       });
     }
-
-    if (evidence.status !== "VERIFIED") {
+    if (evidence.mode === "test-only" && options.allowTestEvidence !== true) {
+      violations.push({
+        rule: "TEST_ONLY_EVIDENCE",
+        file: "release-evidence.json",
+        message: "Test-only release evidence cannot authorize a production release.",
+      });
+    } else if (evidence.mode !== "test-only" && evidence.status !== "VERIFIED") {
       violations.push({
         rule: "EVIDENCE_NOT_VERIFIED",
         file: "release-evidence.json",
-        message: `Release evidence status is '${evidence.status}' (expected 'VERIFIED').`,
+        message: `Release evidence status is '${evidence.status}'.`,
       });
     }
-
-    if (!Array.isArray(evidence.milestones) || evidence.milestones.length < 21) {
+    if (options.expectedCommitSha && evidence.commitSha !== options.expectedCommitSha) {
+      violations.push({
+        rule: "EVIDENCE_COMMIT_MISMATCH",
+        file: "release-evidence.json",
+        message: `Evidence commit '${evidence.commitSha}' does not match '${options.expectedCommitSha}'.`,
+      });
+    }
+    if (!Array.isArray(evidence.milestones) || evidence.milestones.length !== 21) {
       violations.push({
         rule: "INCOMPLETE_EVIDENCE_MILESTONES",
         file: "release-evidence.json",
-        message: `Evidence milestones count (${evidence.milestones?.length}) is less than expected (21 milestones: #47 and REM-001 through REM-020).`,
+        message: "Release evidence must contain all 21 milestones.",
       });
-    } else {
-      for (const m of evidence.milestones) {
-        if (m.status !== "VERIFIED") {
+    } else if (evidence.mode !== "test-only") {
+      for (const milestone of evidence.milestones) {
+        if (milestone.status !== "VERIFIED") {
           violations.push({
             rule: "UNVERIFIED_MILESTONE",
             file: "release-evidence.json",
-            message: `Milestone ${m.id} (${m.issue}) status is '${m.status}' (expected 'VERIFIED').`,
+            message: `Milestone ${milestone.id} is not verified.`,
           });
         }
-        if (!Array.isArray(m.artifacts) || m.artifacts.length === 0) {
-          violations.push({
-            rule: "EMPTY_MILESTONE_ARTIFACTS",
-            file: "release-evidence.json",
-            message: `Milestone ${m.id} has no implementation artifacts mapped.`,
-          });
-        }
-        if (!Array.isArray(m.verificationSuites) || m.verificationSuites.length === 0) {
-          violations.push({
-            rule: "EMPTY_MILESTONE_SUITES",
-            file: "release-evidence.json",
-            message: `Milestone ${m.id} has no verification test suites mapped.`,
-          });
+        for (const suite of milestone.verificationSuites || []) {
+          if (suite.status !== "PASSED" || !suite.runId) {
+            violations.push({
+              rule: "UNVERIFIED_SUITE",
+              file: "release-evidence.json",
+              message: `Suite ${suite.path} lacks a passing CI run binding.`,
+            });
+          }
         }
       }
     }
-
-    if (
-      !evidence.qualification ||
-      !evidence.qualification.platforms ||
-      !evidence.qualification.harnesses
-    ) {
+    if (!evidence.releaseIdentity || !evidence.verificationSource) {
       violations.push({
-        rule: "MISSING_EVIDENCE_QUALIFICATION",
+        rule: "MISSING_EVIDENCE_PROVENANCE",
         file: "release-evidence.json",
-        message: "Release evidence is missing platform or harness qualification data.",
+        message: "Release evidence lacks build/workflow provenance.",
       });
     }
-  } catch (err) {
+  } catch (error) {
     violations.push({
       rule: "CORRUPT_EVIDENCE_JSON",
       file: "release-evidence.json",
-      message: `Failed to parse release-evidence.json: ${err.message}`,
+      message: `Failed to parse release evidence: ${error.message}`,
     });
   }
 
   if (fs.existsSync(evidenceMdPath)) {
-    const mdContent = fs.readFileSync(evidenceMdPath, "utf8");
-    if (
-      !mdContent.includes("REM-001") ||
-      !mdContent.includes("REM-020") ||
-      !mdContent.includes("#47")
-    ) {
+    const md = fs.readFileSync(evidenceMdPath, "utf8");
+    if (!md.includes("REM-001") || !md.includes("REM-020") || !md.includes("#47")) {
       violations.push({
         rule: "INCOMPLETE_EVIDENCE_MD",
         file: "RELEASE-EVIDENCE.md",
-        message: "RELEASE-EVIDENCE.md does not contain references to all REM milestones.",
+        message: "Evidence markdown is incomplete.",
       });
     }
   }
-
   return violations;
 }
 
 /**
- * Validates Ed25519 signature on manifest.json.
- * @param {object} manifest
- * @returns {Array<{ rule: string, message: string }>}
+ * Validates the manifest signature against an independently pinned trust root.
  */
-export function verifyManifestSignatures(manifest) {
-  /** @type {Array<{ rule: string, message: string }>} */
+export function verifyManifestSignatures(manifest, options = {}) {
   const violations = [];
-
-  if (
-    !manifest ||
-    !manifest.signatures ||
-    !Array.isArray(manifest.signatures) ||
-    manifest.signatures.length === 0
-  ) {
-    violations.push({
-      rule: "MISSING_SIGNATURE",
-      message: "Release manifest lacks signatures array or signature entry.",
-    });
-    return violations;
+  if (!Array.isArray(manifest?.signatures) || manifest.signatures.length === 0) {
+    return [{ rule: "MISSING_SIGNATURE", message: "Release manifest is unsigned." }];
   }
-
-  const sigEntry = manifest.signatures[0];
-  if (!sigEntry.publicKeyPem && !sigEntry.publicKey) {
-    violations.push({
-      rule: "INVALID_SIGNATURE_KEY",
-      message: "Signature entry does not provide a valid public key.",
-    });
-    return violations;
-  }
-
-  if (sigEntry.algorithm !== "Ed25519") {
-    violations.push({
-      rule: "INVALID_SIGNATURE_ALGORITHM",
-      message: `Unsupported signature algorithm: ${sigEntry.algorithm} (expected Ed25519).`,
-    });
-  }
-
-  const payloadToVerify = {
+  const signature = manifest.signatures[0];
+  const payload = {
     schemaVersion: manifest.schemaVersion,
     version: manifest.version,
     releaseDate: manifest.releaseDate,
+    releaseIdentity: manifest.releaseIdentity,
     packages: manifest.packages,
     assets: manifest.assets,
+    ...(manifest.runtimes ? { runtimes: manifest.runtimes } : {}),
+    evidence: manifest.evidence,
   };
-
-  const canonicalPayload = canonicalJson(payloadToVerify);
-  const dataBuffer = Buffer.from(canonicalPayload, "utf8");
-  const signatureBuffer = Buffer.from(sigEntry.signature, "hex");
-
-  try {
-    let pubKey;
-    if (sigEntry.publicKeyPem) {
-      pubKey = crypto.createPublicKey(sigEntry.publicKeyPem);
-    } else {
-      const derHeader = Buffer.from("302a300506032b6570032100", "hex");
-      const keyDer = Buffer.concat([derHeader, Buffer.from(sigEntry.publicKey, "hex")]);
-      pubKey = crypto.createPublicKey({ key: keyDer, format: "der", type: "spki" });
-    }
-
-    const isValid = crypto.verify(null, dataBuffer, pubKey, signatureBuffer);
-    if (!isValid) {
-      violations.push({
-        rule: "SIGNATURE_VERIFICATION_FAILED",
-        message: "Ed25519 signature verification failed for manifest payload.",
-      });
-    }
-  } catch (err) {
+  const result = verifyReleasePayloadSignature(payload, signature, options.trustedKeys);
+  if (!result.valid) {
+    const rule =
+      result.reason === "unknown_key"
+        ? "UNKNOWN_SIGNING_KEY"
+        : result.reason === "revoked_key"
+          ? "REVOKED_SIGNING_KEY"
+          : "SIGNATURE_VERIFICATION_FAILED";
     violations.push({
-      rule: "SIGNATURE_VERIFICATION_ERROR",
-      message: `Error verifying Ed25519 signature: ${err.message}`,
+      rule,
+      message: `Release manifest signature verification failed: ${result.reason}.`,
     });
   }
-
   return violations;
 }
 
@@ -470,60 +423,90 @@ export function verifySbom(releaseDir) {
  * @param {string} releaseDir
  * @returns {Array<{ rule: string, file: string, message: string }>}
  */
-export function verifyChannelMetadata(releaseDir) {
-  /** @type {Array<{ rule: string, file: string, message: string }>} */
+export function verifyChannelMetadata(releaseDir, options = {}) {
   const violations = [];
   const channelsPath = path.join(releaseDir, "channels.json");
-
   if (!fs.existsSync(channelsPath)) {
-    violations.push({
-      rule: "MISSING_CHANNELS",
-      file: "channels.json",
-      message: "channels.json is missing.",
-    });
-    return violations;
+    return [
+      { rule: "MISSING_CHANNELS", file: "channels.json", message: "channels.json is missing." },
+    ];
   }
-
   try {
     const channels = JSON.parse(fs.readFileSync(channelsPath, "utf8"));
-
-    if (!channels.channels || !channels.channels.stable) {
-      violations.push({
-        rule: "MISSING_STABLE_CHANNEL",
-        file: "channels.json",
-        message: "channels.json missing 'channels.stable' configuration.",
-      });
-    } else if (channels.channels.stable.version !== RELEASE_VERSION) {
+    const stable = channels.channels?.stable;
+    if (!stable || stable.version !== RELEASE_VERSION) {
       violations.push({
         rule: "CHANNEL_VERSION_MISMATCH",
         file: "channels.json",
-        message: `Stable channel version (${channels.channels.stable.version}) does not match release version (${RELEASE_VERSION}).`,
+        message: "Stable release channel is missing or mismatched.",
       });
     }
-
     if (!channels.minSupportedVersion) {
       violations.push({
         rule: "MISSING_MIN_SUPPORTED_VERSION",
         file: "channels.json",
-        message: "channels.json missing 'minSupportedVersion'.",
+        message: "Channel metadata lacks minSupportedVersion.",
       });
     }
-
-    if (!channels.rollbackReferences || !channels.rollbackReferences.targetVersion) {
+    if (!channels.rollbackReferences?.targetVersion) {
       violations.push({
         rule: "MISSING_ROLLBACK_REFERENCES",
         file: "channels.json",
-        message: "channels.json missing valid 'rollbackReferences'.",
+        message: "Channel metadata lacks rollback references.",
       });
     }
-  } catch (err) {
+    if (
+      options.expectedCommitSha &&
+      channels.releaseIdentity?.commitSha !== options.expectedCommitSha
+    ) {
+      violations.push({
+        rule: "CHANNEL_COMMIT_MISMATCH",
+        file: "channels.json",
+        message: "Channel metadata is bound to a different commit.",
+      });
+    }
+    if (
+      options.expectedManifestDigest &&
+      stable?.manifestDigest !== options.expectedManifestDigest
+    ) {
+      violations.push({
+        rule: "CHANNEL_MANIFEST_DIGEST_MISMATCH",
+        file: "channels.json",
+        message: "Channel metadata references a different manifest digest.",
+      });
+    }
+    if (!Array.isArray(channels.signatures) || channels.signatures.length === 0) {
+      violations.push({
+        rule: "MISSING_CHANNEL_SIGNATURE",
+        file: "channels.json",
+        message: "Channel metadata is unsigned.",
+      });
+    } else {
+      const payload = { ...channels };
+      delete payload.signatures;
+      const verified = verifyReleasePayloadSignature(
+        payload,
+        channels.signatures[0],
+        options.trustedKeys,
+      );
+      if (!verified.valid) {
+        violations.push({
+          rule:
+            verified.reason === "unknown_key"
+              ? "UNKNOWN_CHANNEL_SIGNING_KEY"
+              : "CHANNEL_SIGNATURE_VERIFICATION_FAILED",
+          file: "channels.json",
+          message: `Channel signature failed: ${verified.reason}.`,
+        });
+      }
+    }
+  } catch (error) {
     violations.push({
       rule: "INVALID_CHANNELS_JSON",
       file: "channels.json",
-      message: `Failed to parse channels.json: ${err.message}`,
+      message: `Failed to parse channels.json: ${error.message}`,
     });
   }
-
   return violations;
 }
 
@@ -673,6 +656,15 @@ export function verifyDocumentation(rootDir = process.cwd()) {
  * @returns {{ valid: boolean, violations: Array<{ rule: string, file?: string, message: string }>, stats: object }}
  */
 export function verifyRelease(options = {}) {
+  let trustedKeys = options.trustedKeys;
+  const allowTestEvidence = options.allowTestEvidence === true;
+  if (!trustedKeys && !allowTestEvidence) {
+    try {
+      trustedKeys = loadTrustedReleaseKeysFromEnv(options.env || process.env);
+    } catch {
+      trustedKeys = undefined;
+    }
+  }
   const rootDir = options.rootDir || process.cwd();
   const releaseDir =
     options.releaseDir || path.resolve(rootDir, `dist/release/v${RELEASE_VERSION}`);
@@ -701,9 +693,35 @@ export function verifyRelease(options = {}) {
     }
   }
 
+  if (allowTestEvidence && !trustedKeys) {
+    const trustPath = path.join(releaseDir, "release-trust.json");
+    if (fs.existsSync(trustPath)) {
+      const trust = JSON.parse(fs.readFileSync(trustPath, "utf8"));
+      if (trust.trustDomain === "test-only" && trust.signingKey?.keyId) {
+        trustedKeys = { [trust.signingKey.keyId]: trust.signingKey };
+      }
+    }
+  }
+  if (!trustedKeys) {
+    violations.push({
+      rule: "NO_TRUSTED_RELEASE_KEYS",
+      message: "No independent trusted release public key is configured.",
+    });
+  }
+
   if (manifest) {
+    if (
+      options.expectedCommitSha &&
+      manifest.releaseIdentity?.commitSha !== options.expectedCommitSha
+    ) {
+      violations.push({
+        rule: "MANIFEST_COMMIT_MISMATCH",
+        file: "manifest.json",
+        message: "Manifest commit binding does not match the expected release commit.",
+      });
+    }
     // 2. Signatures
-    const sigViolations = verifyManifestSignatures(manifest);
+    const sigViolations = verifyManifestSignatures(manifest, { trustedKeys });
     violations.push(...sigViolations);
 
     // 3. Asset digests
@@ -720,14 +738,33 @@ export function verifyRelease(options = {}) {
   violations.push(...sbomViolations);
 
   // 6. Channel metadata verification
-  const channelViolations = verifyChannelMetadata(releaseDir);
+  const manifestDigest = fs.existsSync(manifestPath) ? fileSha256(manifestPath) : undefined;
+  const channelViolations = verifyChannelMetadata(releaseDir, {
+    trustedKeys,
+    expectedCommitSha: options.expectedCommitSha || manifest?.releaseIdentity?.commitSha,
+    expectedManifestDigest: manifestDigest,
+  });
   violations.push(...channelViolations);
 
   // 7. Documentation verification
   const docViolations = verifyDocumentation(rootDir);
-  // 8. Release Evidence verification
-  const evidenceViolations = verifyReleaseEvidence(releaseDir);
+  // 8. Release Evidence verification and signed digest binding
+  const evidenceViolations = verifyReleaseEvidence(releaseDir, {
+    allowTestEvidence,
+    expectedCommitSha: options.expectedCommitSha || manifest?.releaseIdentity?.commitSha,
+  });
   violations.push(...evidenceViolations);
+  const evidencePath = path.join(releaseDir, "release-evidence.json");
+  if (manifest?.evidence?.jsonSha256 && fs.existsSync(evidencePath)) {
+    const actualEvidenceDigest = fileSha256(evidencePath);
+    if (actualEvidenceDigest !== manifest.evidence.jsonSha256) {
+      violations.push({
+        rule: "EVIDENCE_DIGEST_MISMATCH",
+        file: "release-evidence.json",
+        message: "Release evidence does not match the digest signed by the manifest.",
+      });
+    }
+  }
 
   violations.push(...docViolations);
 
@@ -764,7 +801,10 @@ if (
   const rootDir = process.cwd();
   const defaultReleaseDir = path.resolve(rootDir, `dist/release/v${RELEASE_VERSION}`);
   if (!fs.existsSync(path.join(defaultReleaseDir, "manifest.json"))) {
-    packageRelease({ rootDir, outputDir: defaultReleaseDir });
+    console.error(
+      "❌ Release verification failed: release artifacts are missing; verifier will not mint replacements.",
+    );
+    process.exit(1);
   }
   const result = verifyRelease();
   if (!result.valid) {

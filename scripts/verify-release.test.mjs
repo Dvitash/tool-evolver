@@ -4,7 +4,6 @@ import path from "node:path";
 import process from "node:process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  DEFAULT_RELEASE_KEY,
   PLATFORMS,
   RELEASE_VERSION,
   WORKSPACE_PACKAGES,
@@ -94,8 +93,11 @@ describe("Release Packaging & Verification Suite", () => {
 
       expect(packageNames).toHaveLength(15);
       for (const pkg of WORKSPACE_PACKAGES) {
+        const packageJson = JSON.parse(
+          fs.readFileSync(path.join(rootDir, pkg.path, "package.json"), "utf8"),
+        );
         expect(digests[pkg.name]).toBeDefined();
-        expect(digests[pkg.name].version).toBe(RELEASE_VERSION);
+        expect(digests[pkg.name].version).toBe(packageJson.version);
         expect(digests[pkg.name].packageSha256).toMatch(/^[a-f0-9]{64}$/);
       }
     });
@@ -108,14 +110,24 @@ describe("Release Packaging & Verification Suite", () => {
         "linux-x64": { filename: "tool-evolver-v1.0.0-linux-x64.tar.gz", sha256: "a".repeat(64) },
       };
 
-      const manifest = generateSignedManifest(packageDigests, mockAssets);
+      const manifest = generateSignedManifest(packageDigests, mockAssets, { testOnly: true });
 
       expect(manifest.version).toBe(RELEASE_VERSION);
       expect(manifest.signatures).toHaveLength(1);
       expect(manifest.signatures[0].algorithm).toBe("Ed25519");
-      expect(manifest.signatures[0].signature).toMatch(/^[a-f0-9]{128}$/);
+      expect(manifest.signatures[0].signatureHex).toMatch(/^[a-f0-9]{128}$/);
 
-      const violations = verifyManifestSignatures(manifest);
+      const sig = manifest.signatures[0];
+      const violations = verifyManifestSignatures(manifest, {
+        trustedKeys: {
+          [sig.keyId]: {
+            keyId: sig.keyId,
+            publicKeyPem: sig.publicKeyPem,
+            publicKeyHex: sig.publicKeyHex,
+            publicKeyFingerprintSha256: sig.publicKeyFingerprintSha256,
+          },
+        },
+      });
       expect(violations).toHaveLength(0);
     });
 
@@ -125,14 +137,93 @@ describe("Release Packaging & Verification Suite", () => {
         "linux-x64": { filename: "tool-evolver-v1.0.0-linux-x64.tar.gz", sha256: "a".repeat(64) },
       };
 
-      const manifest = generateSignedManifest(packageDigests, mockAssets);
-      // Tamper with payload
+      const manifest = generateSignedManifest(packageDigests, mockAssets, { testOnly: true });
       manifest.version = "2.0.0-unauthorized";
 
-      const violations = verifyManifestSignatures(manifest);
+      const sig = manifest.signatures[0];
+      const violations = verifyManifestSignatures(manifest, {
+        trustedKeys: {
+          [sig.keyId]: {
+            keyId: sig.keyId,
+            publicKeyPem: sig.publicKeyPem,
+            publicKeyHex: sig.publicKeyHex,
+            publicKeyFingerprintSha256: sig.publicKeyFingerprintSha256,
+          },
+        },
+      });
       expect(violations.length).toBeGreaterThan(0);
       expect(violations[0].rule).toBe("SIGNATURE_VERIFICATION_FAILED");
     });
+  });
+
+  describe("Production release trust boundary", () => {
+    it("fails closed without production signing credentials", () => {
+      expect(() =>
+        packageRelease({
+          rootDir,
+          distDir: path.join(tempReleaseDir, "no-credentials"),
+          skipBuild: true,
+          testOnly: false,
+        }),
+      ).toThrow(/private key|required|TOOL_EVOLVER_RELEASE/i);
+    });
+
+    it("rejects asset mutation, changed commit binding, unknown key, missing signature, and stale evidence", () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "release-tamper-"));
+      try {
+        const packaged = packageRelease({ rootDir, distDir: dir, skipBuild: true, testOnly: true });
+        const baseline = () =>
+          verifyRelease({
+            rootDir,
+            releaseDir: dir,
+            allowTestEvidence: true,
+            trustedKeys: packaged.trustedKeys,
+            expectedCommitSha: packaged.releaseIdentity.commitSha,
+          });
+        expect(baseline().valid).toBe(true);
+
+        const assetPath = path.join(dir, PLATFORMS[0].filename);
+        const manifestPath = path.join(dir, "manifest.json");
+        const evidencePath = path.join(dir, "release-evidence.json");
+        const originalAsset = fs.readFileSync(assetPath);
+        const originalManifest = fs.readFileSync(manifestPath);
+        const originalEvidence = fs.readFileSync(evidencePath);
+
+        fs.appendFileSync(assetPath, Buffer.from([0]));
+        expect(baseline().violations.some((v) => v.rule === "ASSET_DIGEST_MISMATCH")).toBe(true);
+        fs.writeFileSync(assetPath, originalAsset);
+
+        let manifest = JSON.parse(originalManifest.toString("utf8"));
+        manifest.releaseIdentity.commitSha = "f".repeat(40);
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+        expect(baseline().valid).toBe(false);
+        fs.writeFileSync(manifestPath, originalManifest);
+
+        manifest = JSON.parse(originalManifest.toString("utf8"));
+        manifest.signatures[0].keyId = "unknown-key";
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+        expect(baseline().violations.some((v) => v.rule === "UNKNOWN_SIGNING_KEY")).toBe(true);
+        fs.writeFileSync(manifestPath, originalManifest);
+
+        manifest = JSON.parse(originalManifest.toString("utf8"));
+        manifest.signatures = [];
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+        expect(baseline().violations.some((v) => v.rule === "MISSING_SIGNATURE")).toBe(true);
+        fs.writeFileSync(manifestPath, originalManifest);
+
+        const evidence = JSON.parse(originalEvidence.toString("utf8"));
+        evidence.commitSha = "e".repeat(40);
+        fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2));
+        const stale = baseline();
+        expect(
+          stale.violations.some(
+            (v) => v.rule === "EVIDENCE_COMMIT_MISMATCH" || v.rule === "EVIDENCE_DIGEST_MISMATCH",
+          ),
+        ).toBe(true);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }, 90_000);
   });
 
   describe("CycloneDX SBOM Generation & Verification", () => {
@@ -162,9 +253,9 @@ describe("Release Packaging & Verification Suite", () => {
 
   describe("Release Channel Metadata", () => {
     it("generates valid channel metadata with stable and rollback definitions", () => {
-      const channels = generateChannelMetadata("test-manifest-sha256");
+      const channels = generateChannelMetadata("test-manifest-sha256", { testOnly: true });
 
-      expect(channels.schemaVersion).toBe("1.0.0");
+      expect(channels.schemaVersion).toBe("2.0.0");
       expect(channels.channels.stable.version).toBe(RELEASE_VERSION);
       expect(channels.channels.stable.manifestDigest).toBe("test-manifest-sha256");
       expect(channels.minSupportedVersion).toBe("0.1.0");
@@ -172,13 +263,23 @@ describe("Release Packaging & Verification Suite", () => {
     });
 
     it("verifies valid channels.json in release directory", () => {
-      const channels = generateChannelMetadata("test-manifest-sha256");
+      const channels = generateChannelMetadata("test-manifest-sha256", { testOnly: true });
       fs.writeFileSync(
         path.join(tempReleaseDir, "channels.json"),
         JSON.stringify(channels, null, 2),
       );
 
-      const violations = verifyChannelMetadata(tempReleaseDir);
+      const signature = channels.signatures[0];
+      const violations = verifyChannelMetadata(tempReleaseDir, {
+        trustedKeys: {
+          [signature.keyId]: {
+            keyId: signature.keyId,
+            publicKeyPem: signature.publicKeyPem,
+            publicKeyHex: signature.publicKeyHex,
+            publicKeyFingerprintSha256: signature.publicKeyFingerprintSha256,
+          },
+        },
+      });
       expect(violations).toHaveLength(0);
     });
   });
@@ -200,7 +301,8 @@ describe("Release Packaging & Verification Suite", () => {
       const result = packageRelease({
         rootDir,
         distDir: tempReleaseDir,
-        skipBuild: true, // already built in baseline
+        skipBuild: true,
+        testOnly: true,
       });
 
       expect(result.success).toBe(true);
@@ -210,6 +312,9 @@ describe("Release Packaging & Verification Suite", () => {
       const verifyResult = verifyRelease({
         rootDir,
         releaseDir: tempReleaseDir,
+        allowTestEvidence: true,
+        trustedKeys: result.trustedKeys,
+        expectedCommitSha: result.releaseIdentity.commitSha,
       });
 
       if (!verifyResult.valid) {
@@ -220,6 +325,6 @@ describe("Release Packaging & Verification Suite", () => {
       expect(verifyResult.violations).toHaveLength(0);
       expect(verifyResult.stats.platformsCount).toBe(5);
       expect(verifyResult.stats.packagesCount).toBe(15);
-    });
+    }, 20_000);
   });
 });

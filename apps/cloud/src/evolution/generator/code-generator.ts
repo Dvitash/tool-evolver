@@ -42,6 +42,7 @@ export class CodeGenerator {
       tenantId?: string;
       inferenceService?: InferenceService;
       workflowEvidence?: string;
+      allowDeterministicFallback?: boolean;
     } = {},
   ): Promise<GeneratedSourceResult> {
     if (plan.targetType === "workflow") {
@@ -51,6 +52,7 @@ export class CodeGenerator {
 
     // 1. Structured Inference with prompt template
     if (options.inferenceService) {
+      const allowFallback = options.allowDeterministicFallback ?? false;
       try {
         const response = await options.inferenceService.infer<Record<string, unknown>, unknown>({
           promptTemplateId: "tool_synthesis",
@@ -75,24 +77,12 @@ export class CodeGenerator {
 
         if (response.output) {
           const parsed = ToolSynthesisOutputSchema.parse(response.output);
-          const needsBroker =
-            plan.capabilities.fs.readPaths.length > 0 ||
-            plan.capabilities.fs.writePaths.length > 0 ||
-            plan.capabilities.net.allowOutbound ||
-            plan.capabilities.command.allowedCommands.length > 0;
-
-          const hasBrokerInCode =
-            parsed.code &&
-            (parsed.code.includes("broker.") ||
-              parsed.code.includes("context.fs") ||
-              parsed.code.includes("context.net") ||
-              parsed.code.includes("context.cmd"));
 
           if (
             parsed.code &&
             parsed.code.includes("defineTool") &&
             parsed.code.includes("export default defineTool") &&
-            (!needsBroker || hasBrokerInCode)
+            this.isBrokerUsageCompatible(plan, parsed.code)
           ) {
             return {
               sourceCode: parsed.code,
@@ -103,7 +93,11 @@ export class CodeGenerator {
           }
 
           const customLogic = parsed.executionBody || parsed.transformationLogic || parsed.code;
-          if (customLogic && !customLogic.includes("defineTool")) {
+          if (
+            customLogic &&
+            !customLogic.includes("defineTool") &&
+            this.isBrokerUsageCompatible(plan, customLogic)
+          ) {
             const zodInputSchemaSource = this.schemaGenerator.generateZodSource(plan.inputSchema);
             const zodOutputSchemaSource = this.schemaGenerator.generateOutputZodSource(
               plan.outputSchema,
@@ -118,12 +112,9 @@ export const OutputSchema = ${zodOutputSchemaSource};
 export type ToolInput = z.infer<typeof InputSchema>;
 export type ToolOutput = z.infer<typeof OutputSchema>;
 
-export default defineTool<ToolInput, ToolOutput>({
-  name: ${JSON.stringify(plan.name)},
-  description: ${JSON.stringify(plan.description)},
-  inputSchema: InputSchema,
-  outputSchema: OutputSchema,
-  handler: async (input: ToolInput, context: ToolContext): Promise<ToolOutput> => {
+export default defineTool<ToolInput, ToolOutput>(
+  async (context: ToolContext<ToolInput>): Promise<ToolOutput> => {
+    const input = context.input;
     const { broker, logger, progress } = context;
     await progress(0, "Starting execution");
     await logger.info("Executing tool", { toolName: ${JSON.stringify(plan.name)} });
@@ -144,7 +135,7 @@ ${customLogic}
       throw new Error(\`[${plan.name}] Execution error: \${errorMessage}\`);
     }
   },
-});
+);
 `;
             return {
               sourceCode,
@@ -154,14 +145,88 @@ ${customLogic}
             };
           }
         }
-      } catch {
-        // Fall back to deterministic code generation on inference error
+
+        if (!allowFallback) {
+          throw new Error("Structured inference did not return capability-compatible tool source");
+        }
+      } catch (error) {
+        if (!allowFallback) {
+          throw error;
+        }
       }
+    } else if (options.allowDeterministicFallback === false) {
+      throw new Error("Structured inference is required for candidate synthesis");
     }
 
     // 2. Deterministic Code Synthesis
     const sourceCode = this.generateSource(plan);
     return { sourceCode };
+  }
+
+  /**
+   * Ensures inferred code uses exactly the broker families declared by the deterministic plan.
+   * Model output can implement a plan, but it cannot substitute a different side-effect class.
+   */
+  private isBrokerUsageCompatible(plan: ToolPlan, sourceCode: string): boolean {
+    const usesBroker = (service: "fs" | "net" | "cmd" | "secret"): boolean =>
+      new RegExp(`\\b(?:broker|context)\\.${service}\\b`).test(sourceCode);
+
+    const used = {
+      fs: usesBroker("fs"),
+      net: usesBroker("net"),
+      cmd: usesBroker("cmd"),
+      secret: usesBroker("secret"),
+    };
+    const permitted = {
+      fs:
+        plan.capabilities.fs.readPaths.length > 0 ||
+        plan.capabilities.fs.writePaths.length > 0 ||
+        plan.capabilities.fs.allowWorkspaceRoot ||
+        plan.capabilities.fs.allowTemp,
+      net: plan.capabilities.net.allowOutbound || plan.capabilities.net.allowLocalhost,
+      cmd:
+        plan.capabilities.command.allowShellExecution ||
+        plan.capabilities.command.allowedCommands.length > 0 ||
+        plan.capabilities.command.allowedBinaries.length > 0,
+      secret:
+        plan.capabilities.secrets.allowedSecretNames.length > 0 ||
+        plan.capabilities.secrets.allowedPrefixes.length > 0,
+    };
+
+    if (
+      (used.fs && !permitted.fs) ||
+      (used.net && !permitted.net) ||
+      (used.cmd && !permitted.cmd) ||
+      (used.secret && !permitted.secret)
+    ) {
+      return false;
+    }
+
+    for (const step of plan.steps) {
+      const service = step.service?.toLowerCase();
+      const action = step.action?.toLowerCase() ?? "";
+      if ((service === "fs" || action.startsWith("fs.")) && !used.fs) return false;
+      if (
+        (service === "net" || action.startsWith("net.") || action.startsWith("http.")) &&
+        !used.net
+      ) {
+        return false;
+      }
+      if ((service === "cmd" || action.startsWith("cmd.")) && !used.cmd) return false;
+      if ((service === "secret" || action.startsWith("secret.")) && !used.secret) return false;
+    }
+
+    const requiresSecret =
+      plan.invariantInputs.some((input) => input.name === "authSecretName") ||
+      plan.steps.some((step) => {
+        const requiredSecrets = step.inputs.requiredSecrets;
+        return (
+          typeof step.inputs.secretName === "string" ||
+          (Array.isArray(requiredSecrets) && requiredSecrets.length > 0)
+        );
+      });
+
+    return !requiresSecret || used.secret;
   }
 
   /**
@@ -186,12 +251,9 @@ export const OutputSchema = ${zodOutputSchemaSource};
 export type ToolInput = z.infer<typeof InputSchema>;
 export type ToolOutput = z.infer<typeof OutputSchema>;
 
-export default defineTool<ToolInput, ToolOutput>({
-  name: ${JSON.stringify(plan.name)},
-  description: ${JSON.stringify(plan.description)},
-  inputSchema: InputSchema,
-  outputSchema: OutputSchema,
-  handler: async (input: ToolInput, context: ToolContext): Promise<ToolOutput> => {
+export default defineTool<ToolInput, ToolOutput>(
+  async (context: ToolContext<ToolInput>): Promise<ToolOutput> => {
+    const input = context.input;
     const { broker, logger, progress } = context;
     await progress(0, "Starting execution");
     await logger.info("Executing tool", { toolName: ${JSON.stringify(plan.name)} });
@@ -212,7 +274,7 @@ ${executionBody}
       throw new Error(\`[${plan.name}] Execution error: \${errorMessage}\`);
     }
   },
-});
+);
 `;
   }
 
@@ -234,10 +296,13 @@ ${executionBody}
       toolClass === "filesystem" ||
       toolClass === "file_read" ||
       toolClass === "file_edit" ||
-      name.includes("file") ||
-      name.includes("read") ||
-      name.includes("write") ||
-      desc.includes("file")
+      ((service === "" || service === "compute") &&
+        !action.startsWith("cmd.") &&
+        !action.startsWith("net.") &&
+        (name.includes("file") ||
+          name.includes("read") ||
+          name.includes("write") ||
+          desc.includes("file")))
     ) {
       if (
         action.includes("write") ||
@@ -285,10 +350,12 @@ ${executionBody}
       toolClass === "network" ||
       toolClass === "http" ||
       toolClass === "api" ||
-      name.includes("fetch") ||
-      name.includes("http") ||
-      name.includes("api") ||
-      desc.includes("api")
+      ((service === "" || service === "compute") &&
+        !action.startsWith("cmd.") &&
+        (name.includes("fetch") ||
+          name.includes("http") ||
+          name.includes("api") ||
+          desc.includes("api")))
     ) {
       const secretName =
         plan.capabilities.secrets.allowedSecretNames[0] ||
@@ -305,7 +372,7 @@ ${executionBody}
       if (secretName) {
         return `      const url = (input as Record<string, unknown>).url as string ?? (input as Record<string, unknown>).endpoint as string ?? ${JSON.stringify(defaultUrl)};
       await logger.debug("Fetching authenticated network resource", { url });
-      const authRef = broker.secret.getSecretRef(${JSON.stringify(secretName)}, { mode: "bearer_token" });
+      const authRef = broker.secret.createReference(${JSON.stringify(secretName)}, { modes: ["bearer_token", "header_template"] });
       const response = await broker.net.fetch(url, {
         method: "GET",
         headers: {
@@ -346,17 +413,22 @@ ${executionBody}
       name.includes("command")
     ) {
       const commandName =
-        plan.capabilities.command.allowedCommands[0] ||
         (step?.inputs.command as string | undefined) ||
-        "echo 'done'";
+        plan.capabilities.command.allowedBinaries[0];
+      const commandArgs = Array.isArray(step?.inputs.args)
+        ? step.inputs.args.filter((value): value is string => typeof value === "string")
+        : [];
+      if (!commandName || commandName.startsWith("$")) {
+        throw new Error("Command source generation requires a fixed executable identity");
+      }
 
       const secretName = plan.capabilities.secrets.allowedSecretNames[0];
 
       if (secretName) {
-        return `      const command = (input as Record<string, unknown>).command as string ?? (input as Record<string, unknown>).cmd as string ?? ${JSON.stringify(commandName)};
-      const args = ((input as Record<string, unknown>).args as string[]) ?? [];
+        return `      const command = ${JSON.stringify(commandName)};
+      const args = ${JSON.stringify(commandArgs)};
       await logger.debug("Executing command with secret env via cmd broker", { command, args });
-      const secretEnv = broker.secret.getSecretRef(${JSON.stringify(secretName)}, { mode: "command_env" });
+      const secretEnv = broker.secret.createReference(${JSON.stringify(secretName)}, { modes: ["command_env"] });
       const res = await broker.cmd.exec(command, args, {
         env: { AUTH_TOKEN: secretEnv },
       });
@@ -370,10 +442,13 @@ ${executionBody}
       };`;
       }
 
-      return `      const command = (input as Record<string, unknown>).command as string ?? (input as Record<string, unknown>).cmd as string ?? ${JSON.stringify(commandName)};
-      const args = ((input as Record<string, unknown>).args as string[]) ?? [];
+      return `      const command = ${JSON.stringify(commandName)};
+      const args = ${JSON.stringify(commandArgs)};
       await logger.debug("Executing command via command broker", { command, args });
       const res = await broker.cmd.exec(command, args);
+      if (res.exitCode !== 0) {
+        throw new Error(\`Command '\${command}' failed with exit code \${res.exitCode}: \${res.stderr}\`);
+      }
       resultData = {
         stdout: res.stdout,
         stderr: res.stderr,

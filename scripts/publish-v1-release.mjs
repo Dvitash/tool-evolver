@@ -21,13 +21,8 @@ import path from "node:path";
 import process from "node:process";
 import zlib from "node:zlib";
 
+import { getGitCommitSha } from "./generate-release-evidence.mjs";
 import {
-  generateReleaseEvidence,
-  getGitCommitSha,
-  writeReleaseEvidence,
-} from "./generate-release-evidence.mjs";
-import {
-  DEFAULT_RELEASE_KEY,
   PLATFORMS,
   RELEASE_DATE,
   RELEASE_VERSION,
@@ -37,6 +32,12 @@ import {
   packageRelease,
   sha256Hex,
 } from "./package-release.mjs";
+import {
+  createTestReleaseSigningKey,
+  loadReleaseSigningKeyFromEnv,
+  publicTrustRecord,
+  trustedKeysFromSigningKey,
+} from "./release-trust.mjs";
 import { verifyRelease } from "./verify-release.mjs";
 
 /**
@@ -45,7 +46,9 @@ import { verifyRelease } from "./verify-release.mjs";
  * @param {object} keyPair
  * @returns {{ sumsContent: string, sigContent: string, assetCount: number }}
  */
-export function generateChecksumsAndSignatures(distDir, keyPair = DEFAULT_RELEASE_KEY) {
+export function generateChecksumsAndSignatures(distDir, keyPair) {
+  if (!keyPair?.privateKey)
+    throw new Error("Detached checksum signing requires an external release signing key.");
   const entries = fs.readdirSync(distDir, { withFileTypes: true });
   const lines = [];
 
@@ -63,8 +66,7 @@ export function generateChecksumsAndSignatures(distDir, keyPair = DEFAULT_RELEAS
   fs.writeFileSync(sumsPath, sumsContent, "utf8");
 
   // Detached Ed25519 signature
-  const privateKey = crypto.createPrivateKey(keyPair.privateKeyPkcs8Pem);
-  const signature = crypto.sign(null, Buffer.from(sumsContent, "utf8"), privateKey);
+  const signature = crypto.sign(null, Buffer.from(sumsContent, "utf8"), keyPair.privateKey);
   const sigContent = signature.toString("hex");
   const sigPath = path.join(distDir, "SHA256SUMS.sig");
   fs.writeFileSync(sigPath, sigContent, "utf8");
@@ -84,7 +86,9 @@ export function generateChecksumsAndSignatures(distDir, keyPair = DEFAULT_RELEAS
  * @param {object} keyPair
  * @returns {object}
  */
-export function generateNpmProvenance(rootDir, distDir, commitSha, keyPair = DEFAULT_RELEASE_KEY) {
+export function generateNpmProvenance(rootDir, distDir, commitSha, keyPair, releaseIdentity) {
+  if (!keyPair?.privateKey)
+    throw new Error("NPM provenance signing requires an external release signing key.");
   const cliPkgJsonPath = path.resolve(rootDir, "apps/cli/package.json");
   const cliPkg = JSON.parse(fs.readFileSync(cliPkgJsonPath, "utf8"));
 
@@ -102,7 +106,7 @@ export function generateNpmProvenance(rootDir, distDir, commitSha, keyPair = DEF
     predicateType: "https://slsa.dev/provenance/v0.2",
     predicate: {
       builder: {
-        id: "https://github.com/tool-evolver/tool-evolver/.github/workflows/release.yml@v1.0.0",
+        id: `https://github.com/${releaseIdentity.repository}/actions/runs/${releaseIdentity.workflow.runId}`,
       },
       buildType: "https://github.com/tool-evolver/tool-evolver/build/v1",
       invocation: {
@@ -133,14 +137,14 @@ export function generateNpmProvenance(rootDir, distDir, commitSha, keyPair = DEF
   };
 
   const canonicalStmt = canonicalJson(statement);
-  const privateKey = crypto.createPrivateKey(keyPair.privateKeyPkcs8Pem);
-  const sig = crypto.sign(null, Buffer.from(canonicalStmt, "utf8"), privateKey);
+  const sig = crypto.sign(null, Buffer.from(canonicalStmt, "utf8"), keyPair.privateKey);
 
   const provenance = {
     statement,
     attestation: {
       keyId: keyPair.keyId,
       publicKeyPem: keyPair.publicKeyPem,
+      publicKeyFingerprintSha256: keyPair.publicKeyFingerprintSha256,
       signatureHex: sig.toString("hex"),
       format: "slsa-v0.2-in-toto",
     },
@@ -316,7 +320,7 @@ export function generateGitHubReleaseBundle(rootDir, distDir, commitSha, evidenc
     })),
     signatures: {
       keyId: "tool-evolver-release-v1",
-      publicKeyPem: DEFAULT_RELEASE_KEY.publicKeyPem,
+      publicKeyPem: evidence.publicTrust.publicKeyPem,
       algorithm: "Ed25519",
     },
   };
@@ -363,25 +367,19 @@ export function validateCloudStagingPromotion(rootDir) {
 }
 
 /**
- * Simulates comprehensive post-release lifecycle smoke tests.
- * @returns {object}
+ * Normalizes executed post-release smoke evidence. Static/synthetic passes are rejected.
  */
-export function runPostReleaseSmokeTests() {
-  return {
-    cleanInstall: { status: "PASSED", latencyMs: 320 },
-    authBootstrap: { status: "PASSED", latencyMs: 140 },
-    harnessConfiguration: {
-      claudeCode: "PASSED",
-      codexCli: "PASSED",
-      omp: "PASSED",
-    },
-    sessionObservation: { status: "PASSED", latencyMs: 25 },
-    candidateEvolution: { status: "PASSED", latencyMs: 450 },
-    canaryTrafficRouting: { status: "PASSED", latencyMs: 15 },
-    instantRollback: { status: "PASSED", latencyMs: 12 },
-    upgradeReconciliation: { status: "PASSED", latencyMs: 180 },
-    uninstallAndPurge: { status: "PASSED", latencyMs: 65 },
-  };
+export function runPostReleaseSmokeTests(observedEvidence) {
+  if (!observedEvidence || observedEvidence.source !== "executed-smoke-suite") {
+    throw new Error("Post-release smoke evidence must come from an executed smoke suite.");
+  }
+  const required = ["cleanInstall", "authBootstrap", "canaryTrafficRouting", "instantRollback"];
+  for (const name of required) {
+    if (!observedEvidence.results?.[name]?.status) {
+      throw new Error(`Executed smoke evidence is missing result '${name}'.`);
+    }
+  }
+  return observedEvidence.results;
 }
 
 /**
@@ -392,102 +390,65 @@ export function runPostReleaseSmokeTests() {
 export function publishV1Release(options = {}) {
   const rootDir = options.rootDir || process.cwd();
   const distDir = options.distDir || path.resolve(rootDir, `dist/release/v${RELEASE_VERSION}`);
-  const keyPair = options.keyPair || DEFAULT_RELEASE_KEY;
+  const testOnly = options.testOnly === true;
+  const keyPair =
+    options.keyPair || (testOnly ? createTestReleaseSigningKey() : loadReleaseSigningKeyFromEnv());
   const commitSha = options.commitSha || getGitCommitSha(rootDir);
+  const approvals = Array.isArray(options.approvals) ? options.approvals : [];
+  if (!testOnly && approvals.length === 0) {
+    throw new Error(
+      "Production publication requires recorded independent approvals; publisher will not fabricate them.",
+    );
+  }
 
   console.log(`🚀 Publishing Tool Evolver V${RELEASE_VERSION} Release Candidate...`);
-  console.log(`📌 Release Tag: v${RELEASE_VERSION}`);
-  console.log(`🌿 Commit SHA: ${commitSha}`);
-  console.log(`📂 Output Directory: ${distDir}`);
-
-  // 1. Independent Security & Release Approvals Record
-  const approvals = [
-    {
-      role: "SecurityReviewer",
-      reviewer: "SecurityReviewerPR68",
-      status: "APPROVED",
-      attestation:
-        "PASS: 0 vulnerabilities, 0 secret leaks, broker filesystem and command isolation verified.",
-      timestamp: RELEASE_DATE,
-    },
-    {
-      role: "ReleaseReviewer",
-      reviewer: "ReviewerPR68",
-      status: "APPROVED",
-      attestation:
-        "PASS: 100% test coverage, 5 platform qualification lanes verified, 0 boundary violations.",
-      timestamp: RELEASE_DATE,
-    },
-    {
-      role: "ReleaseLead",
-      reviewer: "Main",
-      status: "APPROVED",
-      attestation: "PASS: V1 GA Candidate qualified and approved for publication.",
-      timestamp: RELEASE_DATE,
-    },
-  ];
-
-  // 2. Package Release
-  console.log("\n--- Step 1: Packaging Release Artifacts ---");
   const packageResult = packageRelease({
     rootDir,
     distDir,
     keyPair,
-    skipBuild: options.skipBuild ?? false,
-  });
-
-  // 3. Generate Release Evidence
-  console.log("\n--- Step 2: Generating Release Evidence ---");
-  const evidenceResult = writeReleaseEvidence({
-    rootDir,
-    distDir,
     commitSha,
+    testOnly,
+    verificationEvidence: options.verificationEvidence,
+    skipBuild: options.skipBuild ?? false,
     syncDocs: options.syncDocs ?? false,
   });
-
-  // 4. Generate Checksums & Detached Signatures
-  console.log("\n--- Step 3: Generating Checksums & Detached Signatures ---");
+  const releaseIdentity = packageResult.releaseIdentity;
+  // packageRelease already generated the exact evidence whose digest is signed by
+  // manifest.json. Never regenerate it after signing.
+  const evidenceResult = {
+    evidence: JSON.parse(fs.readFileSync(path.join(distDir, "release-evidence.json"), "utf8")),
+    jsonSha256: packageResult.evidenceSha256,
+  };
   const checksumsResult = generateChecksumsAndSignatures(distDir, keyPair);
-
-  // 5. Verify Release
-  console.log("\n--- Step 4: Verifying Release Integrity ---");
   const verifyResult = verifyRelease({
     rootDir,
     releaseDir: distDir,
+    trustedKeys: trustedKeysFromSigningKey(keyPair),
+    allowTestEvidence: testOnly,
+    expectedCommitSha: commitSha,
   });
-
   if (!verifyResult.valid) {
     throw new Error(
       `Release verification failed with ${verifyResult.violations.length} violations.`,
     );
   }
-
-  // 6. Generate NPM Provenance & Run Out-of-Repo Smoke Test
-  console.log("\n--- Step 5: NPM Bootstrap Provenance & Clean Install Smoke Test ---");
-  const npmProvenance = generateNpmProvenance(rootDir, distDir, commitSha, keyPair);
-  const outOfRepoSmoke = runOutOfRepoSmokeTest(distDir, rootDir);
-  console.log(
-    `   - Out-of-repo install smoke test: ${outOfRepoSmoke.cliHelpVerified ? "✅ PASS" : "❌ FAIL"}`,
-  );
-
-  // 7. GitHub Release Metadata
-  console.log("\n--- Step 6: GitHub Release Bundle ---");
-  const githubRelease = generateGitHubReleaseBundle(
+  const npmProvenance = generateNpmProvenance(
     rootDir,
     distDir,
     commitSha,
-    evidenceResult.evidence,
+    keyPair,
+    releaseIdentity,
   );
-
-  // 8. Cloud Staging Promotion Validation
-  console.log("\n--- Step 7: Cloud Staging Immutable Promotion Gate ---");
-  const cloudPromotion = validateCloudStagingPromotion(rootDir);
-
-  // 9. Post-Release Lifecycle Smoke Tests
-  console.log("\n--- Step 8: Post-Release Lifecycle Smoke Tests ---");
-  const postReleaseSmoke = runPostReleaseSmokeTests();
-
-  console.log("\n🎉 Tool Evolver V1.0.0 Release Candidate Published Successfully!");
+  const outOfRepoSmoke = runOutOfRepoSmokeTest(distDir, rootDir);
+  const githubRelease = generateGitHubReleaseBundle(rootDir, distDir, commitSha, {
+    ...evidenceResult.evidence,
+    publicTrust: publicTrustRecord(keyPair),
+  });
+  const cloudPromotion = options.cloudPromotionEvidence;
+  if (!cloudPromotion) {
+    throw new Error("Release publication requires observed cloud promotion evidence.");
+  }
+  const postReleaseSmoke = runPostReleaseSmokeTests(options.postReleaseSmokeEvidence);
 
   return {
     success: true,
@@ -499,6 +460,7 @@ export function publishV1Release(options = {}) {
     approvals,
     manifestSha256: packageResult.manifestSha256,
     evidenceSha256: evidenceResult.jsonSha256,
+    publicTrust: publicTrustRecord(keyPair),
     checksums: {
       assetCount: checksumsResult.assetCount,
       signature: `${checksumsResult.sigContent.slice(0, 16)}...`,
@@ -508,10 +470,7 @@ export function publishV1Release(options = {}) {
       materialsCount: npmProvenance.statement.predicate.materials.length,
       smokeTestPassed: outOfRepoSmoke.cliHelpVerified,
     },
-    githubRelease: {
-      tagName: githubRelease.tag_name,
-      assetsCount: githubRelease.assets.length,
-    },
+    githubRelease: { tagName: githubRelease.tag_name, assetsCount: githubRelease.assets.length },
     cloudPromotion,
     smokeTests: postReleaseSmoke,
   };

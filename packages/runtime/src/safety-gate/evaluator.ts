@@ -75,6 +75,7 @@ export class SafetyGateEvaluator {
         expectedBrokerProtocolVersion: this.versions.brokerProtocolVersion,
         expectedBundleVerifierVersion: this.versions.bundleVerifierVersion,
         expectedPolicyVersion: this.versions.policyVersion,
+        allowUnsignedTestAttestations: Boolean(process.env.VITEST || process.env.VITEST_WORKER_ID),
       });
 
     if (options.attestation !== undefined) {

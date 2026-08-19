@@ -750,32 +750,28 @@ export class SecretBroker extends BaseCapabilityBroker {
       }
 
       case "mediateHeaders":
-        return this.mediateHeaders(
-          (payload.headers as Record<string, string | SecretReference>) ?? {},
-          context,
-        );
-
       case "mediateBearerToken":
-        return this.mediateBearerToken(String(payload.alias ?? payload.name ?? ""), context);
-
       case "mediateUrl":
-        return this.mediateUrl(
-          String(payload.url ?? ""),
-          context,
-          payload.secretReferences as Record<string, SecretReference> | undefined,
-        );
-
       case "mediateCommandStdin":
-        return this.mediateCommandStdin(
-          (payload.template ?? payload.alias ?? payload.name ?? "") as string | SecretReference,
-          context,
+      case "mediateCommandEnv": {
+        this.recordAudit(
+          "workerMediationResponse",
+          workerContext,
+          "denied",
+          { action, reason: "WORKER_MEDIATION_RESPONSE_DENIED" },
+          {
+            error: {
+              code: "DIRECT_READ_DENIED",
+              message:
+                "Worker secret mediation must be consumed inside a trusted network or command broker.",
+            },
+          },
         );
-
-      case "mediateCommandEnv":
-        return this.mediateCommandEnv(
-          (payload.env as Record<string, string | SecretReference>) ?? {},
-          context,
+        throw new BrokerSecurityError(
+          "DIRECT_READ_DENIED",
+          "Worker secret mediation must be consumed inside a trusted network or command broker.",
         );
+      }
       default:
         throw new BrokerSecurityError(
           "OPERATION_NOT_PERMITTED",

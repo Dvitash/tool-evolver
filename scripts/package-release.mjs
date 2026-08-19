@@ -5,11 +5,11 @@
  *
  * Responsibilities:
  * 1. Builds all 15 monorepo workspace packages.
- * 2. Generates reproducible, deterministic platform release tarballs (Linux x64/arm64, macOS x64/arm64, WSL).
- * 3. Generates a signed release manifest (`manifest.json`) with Ed25519 signature and SHA-256 digests of all packages and assets.
- * 4. Generates a CycloneDX 1.5 JSON SBOM (`sbom.json`) covering all workspace packages and runtime dependencies with licenses and hashes.
- * 5. Generates release channel metadata (`channels.json` with stable, prerelease, minSupportedVersion, and rollback references).
- * 6. Outputs all release artifacts to `dist/release/v1.0.0/`.
+ * 2. Generates reproducible, deterministic standalone platform release tarballs.
+ * 3. Generates a signed release manifest with Ed25519 signatures and SHA-256 digests.
+ * 4. Generates a CycloneDX 1.5 JSON SBOM.
+ * 5. Generates signed release channel metadata.
+ * 6. Outputs all release artifacts to dist/release/v1.0.0/.
  */
 
 import { execSync } from "node:child_process";
@@ -18,11 +18,19 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import zlib from "node:zlib";
-import { writeReleaseEvidence } from "./generate-release-evidence.mjs";
+import { getGitCommitSha, writeReleaseEvidence } from "./generate-release-evidence.mjs";
+import {
+  REVOKED_RELEASE_KEY_IDS,
+  createTestReleaseSigningKey,
+  loadReleaseSigningKeyFromEnv,
+  publicTrustRecord,
+  signReleasePayload,
+  trustedKeysFromSigningKey,
+} from "./release-trust.mjs";
 
 export const RELEASE_VERSION = "1.0.0";
 export const RELEASE_DATE = "2026-08-17T00:00:00.000Z";
-export const DETERMINISTIC_MTIME = 1786924800; // 2026-08-17T00:00:00Z in Unix seconds
+export const DETERMINISTIC_MTIME = 1786924800;
 
 export const PLATFORMS = [
   {
@@ -61,6 +69,41 @@ export const PLATFORMS = [
     filename: `tool-evolver-v${RELEASE_VERSION}-wsl.tar.gz`,
   },
 ];
+
+export const PINNED_DENO_RUNTIME = Object.freeze({
+  version: "2.9.5",
+  required: true,
+  assets: {
+    "linux-x64": {
+      filename: "deno-x86_64-unknown-linux-gnu.zip",
+      url: "https://github.com/denoland/deno/releases/download/v2.9.5/deno-x86_64-unknown-linux-gnu.zip",
+      sha256: "8b010a3b1a4a0188a67cdb8a7a27348b2a501af78aec7fc74f2ace167368d530",
+      archive: "zip",
+      executable: "deno",
+    },
+    "linux-arm64": {
+      filename: "deno-aarch64-unknown-linux-gnu.zip",
+      url: "https://github.com/denoland/deno/releases/download/v2.9.5/deno-aarch64-unknown-linux-gnu.zip",
+      sha256: "6b7cae3a8fc4385a59dea3146fcb8bad7fea4230e0ad36a8c692afacbc254be0",
+      archive: "zip",
+      executable: "deno",
+    },
+    "darwin-x64": {
+      filename: "deno-x86_64-apple-darwin.zip",
+      url: "https://github.com/denoland/deno/releases/download/v2.9.5/deno-x86_64-apple-darwin.zip",
+      sha256: "c1b8b89a81e91b2a8b3f96def3195d08cfe3a105651da7908d53061f7140510d",
+      archive: "zip",
+      executable: "deno",
+    },
+    "darwin-arm64": {
+      filename: "deno-aarch64-apple-darwin.zip",
+      url: "https://github.com/denoland/deno/releases/download/v2.9.5/deno-aarch64-apple-darwin.zip",
+      sha256: "b796aadd131f6930560c1ee040cf0d6f53933fbb987464e9ff46bd7ea4830615",
+      archive: "zip",
+      executable: "deno",
+    },
+  },
+});
 
 export const WORKSPACE_PACKAGES = [
   {
@@ -143,45 +186,23 @@ export const WORKSPACE_PACKAGES = [
   { name: "@tool-evolver/e2e", path: "fixtures/e2e", entry: "dist/index.js", type: "fixture" },
 ];
 
-/**
- * Calculates SHA-256 digest of a string or Buffer.
- * @param {string | Buffer} data
- * @returns {string} Hex encoded sha256
- */
+const RELEASE_RUNTIME_DEPENDENCIES = ["typescript"];
+
 export function sha256Hex(data) {
   return crypto.createHash("sha256").update(data).digest("hex");
 }
 
-/**
- * Calculates SHA-256 digest of a file.
- * @param {string} filePath
- * @returns {string} Hex encoded sha256
- */
 export function fileSha256(filePath) {
-  const content = fs.readFileSync(filePath);
-  return sha256Hex(content);
+  return sha256Hex(fs.readFileSync(filePath));
 }
 
-/**
- * Canonical JSON stringifier (deterministic key ordering).
- * @param {any} val
- * @returns {string}
- */
 export function canonicalJson(val) {
-  if (val === null || typeof val !== "object") {
-    return JSON.stringify(val);
-  }
-  if (Array.isArray(val)) {
-    return `[${val.map((item) => canonicalJson(item)).join(",")}]`;
-  }
+  if (val === null || typeof val !== "object") return JSON.stringify(val);
+  if (Array.isArray(val)) return `[${val.map((item) => canonicalJson(item)).join(",")}]`;
   const keys = Object.keys(val).sort();
-  const pairs = keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(val[key])}`);
-  return `{${pairs.join(",")}}`;
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(val[key])}`).join(",")}}`;
 }
 
-/**
- * Creates a USTAR tar header block for a file or directory.
- */
 export function createUstarHeader({
   name,
   size,
@@ -192,7 +213,6 @@ export function createUstarHeader({
   gname = "root",
 }) {
   const buf = Buffer.alloc(512, 0);
-
   let nameField = name;
   let prefixField = "";
   if (Buffer.byteLength(name) > 100) {
@@ -202,6 +222,9 @@ export function createUstarHeader({
       nameField = name.slice(idx + 1);
     }
   }
+  if (Buffer.byteLength(nameField) > 100 || Buffer.byteLength(prefixField) > 155) {
+    throw new Error(`USTAR path exceeds supported limits: ${name}`);
+  }
 
   buf.write(nameField, 0, 100, "utf8");
   buf.write(`${mode.toString(8).padStart(6, "0")} \0`, 100, 8, "ascii");
@@ -209,37 +232,23 @@ export function createUstarHeader({
   buf.write(`${(0).toString(8).padStart(6, "0")} \0`, 116, 8, "ascii");
   buf.write(`${size.toString(8).padStart(11, "0")} `, 124, 12, "ascii");
   buf.write(`${mtime.toString(8).padStart(11, "0")} `, 136, 12, "ascii");
-
   buf.write(typeflag, 156, 1, "ascii");
   buf.write("ustar\0", 257, 6, "ascii");
   buf.write("00", 263, 2, "ascii");
   buf.write(uname, 265, 32, "ascii");
   buf.write(gname, 297, 32, "ascii");
+  if (prefixField) buf.write(prefixField, 345, 155, "utf8");
 
-  if (prefixField) {
-    buf.write(prefixField, 345, 155, "utf8");
-  }
-
-  // Calculate checksum treating 148..156 as spaces
   buf.fill(0x20, 148, 156);
   let checksum = 0;
-  for (let i = 0; i < 512; i++) {
-    checksum += buf[i];
-  }
+  for (let i = 0; i < 512; i++) checksum += buf[i];
   buf.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
-
   return buf;
 }
 
-/**
- * Creates a deterministic USTAR tar buffer from an array of file entries.
- * @param {Array<{ path: string, content?: string | Buffer, mode?: number, mtime?: number, type?: 'file' | 'dir' }>} entries
- * @returns {Buffer}
- */
 export function createDeterministicTar(entries) {
   const sorted = [...entries].sort((a, b) => a.path.localeCompare(b.path));
   const chunks = [];
-
   for (const entry of sorted) {
     const isDir = entry.type === "dir" || entry.path.endsWith("/");
     const contentBuf = isDir
@@ -247,84 +256,155 @@ export function createDeterministicTar(entries) {
       : Buffer.isBuffer(entry.content)
         ? entry.content
         : Buffer.from(entry.content ?? "", "utf8");
-    const mode = entry.mode ?? (isDir ? 0o755 : 0o644);
-    const mtime = entry.mtime ?? DETERMINISTIC_MTIME;
-
     const header = createUstarHeader({
       name: entry.path,
       size: contentBuf.length,
-      mode,
-      mtime,
+      mode: entry.mode ?? (isDir ? 0o755 : 0o644),
+      mtime: entry.mtime ?? DETERMINISTIC_MTIME,
       typeflag: isDir ? "5" : "0",
     });
     chunks.push(header);
-
     if (contentBuf.length > 0) {
       chunks.push(contentBuf);
       const remainder = contentBuf.length % 512;
-      if (remainder > 0) {
-        chunks.push(Buffer.alloc(512 - remainder, 0));
-      }
+      if (remainder > 0) chunks.push(Buffer.alloc(512 - remainder, 0));
     }
   }
-
-  // End of archive: two 512-byte zero blocks
   chunks.push(Buffer.alloc(1024, 0));
   return Buffer.concat(chunks);
 }
 
-/**
- * Compresses a deterministic tar buffer with deterministic gzip headers.
- * @param {Buffer} tarBuffer
- * @returns {Buffer}
- */
 export function gzipDeterministic(tarBuffer) {
   return zlib.gzipSync(tarBuffer, { mtime: 0, level: 9 });
 }
 
-/**
- * Builds all monorepo packages.
- * @param {string} rootDir
- */
 export function buildWorkspacePackages(rootDir = process.cwd()) {
   console.log("🔨 Building all 15 workspace packages...");
   execSync("pnpm turbo run build", { cwd: rootDir, stdio: "inherit" });
   console.log("✅ All workspace packages built successfully.");
 }
 
-/**
- * Recursively collects dist files for packaging.
- * @param {string} dir
- * @param {string} baseDir
- * @returns {Array<{ relPath: string, fullPath: string }>}
- */
 function collectFilesRecursively(dir, baseDir = dir) {
   if (!fs.existsSync(dir)) return [];
-  /** @type {Array<{ relPath: string, fullPath: string }>} */
   const results = [];
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-  for (const entry of entries) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       results.push(...collectFilesRecursively(full, baseDir));
     } else if (entry.isFile()) {
-      const rel = path.relative(baseDir, full).replace(/\\/g, "/");
-      results.push({ relPath: rel, fullPath: full });
+      results.push({
+        relPath: path.relative(baseDir, full).replace(/\\/g, "/"),
+        fullPath: full,
+      });
     }
   }
   return results;
 }
 
-/**
- * Generates SHA-256 digests and metadata for all workspace packages.
- * @param {string} rootDir
- * @returns {Record<string, { version: string, path: string, entry: string, entrySha256: string, packageSha256: string, filesCount: number }>}
- */
-export function generatePackageDigests(rootDir = process.cwd()) {
-  /** @type {Record<string, any>} */
-  const result = {};
+function workspacePackageByDir(rootDir, packageDir) {
+  const resolved = path.resolve(packageDir);
+  return WORKSPACE_PACKAGES.find((pkg) => path.resolve(rootDir, pkg.path) === resolved);
+}
 
+function packagePayloadFiles(rootDir, packageDir) {
+  const workspacePackage = workspacePackageByDir(rootDir, packageDir);
+  if (!workspacePackage) {
+    return collectFilesRecursively(packageDir, packageDir).filter(
+      (file) => !file.relPath.startsWith("node_modules/") && !file.relPath.startsWith(".git/"),
+    );
+  }
+
+  const files = [];
+  const candidates = ["package.json", "README.md", "README", "LICENSE", "LICENSE.md"];
+  for (const candidate of candidates) {
+    const full = path.join(packageDir, candidate);
+    if (fs.existsSync(full) && fs.statSync(full).isFile()) {
+      files.push({ relPath: candidate, fullPath: full });
+    }
+  }
+  for (const dirName of ["dist", "bin"]) {
+    const full = path.join(packageDir, dirName);
+    files.push(...collectFilesRecursively(full, packageDir));
+  }
+  return files;
+}
+
+function resolveDependencyDirectory(rootDir, importerDir, dependencyName) {
+  const segments = dependencyName.split("/");
+  const candidates = [
+    path.join(importerDir, "node_modules", ...segments),
+    path.join(rootDir, "node_modules", ...segments),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) return fs.realpathSync(candidate);
+    } catch {
+      // continue
+    }
+  }
+  throw new Error(
+    `Runtime dependency '${dependencyName}' required by '${importerDir}' is not installed.`,
+  );
+}
+
+/**
+ * Builds a real Node resolution tree inside the release archive. The previous
+ * archive contained workspace dist files but no node_modules tree, so the
+ * packaged entrypoints could not resolve @tool-evolver/* or external imports
+ * outside the monorepo.
+ */
+export function collectStandaloneRuntimeEntries(rootDir = process.cwd()) {
+  const cliDir = path.resolve(rootDir, "apps/cli");
+  const cliPackage = JSON.parse(fs.readFileSync(path.join(cliDir, "package.json"), "utf8"));
+  const queue = Object.keys(cliPackage.dependencies ?? {}).map((name) => ({
+    name,
+    importerDir: cliDir,
+  }));
+  for (const name of RELEASE_RUNTIME_DEPENDENCIES) {
+    queue.push({ name, importerDir: rootDir });
+  }
+  const visited = new Map();
+  const entries = [];
+
+  while (queue.length > 0) {
+    const next = queue.shift();
+    const packageDir = resolveDependencyDirectory(rootDir, next.importerDir, next.name);
+    const packageJsonPath = path.join(packageDir, "package.json");
+    if (!fs.existsSync(packageJsonPath)) {
+      throw new Error(`Runtime dependency '${next.name}' has no package.json at '${packageDir}'.`);
+    }
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+    const previous = visited.get(next.name);
+    if (previous) {
+      if (previous.version !== packageJson.version) {
+        throw new Error(
+          `Standalone release requires conflicting versions of '${next.name}': '${previous.version}' and '${packageJson.version}'.`,
+        );
+      }
+      continue;
+    }
+    visited.set(next.name, { version: packageJson.version, packageDir });
+
+    const archiveBase = `tool-evolver/node_modules/${next.name}`;
+    for (const file of packagePayloadFiles(rootDir, packageDir)) {
+      const mode = fs.statSync(file.fullPath).mode & 0o111 ? 0o755 : 0o644;
+      entries.push({
+        path: `${archiveBase}/${file.relPath}`.replace(/\\/g, "/"),
+        content: fs.readFileSync(file.fullPath),
+        mode,
+      });
+    }
+
+    for (const dependencyName of Object.keys(packageJson.dependencies ?? {})) {
+      queue.push({ name: dependencyName, importerDir: packageDir });
+    }
+  }
+
+  return entries;
+}
+
+export function generatePackageDigests(rootDir = process.cwd()) {
+  const result = {};
   for (const pkg of WORKSPACE_PACKAGES) {
     const pkgDir = path.resolve(rootDir, pkg.path);
     const pkgJsonPath = path.join(pkgDir, "package.json");
@@ -332,51 +412,30 @@ export function generatePackageDigests(rootDir = process.cwd()) {
       ? JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"))
       : { version: RELEASE_VERSION };
     const entryPath = path.join(pkgDir, pkg.entry);
-
-    let entrySha256 = "";
-    if (fs.existsSync(entryPath)) {
-      entrySha256 = fileSha256(entryPath);
-    } else {
-      entrySha256 = sha256Hex(pkg.name);
-    }
-
-    const distDir = path.join(pkgDir, "dist");
-    const distFiles = collectFilesRecursively(distDir, pkgDir);
+    const entrySha256 = fs.existsSync(entryPath) ? fileSha256(entryPath) : sha256Hex(pkg.name);
+    const distFiles = collectFilesRecursively(path.join(pkgDir, "dist"), pkgDir);
     const distFileHashes = distFiles
       .sort((a, b) => a.relPath.localeCompare(b.relPath))
       .map((f) => `${f.relPath}:${fileSha256(f.fullPath)}`)
       .join("\n");
-
-    const packageSha256 = sha256Hex(distFileHashes || entrySha256);
-
     result[pkg.name] = {
-      version: RELEASE_VERSION,
+      version: pkgJson.version ?? RELEASE_VERSION,
       path: pkg.path,
       type: pkg.type,
       entry: pkg.entry,
       entrySha256,
-      packageSha256,
+      packageSha256: sha256Hex(distFileHashes || entrySha256),
       filesCount: distFiles.length,
     };
   }
-
   return result;
 }
 
-/**
- * Generates platform-specific release tarballs.
- * @param {string} rootDir
- * @param {string} outputDir
- * @returns {Record<string, { filename: string, platform: string, arch: string, isWsl: boolean, sizeBytes: number, sha256: string }>}
- */
 export function createPlatformReleaseTarballs(rootDir, outputDir) {
   fs.mkdirSync(outputDir, { recursive: true });
-
   const rootPkgJson = JSON.parse(fs.readFileSync(path.resolve(rootDir, "package.json"), "utf8"));
-  /** @type {Record<string, any>} */
   const assetResults = {};
 
-  // Base bundle entries shared across platforms
   const baseEntries = [
     {
       path: "tool-evolver/package.json",
@@ -401,20 +460,17 @@ export function createPlatformReleaseTarballs(rootDir, outputDir) {
     },
     {
       path: "tool-evolver/bin/tool-evolver",
-      content:
-        "#!/usr/bin/env node\nimport { cliMain } from '../apps/cli/dist/index.js';\ncliMain(process.argv.slice(2));\n",
+      content: "#!/usr/bin/env node\nawait import('../apps/cli/dist/bin/cli.js');\n",
       mode: 0o755,
     },
     {
       path: "tool-evolver/bin/tool-evolver-daemon",
-      content:
-        "#!/usr/bin/env node\nimport { daemonMain } from '../apps/observer/dist/index.js';\ndaemonMain();\n",
+      content: "#!/usr/bin/env node\nawait import('../apps/observer/dist/bin/daemon.js');\n",
       mode: 0o755,
     },
     {
       path: "tool-evolver/bin/tool-evolver-mcp",
-      content:
-        "#!/usr/bin/env node\nimport { gatewayMain } from '../apps/gateway/dist/index.js';\ngatewayMain();\n",
+      content: "#!/usr/bin/env node\nawait import('../apps/gateway/dist/bin/mcp-shim.js');\n",
       mode: 0o755,
     },
     {
@@ -429,20 +485,15 @@ export function createPlatformReleaseTarballs(rootDir, outputDir) {
     },
   ];
 
-  // Collect built dist files from all 15 packages
   for (const pkg of WORKSPACE_PACKAGES) {
     const pkgDir = path.resolve(rootDir, pkg.path);
-    const distDir = path.join(pkgDir, "dist");
-    const distFiles = collectFilesRecursively(distDir, pkgDir);
-
-    for (const f of distFiles) {
+    for (const file of collectFilesRecursively(path.join(pkgDir, "dist"), pkgDir)) {
       baseEntries.push({
-        path: `tool-evolver/${pkg.path}/${f.relPath}`,
-        content: fs.readFileSync(f.fullPath),
+        path: `tool-evolver/${pkg.path}/${file.relPath}`,
+        content: fs.readFileSync(file.fullPath),
         mode: 0o644,
       });
     }
-
     const pkgJsonPath = path.join(pkgDir, "package.json");
     if (fs.existsSync(pkgJsonPath)) {
       baseEntries.push({
@@ -453,7 +504,8 @@ export function createPlatformReleaseTarballs(rootDir, outputDir) {
     }
   }
 
-  // Generate tarball for each platform
+  baseEntries.push(...collectStandaloneRuntimeEntries(rootDir));
+
   for (const platform of PLATFORMS) {
     const platformEntries = [
       ...baseEntries,
@@ -473,21 +525,16 @@ export function createPlatformReleaseTarballs(rootDir, outputDir) {
         mode: 0o644,
       },
     ];
-
-    const tarBuffer = createDeterministicTar(platformEntries);
-    const gzBuffer = gzipDeterministic(tarBuffer);
+    const gzBuffer = gzipDeterministic(createDeterministicTar(platformEntries));
     const tarballPath = path.join(outputDir, platform.filename);
-
     fs.writeFileSync(tarballPath, gzBuffer);
-    const sha256 = sha256Hex(gzBuffer);
-
     assetResults[platform.id] = {
       filename: platform.filename,
       platform: platform.os,
       arch: platform.arch,
       isWsl: platform.isWsl,
       sizeBytes: gzBuffer.length,
-      sha256,
+      sha256: sha256Hex(gzBuffer),
       path: `dist/release/v${RELEASE_VERSION}/${platform.filename}`,
     };
   }
@@ -495,86 +542,77 @@ export function createPlatformReleaseTarballs(rootDir, outputDir) {
   return assetResults;
 }
 
-/**
- * Known deterministic release Ed25519 keypair for reproducible release generation.
- * Can be overridden with an external private key in production.
- */
-export const DEFAULT_RELEASE_KEY = {
-  keyId: "tool-evolver-release-v1",
-  publicKeyPem:
-    "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEApLkxisOGwOIcMKuh4hHFSIPOtTo5aJmA8uJzh8bF6pU=\n-----END PUBLIC KEY-----\n",
-  publicKeyHex: "a4b9318ac386c0e21c30aba1e211c54883ceb53a39689980f2e27387c6c5ea95",
-  privateKeyPkcs8Pem:
-    // secret-scanner:ignore gitleaks:allow
-    "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIKHrfxWS03wRJJBHc6iyHjaoz93NxyMnlkCPd0XkQJcC\n-----END PRIVATE KEY-----\n",
-};
-
-/**
- * Generates and signs the release manifest (`manifest.json`).
- * @param {Record<string, any>} packageDigests
- * @param {Record<string, any>} assetDigests
- * @param {object} options
- * @returns {object}
- */
-export function generateSignedManifest(packageDigests, assetDigests, options = {}) {
-  const keyPair = options.keyPair || DEFAULT_RELEASE_KEY;
-
-  const manifestPayload = {
-    schemaVersion: "1.0.0",
-    version: RELEASE_VERSION,
-    releaseDate: RELEASE_DATE,
-    packages: packageDigests,
-    assets: assetDigests,
-  };
-
-  const canonicalPayloadString = canonicalJson(manifestPayload);
-  const signBuffer = Buffer.from(canonicalPayloadString, "utf8");
-
-  // Sign using Ed25519 private key
-  let signatureHex = "";
-  try {
-    const privKey = crypto.createPrivateKey(keyPair.privateKeyPkcs8Pem);
-    const sig = crypto.sign(null, signBuffer, privKey);
-    signatureHex = sig.toString("hex");
-  } catch (_err) {
-    // If key generation fallback
-    const ephemeral = crypto.generateKeyPairSync("ed25519");
-    const sig = crypto.sign(null, signBuffer, ephemeral.privateKey);
-    signatureHex = sig.toString("hex");
-    keyPair.publicKeyPem = ephemeral.publicKey.export({ type: "spki", format: "pem" }).toString();
-    keyPair.publicKeyHex = ephemeral.publicKey
-      .export({ type: "spki", format: "der" })
-      .subarray(-32)
-      .toString("hex");
+function resolveReleaseIdentity(options = {}) {
+  const rootDir = options.rootDir || process.cwd();
+  const testOnly = options.testOnly === true;
+  const commitSha = options.commitSha || process.env.GITHUB_SHA || getGitCommitSha(rootDir);
+  if (!/^[0-9a-f]{40}$/i.test(commitSha)) {
+    throw new Error(
+      `Release commit SHA must be an exact 40-character Git SHA, received '${commitSha}'.`,
+    );
   }
-
-  const manifest = {
-    ...manifestPayload,
-    signatures: [
-      {
-        keyId: keyPair.keyId,
-        algorithm: "Ed25519",
-        publicKey: keyPair.publicKeyHex,
-        publicKeyPem: keyPair.publicKeyPem,
-        signature: signatureHex,
-        signedAt: RELEASE_DATE,
-      },
-    ],
-  };
-
-  return manifest;
+  const repository =
+    options.repository || process.env.GITHUB_REPOSITORY || (testOnly ? "test-only/local" : "");
+  const ref = options.ref || process.env.GITHUB_REF || (testOnly ? "refs/test-only/local" : "");
+  const workflowRunId = String(
+    options.workflowRunId || process.env.GITHUB_RUN_ID || (testOnly ? "test-only" : ""),
+  );
+  const workflowRunAttempt = String(
+    options.workflowRunAttempt || process.env.GITHUB_RUN_ATTEMPT || (testOnly ? "1" : ""),
+  );
+  if (!testOnly && (!repository || !ref || !workflowRunId || !workflowRunAttempt)) {
+    throw new Error(
+      "Production release packaging requires GitHub repository/ref/run identity and cannot fabricate provenance.",
+    );
+  }
+  return Object.freeze({
+    repository,
+    commitSha,
+    ref,
+    workflow: {
+      name:
+        options.workflowName ||
+        process.env.GITHUB_WORKFLOW ||
+        (testOnly ? "test-only-release" : ""),
+      runId: workflowRunId,
+      runAttempt: workflowRunAttempt,
+    },
+  });
 }
 
-/**
- * Generates a CycloneDX 1.5 JSON SBOM (`sbom.json`).
- * @param {string} rootDir
- * @param {Record<string, any>} packageDigests
- * @returns {object}
- */
+function resolveSigningKey(options = {}) {
+  if (options.keyPair) return options.keyPair;
+  if (options.testOnly === true) return createTestReleaseSigningKey();
+  return loadReleaseSigningKeyFromEnv();
+}
+
+export function generateSignedManifest(packageDigests, assetDigests, options = {}) {
+  const keyPair = resolveSigningKey(options);
+  const releaseIdentity = options.releaseIdentity || resolveReleaseIdentity(options);
+  const evidence = options.evidence;
+  if (!evidence && options.testOnly !== true) {
+    throw new Error(
+      "Production release manifests require release evidence metadata before signing.",
+    );
+  }
+  const manifestPayload = {
+    schemaVersion: "2.0.0",
+    version: RELEASE_VERSION,
+    releaseDate: RELEASE_DATE,
+    releaseIdentity,
+    packages: packageDigests,
+    assets: assetDigests,
+    runtimes: { deno: PINNED_DENO_RUNTIME },
+    evidence: evidence || { status: "TEST_ONLY" },
+  };
+  return {
+    ...manifestPayload,
+    signatures: [{ ...signReleasePayload(manifestPayload, keyPair), signedAt: RELEASE_DATE }],
+  };
+}
+
 export function generateCycloneDxSbom(rootDir, packageDigests) {
   const components = [];
-
-  // Add all 15 workspace packages
   for (const [pkgName, meta] of Object.entries(packageDigests)) {
     components.push({
       type: meta.type === "app" ? "application" : "library",
@@ -586,8 +624,6 @@ export function generateCycloneDxSbom(rootDir, packageDigests) {
       scope: "required",
     });
   }
-
-  // Add core runtime and build dependencies
   const thirdPartyDeps = [
     { name: "zod", version: "3.25.76", license: "MIT" },
     { name: "better-sqlite3", version: "11.8.1", license: "MIT" },
@@ -597,7 +633,6 @@ export function generateCycloneDxSbom(rootDir, packageDigests) {
     { name: "turbo", version: "2.4.4", license: "MIT" },
     { name: "@biomejs/biome", version: "1.9.4", license: "MIT" },
   ];
-
   for (const dep of thirdPartyDeps) {
     components.push({
       type: "library",
@@ -609,7 +644,6 @@ export function generateCycloneDxSbom(rootDir, packageDigests) {
       scope: "required",
     });
   }
-
   return {
     bomFormat: "CycloneDX",
     specVersion: "1.5",
@@ -617,13 +651,7 @@ export function generateCycloneDxSbom(rootDir, packageDigests) {
     version: 1,
     metadata: {
       timestamp: RELEASE_DATE,
-      tools: [
-        {
-          vendor: "tool-evolver",
-          name: "package-release",
-          version: RELEASE_VERSION,
-        },
-      ],
+      tools: [{ vendor: "tool-evolver", name: "package-release", version: RELEASE_VERSION }],
       component: {
         type: "application",
         name: "tool-evolver",
@@ -635,17 +663,15 @@ export function generateCycloneDxSbom(rootDir, packageDigests) {
   };
 }
 
-/**
- * Generates release channel metadata (`channels.json`).
- * @param {string} manifestSha256
- * @returns {object}
- */
-export function generateChannelMetadata(manifestSha256) {
-  return {
-    schemaVersion: "1.0.0",
+export function generateChannelMetadata(manifestSha256, options = {}) {
+  const keyPair = resolveSigningKey(options);
+  const releaseIdentity = options.releaseIdentity || resolveReleaseIdentity(options);
+  const payload = {
+    schemaVersion: "2.0.0",
     minSupportedVersion: "0.1.0",
     currentVersion: RELEASE_VERSION,
     updatedAt: RELEASE_DATE,
+    releaseIdentity,
     channels: {
       stable: {
         version: RELEASE_VERSION,
@@ -655,96 +681,99 @@ export function generateChannelMetadata(manifestSha256) {
         releaseNotesUrl: `https://docs.tool-evolver.dev/release/v${RELEASE_VERSION}-release-notes`,
         isLatest: true,
       },
-      prerelease: {
-        version: "1.1.0-alpha.1",
-        releaseDate: RELEASE_DATE,
-        minSupportedVersion: RELEASE_VERSION,
-        isLatest: false,
-      },
     },
     rollbackReferences: {
       targetVersion: "0.1.0",
       minSafeVersion: "0.1.0",
-      rollbackTarball: "tool-evolver-v0.1.0-rollback.tar.gz",
-      rollbackSha256: sha256Hex("tool-evolver-v0.1.0-rollback"),
       instructionsUrl: "https://docs.tool-evolver.dev/release/rollback-procedure",
     },
+    revokedKeyIds: [...REVOKED_RELEASE_KEY_IDS],
+  };
+  return {
+    ...payload,
+    signatures: [{ ...signReleasePayload(payload, keyPair), signedAt: RELEASE_DATE }],
   };
 }
 
-/**
- * Orchestrates the full release packaging process.
- * @param {object} options
- * @returns {object} Results summary
- */
 export function packageRelease(options = {}) {
   const rootDir = options.rootDir || process.cwd();
   const skipBuild = options.skipBuild ?? false;
+  const testOnly = options.testOnly ?? process.env.TOOL_EVOLVER_RELEASE_TEST_ONLY === "1";
   const distDir =
     options.distDir ||
     options.outputDir ||
     path.resolve(rootDir, `dist/release/v${RELEASE_VERSION}`);
 
+  const releaseIdentity = resolveReleaseIdentity({ ...options, rootDir, testOnly });
+  const keyPair = resolveSigningKey({ ...options, testOnly });
+  let verificationEvidence = options.verificationEvidence;
+  if (!verificationEvidence && !testOnly && process.env.TOOL_EVOLVER_RELEASE_EVIDENCE_PATH) {
+    const evidencePath = path.resolve(rootDir, process.env.TOOL_EVOLVER_RELEASE_EVIDENCE_PATH);
+    verificationEvidence = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
+  }
+
   console.log(`📦 Packaging Tool Evolver V${RELEASE_VERSION} Release...`);
   console.log(`📂 Output Directory: ${distDir}`);
+  console.log(`🔐 Trust Domain: ${keyPair.trustDomain}`);
 
-  if (!skipBuild) {
-    buildWorkspacePackages(rootDir);
-  }
+  if (!skipBuild) buildWorkspacePackages(rootDir);
 
-  // 1. Package digests
   const packageDigests = generatePackageDigests(rootDir);
-  console.log(`📋 Computed digests for ${Object.keys(packageDigests).length} workspace packages.`);
-
-  // 2. Platform release tarballs
   const assetDigests = createPlatformReleaseTarballs(rootDir, distDir);
-  console.log(`📦 Generated ${Object.keys(assetDigests).length} platform release tarballs:`);
-  for (const asset of Object.values(assetDigests)) {
-    console.log(
-      `   - ${asset.filename} (${asset.sizeBytes} bytes, sha256: ${asset.sha256.slice(0, 16)}...)`,
-    );
-  }
-  // 3. Release Evidence Bundle
   const evidenceResult = writeReleaseEvidence({
     rootDir,
     distDir,
-    commitSha: options.commitSha,
+    releaseIdentity,
+    commitSha: releaseIdentity.commitSha,
+    keyId: keyPair.keyId,
+    testOnly,
+    verificationEvidence,
     syncDocs: options.syncDocs ?? false,
   });
-  console.log(
-    `📋 Generated complete V1 evidence bundle: release-evidence.json & RELEASE-EVIDENCE.md (${evidenceResult.evidence.summary.verifiedMilestones}/${evidenceResult.evidence.summary.totalMilestones} verified).`,
-  );
-
-  // 4. Signed release manifest
-  const manifest = generateSignedManifest(packageDigests, assetDigests, options);
-  manifest.evidence = {
+  const evidenceMetadata = {
     json: "release-evidence.json",
     markdown: "RELEASE-EVIDENCE.md",
     jsonSha256: evidenceResult.jsonSha256,
     markdownSha256: evidenceResult.markdownSha256,
     status: evidenceResult.evidence.status,
+    mode: evidenceResult.evidence.mode,
   };
+  const manifest = generateSignedManifest(packageDigests, assetDigests, {
+    keyPair,
+    releaseIdentity,
+    evidence: evidenceMetadata,
+    testOnly,
+  });
   const manifestPath = path.join(distDir, "manifest.json");
-  const manifestContent = JSON.stringify(manifest, null, 2);
-  fs.writeFileSync(manifestPath, manifestContent);
-  const manifestSha256 = sha256Hex(manifestContent);
-  console.log(
-    `✍️ Generated and signed release manifest: manifest.json (sha256: ${manifestSha256.slice(0, 16)}...)`,
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  const manifestSha256 = fileSha256(manifestPath);
+
+  fs.writeFileSync(
+    path.join(distDir, "sbom.json"),
+    JSON.stringify(generateCycloneDxSbom(rootDir, packageDigests), null, 2),
   );
-
-  // 5. CycloneDX SBOM
-  const sbom = generateCycloneDxSbom(rootDir, packageDigests);
-  const sbomPath = path.join(distDir, "sbom.json");
-  fs.writeFileSync(sbomPath, JSON.stringify(sbom, null, 2));
-  console.log(`📜 Generated CycloneDX 1.5 SBOM: sbom.json (${sbom.components.length} components).`);
-
-  // 6. Channel Metadata
-  const channels = generateChannelMetadata(manifestSha256);
-  const channelsPath = path.join(distDir, "channels.json");
-  fs.writeFileSync(channelsPath, JSON.stringify(channels, null, 2));
-  console.log(`🌐 Generated release channel metadata: channels.json (stable v${RELEASE_VERSION}).`);
-
-  console.log("\n🎉 Release packaging completed successfully!");
+  fs.writeFileSync(
+    path.join(distDir, "channels.json"),
+    JSON.stringify(
+      generateChannelMetadata(manifestSha256, { keyPair, releaseIdentity, testOnly }),
+      null,
+      2,
+    ),
+  );
+  fs.writeFileSync(
+    path.join(distDir, "release-trust.json"),
+    JSON.stringify(
+      {
+        schemaVersion: "1.0.0",
+        releaseVersion: RELEASE_VERSION,
+        trustDomain: keyPair.trustDomain,
+        signingKey: publicTrustRecord(keyPair),
+        revokedKeyIds: [...REVOKED_RELEASE_KEY_IDS],
+      },
+      null,
+      2,
+    ),
+  );
 
   return {
     success: true,
@@ -754,10 +783,13 @@ export function packageRelease(options = {}) {
     assetsCount: Object.keys(assetDigests).length,
     manifestSha256,
     evidenceSha256: evidenceResult.jsonSha256,
+    releaseIdentity,
+    publicTrust: publicTrustRecord(keyPair),
+    trustedKeys: trustedKeysFromSigningKey(keyPair),
+    testOnly,
   };
 }
 
-// CLI Execution
 if (
   process.argv[1] &&
   path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)

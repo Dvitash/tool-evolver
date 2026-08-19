@@ -157,8 +157,9 @@ export class CommandBroker extends BaseCapabilityBroker {
       }
     }
 
-    // 4. Validate against allowedBinaries - REJECT basename-only matching
+    // 4. Validate against canonical approved executable identities.
     const allowedBinaries = cmdCap.allowedBinaries ?? [];
+    const allowedCommands = cmdCap.allowedCommands ?? [];
     if (allowedBinaries.length > 0) {
       const resolvedAllowed = allowedBinaries.map((allowed) => {
         try {
@@ -184,10 +185,39 @@ export class CommandBroker extends BaseCapabilityBroker {
           { binary, realPath: identity.realPath, allowedBinaries },
         );
       }
-    } else if ((cmdCap.allowedCommands ?? []).length === 0) {
+    } else if (allowedCommands.length > 0) {
+      const allowedCommandIdentities = allowedCommands.map((commandProfile) => {
+        const allowedBinary = commandProfile.trim().split(/\s+/)[0];
+        try {
+          return resolveCanonicalBinary(allowedBinary, {
+            workspaceRoot,
+            allowNonExistent: false,
+            computeDigest: true,
+          });
+        } catch (error) {
+          throw new BrokerSecurityError(
+            "UNAUTHORIZED_BINARY",
+            `Configured allowed command '${commandProfile}' could not be resolved: ${(error as Error).message}`,
+            { commandProfile },
+          );
+        }
+      });
+      const isAllowedCommandIdentity = allowedCommandIdentities.some(
+        (allowedIdentity) =>
+          allowedIdentity.realPath === identity.realPath &&
+          allowedIdentity.canonicalPath === identity.canonicalPath,
+      );
+      if (!isAllowedCommandIdentity) {
+        throw new BrokerSecurityError(
+          "UNAUTHORIZED_BINARY",
+          `Binary '${binary}' (${identity.realPath}) is not permitted by allowedCommands`,
+          { binary, realPath: identity.realPath, allowedCommands },
+        );
+      }
+    } else {
       throw new BrokerSecurityError(
         "UNAUTHORIZED_BINARY",
-        `Binary '${binary}' is not permitted (no allowedBinaries or allowedCommands configured)`,
+        `Binary '${binary}' is not permitted (no canonical command identity configured)`,
         { binary },
       );
     }
@@ -255,9 +285,8 @@ export class CommandBroker extends BaseCapabilityBroker {
     const targetCwd = params.cwd ? path.resolve(workspaceRoot, params.cwd) : workspaceRoot;
     const inWorkspace = isPathInsideRoot(targetCwd, workspaceRoot);
     const inScratch = isPathInsideRoot(targetCwd, scratchDir);
-    const inTemp = isPathInsideRoot(targetCwd, os.tmpdir());
 
-    if (!inWorkspace && !inScratch && !inTemp) {
+    if (!inWorkspace && !inScratch) {
       throw new BrokerSecurityError(
         "WORKING_DIRECTORY_DENIED",
         `Working directory '${params.cwd}' resolves outside allowed roots (${workspaceRoot}): ${targetCwd}`,

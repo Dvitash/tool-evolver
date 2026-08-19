@@ -83,12 +83,13 @@ describe("CodeGenerator", () => {
     const opp = createMockOpportunity({
       classification: {
         title: "Run Git Command",
-        description: "Executes git commands",
+        description: "Executes the observed immutable git status command profile",
         taskClass: "command",
         pattern: "command",
         confidenceScore: 0.9,
         priority: "medium",
         suggestedToolName: "run_git_command",
+        commandProfiles: ["git status --porcelain"],
         inferredInputs: [{ name: "command", type: "string", description: "Command to execute" }],
       },
     });
@@ -97,6 +98,10 @@ describe("CodeGenerator", () => {
     const source = codeGen.generateSource(plan);
 
     expect(source).toContain("await broker.cmd.exec(command, args);");
+    expect(source).toContain('const command = "git";');
+    expect(source).toContain('const args = ["status","--porcelain"];');
+    expect(source).toContain("if (res.exitCode !== 0)");
+    expect(source).toContain("failed with exit code");
   });
 
   it("should generate TypeScript source for a network tool", () => {

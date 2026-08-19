@@ -694,7 +694,7 @@ export class RealProcessTopology {
    */
   async detectOpportunities(
     sessionEvents: NormalizedSessionEvent[] = [],
-  ): Promise<Array<{ id: string; pattern: string; toolName: string }>> {
+  ): Promise<Array<{ id: string; classification: { suggestedToolName?: string } }>> {
     const url = `${this.cloudBaseUrl}/v1/evolution/opportunity/detect`;
     const res = await fetch(url, {
       method: "POST",
@@ -704,7 +704,7 @@ export class RealProcessTopology {
         "x-tenant-account-id": this.tenant.accountId,
         "x-tenant-workspace-id": this.tenant.workspaceId,
       },
-      body: JSON.stringify({ sessionEvents }),
+      body: JSON.stringify({ events: sessionEvents }),
     });
 
     if (!res.ok) {
@@ -713,7 +713,7 @@ export class RealProcessTopology {
     }
 
     const data = (await res.json()) as {
-      opportunities?: Array<{ id: string; pattern: string; toolName: string }>;
+      opportunities?: Array<{ id: string; classification: { suggestedToolName?: string } }>;
     };
     this.recordProtocolEvent("http", "POST /v1/evolution/opportunity/detect", "ok");
     return data.opportunities ?? [];
@@ -737,7 +737,8 @@ export class RealProcessTopology {
 
     if (!res.ok) {
       this.recordProtocolEvent("http", "POST /v1/evolution/candidates/generate", "error");
-      throw new Error(`Candidate generation failed with status ${res.status}`);
+      const body = await res.text();
+      throw new Error(`Candidate generation failed with status ${res.status}: ${body}`);
     }
 
     const data = (await res.json()) as { candidate: EvolutionCandidate };
@@ -781,7 +782,8 @@ export default async function run(input) {
 
     if (!res.ok) {
       this.recordProtocolEvent("http", "POST /v1/evolution/candidates/publish", "error");
-      throw new Error(`Publish failed with status ${res.status}`);
+      const responseBody = await res.text();
+      throw new Error(`Publish failed with status ${res.status}: ${responseBody}`);
     }
 
     const data = (await res.json()) as {

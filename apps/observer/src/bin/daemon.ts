@@ -11,7 +11,28 @@ import { IpcServer } from "../ipc/server.js";
 import { DaemonLock } from "../lock.js";
 import { type DaemonPaths, ensureDaemonDirectories, resolvePaths } from "../paths.js";
 import { DaemonSupervisor, DefaultLogger } from "../supervisor.js";
-const VERSION = "0.1.0";
+
+function resolveVersion(): string {
+  const candidates = [
+    new URL("../../../../package.json", import.meta.url),
+    new URL("../../package.json", import.meta.url),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(fileURLToPath(candidate), "utf8")) as {
+        version?: unknown;
+      };
+      if (typeof parsed.version === "string" && parsed.version.length > 0) {
+        return parsed.version;
+      }
+    } catch {
+      // Continue to the next enclosing package candidate.
+    }
+  }
+  return "0.1.0";
+}
+
+const VERSION = process.env.TOOL_EVOLVER_RELEASE_VERSION ?? resolveVersion();
 
 function printHelp(): void {
   console.log(`
@@ -128,18 +149,17 @@ async function runForeground(options: {
     );
   }
 
-  // Write PID file
   try {
     await fs.promises.writeFile(paths.pidFilePath, String(process.pid), { mode: 0o644 });
   } catch {
-    // Ignore error writing PID file
+    // Ignore error writing PID file.
   }
 
   const supervisor = new DaemonSupervisor({
     config,
     paths,
     logger,
-    enableSignalHandlers: true,
+    enableSignalHandlers: false,
   });
 
   const ipcServer = new IpcServer({
@@ -155,33 +175,54 @@ async function runForeground(options: {
   await supervisor.start();
   await ipcServer.start();
 
-  const cleanup = async () => {
-    logger.info("Cleaning up daemon resources...");
-    try {
-      await ipcServer.stop();
-    } catch {
-      // Ignore
-    }
-    try {
-      await lock.release();
-    } catch {
-      // Ignore
-    }
-    try {
-      if (fs.existsSync(paths.pidFilePath)) {
-        await fs.promises.unlink(paths.pidFilePath);
+  let cleanupPromise: Promise<void> | null = null;
+  const cleanup = (reason: string): Promise<void> => {
+    if (cleanupPromise) return cleanupPromise;
+    cleanupPromise = (async () => {
+      logger.info("Cleaning up daemon resources...");
+      try {
+        await supervisor.stop({ reason });
+      } catch {
+        // Ignore shutdown errors while releasing process resources.
       }
-    } catch {
-      // Ignore
-    }
+      try {
+        await ipcServer.stop();
+      } catch {
+        // Ignore.
+      }
+      try {
+        await lock.release();
+      } catch {
+        // Ignore.
+      }
+      try {
+        if (fs.existsSync(paths.pidFilePath)) {
+          await fs.promises.unlink(paths.pidFilePath);
+        }
+      } catch {
+        // Ignore.
+      }
+    })();
+    return cleanupPromise;
   };
 
-  process.on("SIGINT", () => {
-    void cleanup().then(() => process.exit(0));
-  });
-  process.on("SIGTERM", () => {
-    void cleanup().then(() => process.exit(0));
-  });
+  let exitRequested = false;
+  const exitAfterCleanup = (reason: string) => {
+    if (exitRequested) return;
+    exitRequested = true;
+    void cleanup(reason).finally(() => process.exit(0));
+  };
+
+  process.once("SIGINT", () => exitAfterCleanup("SIGINT"));
+  process.once("SIGTERM", () => exitAfterCleanup("SIGTERM"));
+
+  const shutdownWatcher = setInterval(() => {
+    if (supervisor.currentState === "stopped") {
+      clearInterval(shutdownWatcher);
+      exitAfterCleanup("authenticated IPC graceful shutdown");
+    }
+  }, 100);
+  shutdownWatcher.unref();
 }
 
 async function runBackground(

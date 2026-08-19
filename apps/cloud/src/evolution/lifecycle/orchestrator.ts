@@ -16,6 +16,7 @@ import { type OutboxPublisher, OutboxRepository } from "../../db/outbox.js";
 import type { CloudCatalogService } from "../../mcp/catalog-service.js";
 import type { DurableQueue } from "../../queue/queue.js";
 import type { ObjectStore } from "../../storage/object-store.js";
+import type { ObservationRepository } from "../../storage/repositories/observation-repository.js";
 import { type TenantContext, TenantGuard } from "../../tenant.js";
 import { ToolArtifactRegistryService } from "../artifacts/service.js";
 import { CandidateEvaluationService } from "../evaluation/service.js";
@@ -62,6 +63,10 @@ export interface CandidateLifecycleOrchestratorOptions {
   outboxPublisher?: OutboxPublisher;
   queue?: DurableQueue;
   objectStore?: ObjectStore;
+  observationRepo?: ObservationRepository;
+  requirePersistedReplayEvidence?: boolean;
+  replayEvidenceWaitMs?: number;
+  replayEvidencePollMs?: number;
   evidenceMaxAgeMs?: number;
   maxRepairAttempts?: number;
 }
@@ -100,6 +105,10 @@ export class CandidateLifecycleOrchestrator {
   readonly outboxPublisher?: OutboxPublisher;
   readonly queue?: DurableQueue;
   readonly objectStore?: ObjectStore;
+  readonly observationRepo?: ObservationRepository;
+  readonly requirePersistedReplayEvidence: boolean;
+  readonly replayEvidenceWaitMs: number;
+  readonly replayEvidencePollMs: number;
   readonly evidenceMaxAgeMs: number;
   readonly maxRepairAttempts: number;
 
@@ -150,6 +159,10 @@ export class CandidateLifecycleOrchestrator {
     this.outboxPublisher = opts.outboxPublisher;
     this.queue = opts.queue;
     this.objectStore = opts.objectStore;
+    this.observationRepo = opts.observationRepo;
+    this.requirePersistedReplayEvidence = opts.requirePersistedReplayEvidence ?? false;
+    this.replayEvidenceWaitMs = opts.replayEvidenceWaitMs ?? 0;
+    this.replayEvidencePollMs = Math.max(1, opts.replayEvidencePollMs ?? 25);
     this.evidenceMaxAgeMs = opts.evidenceMaxAgeMs ?? 24 * 60 * 60 * 1000;
     this.maxRepairAttempts = opts.maxRepairAttempts ?? 3;
   }
@@ -313,7 +326,13 @@ export class CandidateLifecycleOrchestrator {
       valRecord.currentState === "rejected" ||
       valRecord.currentState === "dead_letter"
     ) {
-      throw new Error(`Candidate validation failed with state '${valRecord.currentState}'`);
+      const validationDiagnostics = {
+        terminalReason: valRecord.terminalReason,
+        validationResult: valRecord.validationResult,
+      };
+      throw new Error(
+        `Candidate validation failed with state '${valRecord.currentState}': ${JSON.stringify(validationDiagnostics)}`,
+      );
     }
 
     const replayRecord = await this.stepReplay(tenant, candidate.id, options);
@@ -322,7 +341,9 @@ export class CandidateLifecycleOrchestrator {
       replayRecord.currentState === "rejected" ||
       replayRecord.currentState === "dead_letter"
     ) {
-      throw new Error(`Candidate replay failed with state '${replayRecord.currentState}'`);
+      throw new Error(
+        `Candidate replay failed with state '${replayRecord.currentState}': ${JSON.stringify({ terminalReason: replayRecord.terminalReason, replayResult: replayRecord.replayResult })}`,
+      );
     }
 
     const evalRecord = await this.stepEvaluate(tenant, candidate.id, options);
@@ -606,6 +627,76 @@ export class CandidateLifecycleOrchestrator {
     }
   }
 
+  private async resolveReplayEvidence(
+    tenant: TenantContext,
+    candidate: EvolutionCandidate,
+    baselineEvents?: NormalizedSessionEvent[],
+  ): Promise<EvidenceSource> {
+    if (baselineEvents && baselineEvents.length > 0) {
+      return { id: `candidate_${candidate.id}_explicit_evidence`, events: baselineEvents };
+    }
+
+    const evidenceEventIds = candidate.trigger?.evidenceEventIds ?? [];
+    const persistedById = new Map<string, NormalizedSessionEvent>();
+    const deadline = Date.now() + this.replayEvidenceWaitMs;
+
+    if (this.observationRepo && evidenceEventIds.length > 0) {
+      let continuePolling = true;
+      while (continuePolling) {
+        for (const eventId of evidenceEventIds) {
+          if (persistedById.has(eventId)) continue;
+          const entity = await this.observationRepo.getEventById(tenant, eventId);
+          if (!entity) continue;
+          persistedById.set(eventId, {
+            eventId: entity.id,
+            sessionId: entity.sessionId,
+            timestamp: entity.timestamp,
+            type: entity.eventType as NormalizedSessionEvent["type"],
+            schemaVersion: entity.schemaVersion,
+            causalRef: {
+              causalSequence: entity.causalSequence,
+              parentId: entity.parentId ?? undefined,
+              rootId: entity.rootId ?? undefined,
+              turnIndex: entity.turnIndex ?? undefined,
+              stepIndex: entity.stepIndex ?? undefined,
+              traceId: entity.traceId ?? undefined,
+              spanId: entity.spanId ?? undefined,
+            },
+            redaction: entity.redaction ?? { isRedacted: false, rulesApplied: [] },
+            ...entity.payload,
+          } as unknown as NormalizedSessionEvent);
+        }
+
+        continuePolling = persistedById.size < evidenceEventIds.length && Date.now() < deadline;
+        if (continuePolling) {
+          await new Promise((resolve) => setTimeout(resolve, this.replayEvidencePollMs));
+        }
+      }
+    }
+
+    const persistedEvents = [...persistedById.values()].sort((left, right) => {
+      const timeDelta = Date.parse(left.timestamp) - Date.parse(right.timestamp);
+      if (timeDelta !== 0) return timeDelta;
+      return (left.causalRef?.causalSequence ?? 0) - (right.causalRef?.causalSequence ?? 0);
+    });
+    const missingEventIds = evidenceEventIds.filter((eventId) => !persistedById.has(eventId));
+
+    if (
+      persistedEvents.length > 0 &&
+      (!this.requirePersistedReplayEvidence || missingEventIds.length === 0)
+    ) {
+      return { id: `candidate_${candidate.id}_persisted_evidence`, events: persistedEvents };
+    }
+
+    if (this.requirePersistedReplayEvidence) {
+      throw new Error(
+        `Candidate '${candidate.id}' is missing tenant-scoped persisted replay evidence after ${this.replayEvidenceWaitMs}ms. Missing IDs: ${missingEventIds.join(", ") || "all evidence IDs absent"}`,
+      );
+    }
+
+    return { id: `candidate_${candidate.id}_test_evidence`, events: persistedEvents };
+  }
+
   /**
    * Stage 2: Historical Replay
    * Replays pure-compute, brokered atomic, and workflow candidates against baseline session evidence.
@@ -669,8 +760,7 @@ export class CandidateLifecycleOrchestrator {
             requiredCapabilities,
             workflowDefinition,
           },
-          evidence:
-            options.baselineEvents ?? ({ id: "default_evidence", events: [] } as EvidenceSource),
+          evidence: await this.resolveReplayEvidence(tenant, candidate, options.baselineEvents),
           ...options.replayOptions,
         },
       );
@@ -1348,18 +1438,6 @@ export class CandidateLifecycleOrchestrator {
           workflowDefinition: activeRevision?.artifacts?.workflowDefinition,
         },
       );
-
-      // 6. Register in CloudCatalogService
-      if (this.catalogService) {
-        this.catalogService.registerTool({
-          name: toolVersion.manifest.name,
-          description: toolVersion.manifest.description,
-          inputSchema: toolVersion.manifest.parameters,
-          handler: async () => ({
-            content: [{ type: "text", text: "Tool executed successfully" }],
-          }),
-        });
-      }
 
       const publicationRecordId = `pub_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
       const idempotencyKey =

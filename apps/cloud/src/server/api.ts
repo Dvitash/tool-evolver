@@ -15,7 +15,7 @@ import {
   createAuthService,
   handleAuthRoutes,
 } from "../auth/index.js";
-import { type CloudConfig, loadConfig } from "../config.js";
+import { type CloudConfig, assertSecureCloudConfig, loadConfig } from "../config.js";
 import { type DatabasePool, createDatabasePool } from "../db/client.js";
 import { OutboxPublisher, OutboxRepository } from "../db/outbox.js";
 import {
@@ -33,6 +33,15 @@ import { createJobEnvelope } from "../queue/envelope.js";
 import { type DurableQueue, createDurableQueue } from "../queue/queue.js";
 import { type ObjectStore, createObjectStore } from "../storage/object-store.js";
 import { type TenantContext, TenantGuard, getTenantContext, runWithTenant } from "../tenant.js";
+import {
+  assertRequestScope,
+  buildStandardHeaders,
+  classifyHttpError,
+  isOriginAllowed,
+  probeReadiness,
+  readJsonBody,
+  readRequestBody,
+} from "./security.js";
 
 /**
  * Health check status response.
@@ -98,6 +107,7 @@ export class CloudServer {
 
   constructor(options: CloudServerOptions = {}) {
     this.config = options.config ?? loadConfig();
+    assertSecureCloudConfig(this.config);
     this.dbPool = options.dbPool ?? createDatabasePool(this.config.database);
     this.objectStore = options.objectStore ?? createObjectStore(this.config.storage);
     this.queue = options.queue ?? createDurableQueue(this.config.queue, this.dbPool);
@@ -174,7 +184,7 @@ export class CloudServer {
     this.server.on("upgrade", async (req, socket: Socket, _head) => {
       try {
         const authContext = await authenticateWebSocket(req, this.authService, {
-          allowDevHeaders: true,
+          allowDevHeaders: this.config.auth.allowDevAuth,
         });
 
         if (!authContext) {
@@ -237,31 +247,7 @@ export class CloudServer {
   }
 
   private async parseJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
-    const { promise, resolve, reject } = Promise.withResolvers<Record<string, unknown>>();
-    const chunks: Buffer[] = [];
-
-    req.on("data", (chunk: Buffer) => {
-      chunks.push(chunk);
-    });
-
-    req.on("end", () => {
-      if (chunks.length === 0) {
-        resolve({});
-        return;
-      }
-      try {
-        const bodyStr = Buffer.concat(chunks).toString("utf8");
-        resolve(bodyStr ? JSON.parse(bodyStr) : {});
-      } catch (err) {
-        reject(new Error("Invalid JSON payload"));
-      }
-    });
-
-    req.on("error", (err) => {
-      reject(err);
-    });
-
-    return promise;
+    return readJsonBody(req, this.config.server.bodyLimitBytes);
   }
 
   private sendJson(
@@ -281,17 +267,13 @@ export class CloudServer {
     const traceId = (req.headers["x-trace-id"] as string) || randomUUID();
     const requestId = (req.headers["x-request-id"] as string) || randomUUID();
 
-    // Standard headers
-    const standardHeaders: Record<string, string> = {
-      "x-trace-id": traceId,
-      "x-request-id": requestId,
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers":
-        "Content-Type, Authorization, x-account-id, x-workspace-id, x-trace-id, x-request-id",
-      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-    };
+    const standardHeaders = buildStandardHeaders(req, this.config, traceId, requestId);
 
     if (req.method === "OPTIONS") {
+      if (!isOriginAllowed(req, this.config)) {
+        this.sendJson(res, 403, { error: "CORS_ORIGIN_DENIED" }, standardHeaders);
+        return;
+      }
       res.writeHead(204, standardHeaders);
       res.end();
       return;
@@ -316,22 +298,14 @@ export class CloudServer {
     }
 
     if (path === "/health/ready" && req.method === "GET") {
-      const dbOk = this.dbPool.isConnected();
-      const storageOk = true;
-      const queueOk = true;
-      const allOk = dbOk && storageOk && queueOk;
-
+      const checks = await probeReadiness(this.dbPool, this.objectStore, this.queue);
+      const allOk = checks.database && checks.storage && checks.queue;
       const healthStatus: HealthStatus = {
-        status: allOk ? "ok" : "degraded",
+        status: allOk ? "ok" : "unready",
         timestamp: Date.now(),
         uptime: (Date.now() - this.startTime) / 1000,
-        checks: {
-          database: dbOk,
-          storage: storageOk,
-          queue: queueOk,
-        },
+        checks,
       };
-
       this.sendJson(res, allOk ? 200 : 503, healthStatus, standardHeaders);
       return;
     }
@@ -353,13 +327,13 @@ export class CloudServer {
         );
         if (handled) return;
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
+        const failure = classifyHttpError(err);
         this.sendJson(
           res,
-          400,
+          failure.status === 500 ? 400 : failure.status,
           {
-            error: "INVALID_REQUEST",
-            message,
+            error: failure.status === 500 ? "INVALID_REQUEST" : failure.code,
+            message: failure.message,
           },
           standardHeaders,
         );
@@ -370,52 +344,26 @@ export class CloudServer {
     // 3. For all other /v1/* endpoints, authenticate and establish tenant context
     // 3. For all other /v1/* endpoints, /mcp, or /mcp/sse, authenticate and establish tenant context
     if (path.startsWith("/v1/") || path === "/mcp" || path === "/mcp/sse") {
-      const isPublicRegistration = path === "/v1/accounts" && req.method === "POST";
       let activeContext: TenantContext;
       let authContext: AuthContext;
 
-      if (isPublicRegistration) {
-        activeContext = {
-          accountId: "system",
-          workspaceId: "system",
-          traceId,
-          correlationId: requestId,
-        };
-        authContext = {
-          tenant: activeContext,
-          isDevAuth: false,
-        };
-      } else {
-        try {
-          authContext = await authenticateHttpRequest(req, this.authService, {
-            allowDevHeaders: true,
-          });
-          activeContext = authContext.tenant;
-        } catch (err: unknown) {
-          if (err instanceof TokenError) {
-            this.sendJson(
-              res,
-              err.httpStatus,
-              {
-                error: err.code === "unauthorized_client" ? "UNAUTHORIZED" : err.code.toUpperCase(),
-                message: err.message,
-              },
-              standardHeaders,
-            );
-            return;
-          }
-          const message = err instanceof Error ? err.message : String(err);
-          this.sendJson(
-            res,
-            401,
-            {
-              error: "UNAUTHORIZED",
-              message: message || "Missing or invalid authorization credentials",
-            },
-            standardHeaders,
-          );
-          return;
-        }
+      try {
+        authContext = await authenticateHttpRequest(req, this.authService, {
+          allowDevHeaders: this.config.auth.allowDevAuth,
+        });
+        activeContext = authContext.tenant;
+      } catch (err: unknown) {
+        const failure = classifyHttpError(err);
+        this.sendJson(
+          res,
+          failure.status === 500 ? 401 : failure.status,
+          {
+            error: failure.code === "UNAUTHORIZED_CLIENT" ? "UNAUTHORIZED" : failure.code,
+            message: failure.message || "Missing or invalid authorization credentials",
+          },
+          standardHeaders,
+        );
+        return;
       }
 
       try {
@@ -423,14 +371,11 @@ export class CloudServer {
           await this.routeV1(req, res, path, url, standardHeaders, authContext);
         });
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
+        const failure = classifyHttpError(err);
         this.sendJson(
           res,
-          500,
-          {
-            error: "INTERNAL_ERROR",
-            message,
-          },
+          failure.status,
+          { error: failure.code, message: failure.message },
           standardHeaders,
         );
       }
@@ -457,6 +402,7 @@ export class CloudServer {
 
     // Observation Batch Ingestion
     if (path === "/v1/observations/batch" && req.method === "POST") {
+      assertRequestScope(authContext, "observations:write");
       await handleObservationBatchRoute(
         req,
         res,
@@ -470,6 +416,7 @@ export class CloudServer {
 
     // Telemetry Batch Ingestion
     if (path === "/v1/telemetry/batch" && req.method === "POST") {
+      assertRequestScope(authContext, "telemetry:write");
       await handleTelemetryBatchRoute(
         req,
         res,
@@ -483,30 +430,35 @@ export class CloudServer {
 
     // Cloud MCP Protocol Endpoint (JSON-RPC)
     if ((path === "/v1/mcp" || path === "/mcp") && req.method === "POST") {
+      assertRequestScope(authContext, "catalog:read");
       await this.mcpServer.handleHttpJsonRpc(req, res, authContext);
       return;
     }
 
     // Cloud MCP SSE Streaming Transport
     if ((path === "/v1/mcp/sse" || path === "/mcp/sse") && req.method === "GET") {
+      assertRequestScope(authContext, "catalog:read");
       await this.mcpServer.handleSseStream(req, res, authContext);
       return;
     }
 
     // Cloud MCP Tool Invocation (Gateway Proxy compatibility)
     if (path === "/v1/tools/invoke" && req.method === "POST") {
+      assertRequestScope(authContext, "catalog:read");
       await this.mcpServer.handleToolInvoke(req, res, authContext);
       return;
     }
 
     // Cloud Catalog Snapshot
     if (path === "/v1/catalog/snapshot" && (req.method === "GET" || req.method === "POST")) {
+      assertRequestScope(authContext, "catalog:read");
       await this.mcpServer.handleCatalogSnapshot(req, res, authContext);
       return;
     }
 
     // Accounts
     if (path === "/v1/accounts") {
+      assertRequestScope(authContext, "admin:all");
       if (req.method === "GET") {
         const result = await this.dbPool.query("SELECT * FROM accounts WHERE id = $1", [
           tenant.accountId,
@@ -530,6 +482,7 @@ export class CloudServer {
 
     // Workspaces
     if (path === "/v1/workspaces") {
+      assertRequestScope(authContext, "admin:all");
       if (req.method === "GET") {
         const result = await this.dbPool.query("SELECT * FROM workspaces WHERE account_id = $1", [
           tenant.accountId,
@@ -558,6 +511,7 @@ export class CloudServer {
 
     // Devices
     if (path === "/v1/devices") {
+      assertRequestScope(authContext, "device:connect");
       if (req.method === "GET") {
         const result = await this.dbPool.query(
           "SELECT * FROM devices WHERE account_id = $1 AND workspace_id = $2",
@@ -604,6 +558,11 @@ export class CloudServer {
 
     // Queue Jobs
     if (path === "/v1/jobs") {
+      assertRequestScope(authContext, "admin:all");
+      if (this.config.environment !== "development" && this.config.environment !== "test") {
+        this.sendJson(res, 404, { error: "NOT_FOUND" }, headers);
+        return;
+      }
       if (req.method === "POST") {
         const body = await this.parseJsonBody(req);
         const envelope = createJobEnvelope({
@@ -627,6 +586,7 @@ export class CloudServer {
 
     // Dead Letter Queue
     if (path === "/v1/jobs/dead-letter") {
+      assertRequestScope(authContext, "admin:all");
       if (req.method === "GET") {
         const dlqJobs = await this.queue.getDeadLetterJobs();
         const filtered = dlqJobs.filter(
@@ -638,6 +598,7 @@ export class CloudServer {
     }
 
     if (path === "/v1/jobs/dead-letter/requeue" && req.method === "POST") {
+      assertRequestScope(authContext, "admin:all");
       const body = await this.parseJsonBody(req);
       const deadLetterId = body.deadLetterId as string;
       if (!deadLetterId) {
@@ -654,7 +615,12 @@ export class CloudServer {
       const body = await this.parseJsonBody(req);
       const key = body.key as string;
       const method = (body.method as "GET" | "PUT") || "GET";
-      const ttl = Number(body.ttlSeconds ?? 3600);
+      assertRequestScope(authContext, method === "PUT" ? "deployments:write" : "artifacts:read");
+      const ttl = Math.min(Math.max(Number(body.ttlSeconds ?? 3600), 1), 3600);
+      if (!key || (method !== "GET" && method !== "PUT")) {
+        this.sendJson(res, 400, { error: "BAD_REQUEST" }, headers);
+        return;
+      }
 
       const scopedKey = `${tenant.accountId}/${tenant.workspaceId}/${key}`;
 
@@ -674,6 +640,7 @@ export class CloudServer {
       const scopedKey = `${tenant.accountId}/${tenant.workspaceId}/${rawKey}`;
 
       if (req.method === "GET") {
+        assertRequestScope(authContext, "artifacts:read");
         try {
           const buffer = await this.objectStore.getObject(scopedKey);
           const meta = await this.objectStore.getMetadata(scopedKey);
@@ -696,13 +663,8 @@ export class CloudServer {
       }
 
       if (req.method === "PUT") {
-        const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
-        const chunks: Buffer[] = [];
-        req.on("data", (chunk: Buffer) => chunks.push(chunk));
-        req.on("end", () => resolve(Buffer.concat(chunks)));
-        req.on("error", reject);
-
-        const data = await promise;
+        assertRequestScope(authContext, "deployments:write");
+        const data = await readRequestBody(req, this.config.server.bodyLimitBytes);
         const meta = await this.objectStore.putObject(scopedKey, data, {
           contentType: req.headers["content-type"] as string,
           sha256: req.headers["x-sha256"] as string,
@@ -715,6 +677,7 @@ export class CloudServer {
 
     // Outbox
     if (path === "/v1/outbox") {
+      assertRequestScope(authContext, "admin:all");
       if (req.method === "GET") {
         const records = await OutboxRepository.fetchPending(this.dbPool);
         const scoped = records.filter(
@@ -739,14 +702,23 @@ export class CloudServer {
     }
 
     if (path === "/v1/outbox/dispatch" && req.method === "POST") {
+      assertRequestScope(authContext, "admin:all");
       const dispatched = await this.outboxPublisher.dispatchBatch();
       this.sendJson(res, 200, { dispatchedCount: dispatched }, headers);
       return;
     }
     if (this.customRouteHandler) {
+      if (path.startsWith("/v1/evolution/")) {
+        assertRequestScope(
+          authContext,
+          path === "/v1/evolution/catalog" && req.method === "GET"
+            ? "catalog:read"
+            : "deployments:write",
+        );
+      }
       const body =
         req.method === "POST" || req.method === "PUT" || req.method === "PATCH"
-          ? await this.parseJsonBody(req).catch(() => ({}))
+          ? await this.parseJsonBody(req)
           : {};
       const handled = await this.customRouteHandler(
         req,

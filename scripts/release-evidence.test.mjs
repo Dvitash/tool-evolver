@@ -16,12 +16,7 @@ import {
   getGitCommitSha,
   writeReleaseEvidence,
 } from "./generate-release-evidence.mjs";
-import {
-  DEFAULT_RELEASE_KEY,
-  PLATFORMS,
-  WORKSPACE_PACKAGES,
-  packageRelease,
-} from "./package-release.mjs";
+import { PLATFORMS, WORKSPACE_PACKAGES, packageRelease } from "./package-release.mjs";
 import {
   generateChecksumsAndSignatures,
   generateGitHubReleaseBundle,
@@ -67,18 +62,18 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
     });
 
     it("generates evidence where all 21 milestones are verified and files exist on disk", () => {
-      const evidence = generateReleaseEvidence({ rootDir });
+      const evidence = generateReleaseEvidence({ rootDir, testOnly: true });
 
-      expect(evidence.schemaVersion).toBe("1.0.0");
+      expect(evidence.schemaVersion).toBe("2.0.0");
       expect(evidence.release).toBe(RELEASE_VERSION);
-      expect(evidence.status).toBe("VERIFIED");
+      expect(evidence.status).toBe("TEST_ONLY");
       expect(evidence.parentEpic).toBe(PARENT_EPIC_ID);
       expect(evidence.summary.totalMilestones).toBe(21);
       expect(evidence.summary.verifiedMilestones).toBe(21);
       expect(evidence.milestones).toHaveLength(21);
 
       for (const m of evidence.milestones) {
-        expect(m.status).toBe("VERIFIED");
+        expect(m.status).toBe("TEST_ONLY");
         expect(m.artifacts.length).toBeGreaterThan(0);
         expect(m.verificationSuites.length).toBeGreaterThan(0);
 
@@ -86,7 +81,6 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
           expect(artifact.exists).toBe(true);
           expect(artifact.sha256).toMatch(/^[0-9a-f]{64}$/);
 
-          // Confirm actual file exists and matches digest
           const fullPath = path.resolve(rootDir, artifact.path);
           expect(fs.existsSync(fullPath)).toBe(true);
           expect(fileSha256(fullPath)).toBe(artifact.sha256);
@@ -94,10 +88,9 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
 
         for (const suite of m.verificationSuites) {
           expect(suite.exists).toBe(true);
-          expect(suite.status).toBe("PASSED");
+          expect(suite.status).toBe("TEST_ONLY");
           expect(suite.sha256).toMatch(/^[0-9a-f]{64}$/);
 
-          // Confirm actual test suite exists on disk and matches digest
           const fullPath = path.resolve(rootDir, suite.path);
           expect(fs.existsSync(fullPath)).toBe(true);
           expect(fileSha256(fullPath)).toBe(suite.sha256);
@@ -108,14 +101,14 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
 
   describe("2. Qualification Coverage (Platforms, Harnesses, Cloud Staging & Security)", () => {
     it("includes all 5 required platform qualification lanes", () => {
-      const evidence = generateReleaseEvidence({ rootDir });
+      const evidence = generateReleaseEvidence({ rootDir, testOnly: true });
       const platforms = evidence.qualification.platforms;
 
       expect(platforms.totalLanes).toBe(5);
-      expect(platforms.passedLanes).toBe(5);
+      expect(platforms.passedLanes).toBe(0);
 
       const laneIds = platforms.lanes.map((l) => l.id);
-      expect(laneIds).toEqual(["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "wsl"]);
+      expect(laneIds).toEqual([]);
 
       for (const lane of platforms.lanes) {
         expect(lane.status).toBe("QUALIFIED");
@@ -124,14 +117,14 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
     });
 
     it("includes all 3 supported AI harnesses with qualification evidence", () => {
-      const evidence = generateReleaseEvidence({ rootDir });
+      const evidence = generateReleaseEvidence({ rootDir, testOnly: true });
       const harnesses = evidence.qualification.harnesses;
 
       expect(harnesses.totalHarnesses).toBe(3);
-      expect(harnesses.qualifiedHarnesses).toBe(3);
+      expect(harnesses.qualifiedHarnesses).toBe(0);
 
       const harnessIds = harnesses.harnesses.map((h) => h.id);
-      expect(harnessIds).toEqual(["claude-code", "codex-cli", "omp"]);
+      expect(harnessIds).toEqual([]);
 
       for (const h of harnesses.harnesses) {
         expect(h.status).toBe("QUALIFIED");
@@ -140,31 +133,25 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
     });
 
     it("includes cloud staging backup/restore, chaos matrix, and soak profile", () => {
-      const evidence = generateReleaseEvidence({ rootDir });
+      const evidence = generateReleaseEvidence({ rootDir, testOnly: true });
       const cloud = evidence.qualification.cloudStaging;
 
-      expect(cloud.backupRestoreRehearsal.status).toBe("QUALIFIED");
-      expect(cloud.faultInjectionMatrix.status).toBe("QUALIFIED");
-      expect(cloud.soakPerformance.status).toBe("QUALIFIED");
-      expect(cloud.soakPerformance.p95LatencyMs).toBeLessThan(50);
-      expect(cloud.soakPerformance.errorRate).toBe("0.00%");
+      expect(cloud.backupRestoreRehearsal.status).toBe("TEST_ONLY");
+      expect(cloud.faultInjectionMatrix.status).toBe("TEST_ONLY");
+      expect(cloud.soakPerformance.status).toBe("TEST_ONLY");
     });
 
     it("records security and boundary audit status with zero violations", () => {
-      const evidence = generateReleaseEvidence({ rootDir });
+      const evidence = generateReleaseEvidence({ rootDir, testOnly: true });
       const sec = evidence.qualification.securityAudit;
 
-      expect(sec.secretLeaksDetected).toBe(0);
-      expect(sec.boundaryViolations).toBe(0);
-      expect(sec.circularDependencies).toBe(0);
-      expect(sec.adrsEnforced).toBe(10);
-      expect(sec.status).toBe("PASSED");
+      expect(sec.status).toBe("TEST_ONLY");
     });
   });
 
   describe("3. Evidence File Writing and Formatting", () => {
     it("formats markdown document with complete traceability table", () => {
-      const evidence = generateReleaseEvidence({ rootDir });
+      const evidence = generateReleaseEvidence({ rootDir, testOnly: true });
       const md = formatReleaseEvidenceMarkdown(evidence);
 
       expect(md).toContain("# Comprehensive Release Evidence Trace (REM-001 through REM-020)");
@@ -183,6 +170,7 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
         rootDir,
         distDir: tempReleaseDir,
         syncDocs: false,
+        testOnly: true,
       });
 
       expect(fs.existsSync(res.jsonPath)).toBe(true);
@@ -192,33 +180,36 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
 
       const parsed = JSON.parse(fs.readFileSync(res.jsonPath, "utf8"));
       expect(parsed.release).toBe(RELEASE_VERSION);
-      expect(parsed.status).toBe("VERIFIED");
+      expect(parsed.status).toBe("TEST_ONLY");
       expect(parsed.milestones).toHaveLength(21);
     });
   });
 
   describe("4. Release Verification Integration (verifyReleaseEvidence)", () => {
     it("passes verification on a fully packaged release directory", () => {
-      // Package in temporary directory
-      packageRelease({
+      const packaged = packageRelease({
         rootDir,
         distDir: tempReleaseDir,
         skipBuild: true,
+        testOnly: true,
       });
 
       const fileViolations = verifyReleaseFiles(tempReleaseDir);
       expect(fileViolations).toHaveLength(0);
 
-      const evidenceViolations = verifyReleaseEvidence(tempReleaseDir);
+      const evidenceViolations = verifyReleaseEvidence(tempReleaseDir, { allowTestEvidence: true });
       expect(evidenceViolations).toHaveLength(0);
 
       const fullVerify = verifyRelease({
         rootDir,
         releaseDir: tempReleaseDir,
+        trustedKeys: packaged.trustedKeys,
+        allowTestEvidence: true,
+        expectedCommitSha: packaged.releaseIdentity.commitSha,
       });
       expect(fullVerify.valid).toBe(true);
       expect(fullVerify.violations).toHaveLength(0);
-    });
+    }, 15_000);
 
     it("detects missing evidence files and incomplete milestones", () => {
       const brokenDir = fs.mkdtempSync(path.join(os.tmpdir(), "broken-release-evidence-"));
@@ -227,7 +218,6 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
         const missingRes = verifyReleaseEvidence(brokenDir);
         expect(missingRes.some((v) => v.rule === "MISSING_EVIDENCE_JSON")).toBe(true);
 
-        // Write incomplete evidence JSON
         const badEvidence = {
           release: "0.9.0",
           status: "INCOMPLETE",
@@ -260,45 +250,56 @@ describe("Release Evidence & Publication Suite (REM-020)", () => {
           distDir: pubDir,
           skipBuild: true,
           syncDocs: false,
+          testOnly: true,
+          approvals: [{ role: "TestReviewer", reviewer: "test-only", status: "TEST_ONLY" }],
+          cloudPromotionEvidence: {
+            status: "TEST_ONLY",
+            promotedWithoutRebuild: true,
+            previousVersionRecoverable: "0.1.0",
+          },
+          postReleaseSmokeEvidence: {
+            source: "executed-smoke-suite",
+            results: {
+              cleanInstall: { status: "TEST_ONLY" },
+              authBootstrap: { status: "TEST_ONLY" },
+              canaryTrafficRouting: { status: "TEST_ONLY" },
+              instantRollback: { status: "TEST_ONLY" },
+            },
+          },
         });
         expect(pubResult.success).toBe(true);
         expect(pubResult.version).toBe(RELEASE_VERSION);
         expect(pubResult.releaseTag).toBe(`v${RELEASE_VERSION}`);
-        expect(pubResult.approvals).toHaveLength(3);
+        expect(pubResult.approvals).toHaveLength(1);
         expect(pubResult.manifestSha256).toMatch(/^[0-9a-f]{64}$/);
         expect(pubResult.evidenceSha256).toMatch(/^[0-9a-f]{64}$/);
 
-        // Verify SHA256SUMS and signature
         const sumsPath = path.join(pubDir, "SHA256SUMS");
         const sigPath = path.join(pubDir, "SHA256SUMS.sig");
         expect(fs.existsSync(sumsPath)).toBe(true);
         expect(fs.existsSync(sigPath)).toBe(true);
 
-        // Verify npm provenance
         const provPath = path.join(pubDir, "npm-provenance.json");
         expect(fs.existsSync(provPath)).toBe(true);
         const prov = JSON.parse(fs.readFileSync(provPath, "utf8"));
         expect(prov.statement.predicate.materials).toHaveLength(WORKSPACE_PACKAGES.length);
         expect(pubResult.npmProvenance.smokeTestPassed).toBe(true);
 
-        // Verify GitHub release bundle
         const ghReleasePath = path.join(pubDir, "github-release.json");
         const ghNotesPath = path.join(pubDir, "github-release-notes.md");
         expect(fs.existsSync(ghReleasePath)).toBe(true);
         expect(fs.existsSync(ghNotesPath)).toBe(true);
 
-        // Verify Cloud promotion gate
         expect(pubResult.cloudPromotion.promotedWithoutRebuild).toBe(true);
         expect(pubResult.cloudPromotion.previousVersionRecoverable).toBe("0.1.0");
 
-        // Verify smoke tests
-        expect(pubResult.smokeTests.cleanInstall.status).toBe("PASSED");
-        expect(pubResult.smokeTests.authBootstrap.status).toBe("PASSED");
-        expect(pubResult.smokeTests.canaryTrafficRouting.status).toBe("PASSED");
-        expect(pubResult.smokeTests.instantRollback.status).toBe("PASSED");
+        expect(pubResult.smokeTests.cleanInstall.status).toBe("TEST_ONLY");
+        expect(pubResult.smokeTests.authBootstrap.status).toBe("TEST_ONLY");
+        expect(pubResult.smokeTests.canaryTrafficRouting.status).toBe("TEST_ONLY");
+        expect(pubResult.smokeTests.instantRollback.status).toBe("TEST_ONLY");
       } finally {
         fs.rmSync(pubDir, { recursive: true, force: true });
       }
-    });
+    }, 30_000);
   });
 });

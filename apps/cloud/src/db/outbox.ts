@@ -201,6 +201,11 @@ export class OutboxPublisher {
         const specificHandlers = this.handlers.get(record.eventType) ?? new Set();
         const wildcardHandlers = this.handlers.get("*") ?? new Set();
         const allHandlers = [...specificHandlers, ...wildcardHandlers];
+        if (allHandlers.length === 0) {
+          throw new Error(
+            `No outbox subscriber is registered for event type '${record.eventType}'`,
+          );
+        }
 
         for (const handler of allHandlers) {
           await handler(record);

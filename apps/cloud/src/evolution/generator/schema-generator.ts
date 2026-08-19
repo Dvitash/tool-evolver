@@ -53,30 +53,17 @@ export class SchemaGenerator {
       const parsed = SchemaGenerationOutputSchema.parse(response.output);
       const properties: Record<string, Record<string, unknown>> = {};
       const required: string[] = [];
+      const inferredByName = new Map(parsed.parameters.map((param) => [param.name, param]));
 
-      for (const param of parsed.parameters) {
-        properties[param.name] = {
-          type: param.type,
-          description: param.description,
-          ...(param.defaultValue !== undefined ? { default: param.defaultValue } : {}),
-          ...(param.enumValues ? { enum: param.enumValues } : {}),
+      for (const observed of options.variableInputs) {
+        const inferred = inferredByName.get(observed.name);
+        properties[observed.name] = {
+          type: observed.type,
+          description: inferred?.description || observed.description,
+          ...(observed.defaultValue !== undefined ? { default: observed.defaultValue } : {}),
+          ...(inferred?.enumValues ? { enum: inferred.enumValues } : {}),
         };
-        if (param.required) {
-          required.push(param.name);
-        }
-      }
-
-      for (const obs of options.variableInputs) {
-        if (!properties[obs.name]) {
-          properties[obs.name] = {
-            type: obs.type,
-            description: obs.description,
-            ...(obs.defaultValue !== undefined ? { default: obs.defaultValue } : {}),
-          };
-          if (obs.required) {
-            required.push(obs.name);
-          }
-        }
+        if (observed.required) required.push(observed.name);
       }
 
       const inputSchema: ToolParameterSchema = {

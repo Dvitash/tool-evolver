@@ -23,6 +23,14 @@ export interface AuthContext {
 /**
  * Options for HTTP Authentication Middleware.
  */
+function parseDevTenantToken(token: string): { accountId: string; workspaceId: string } | null {
+  const parts = token.split(":");
+  if (parts.length !== 2) return null;
+  const [accountId, workspaceId] = parts.map((part) => part.trim());
+  if (!accountId || !workspaceId) return null;
+  return { accountId, workspaceId };
+}
+
 export interface AuthMiddlewareOptions {
   requiredScope?: AuthScope;
   allowDevHeaders?: boolean;
@@ -62,11 +70,12 @@ export async function authenticateHttpRequest(
     const token = authHeader.slice(7).trim();
 
     // Check for dev token shorthand: "Bearer <accountId>:<workspaceId>"
-    if (options.allowDevHeaders && token.includes(":") && !token.includes(".")) {
-      const [acc, ws] = token.split(":");
+    const devTenant =
+      options.allowDevHeaders && !token.includes(".") ? parseDevTenantToken(token) : null;
+    if (devTenant) {
       const tenant: TenantContext = {
-        accountId: acc,
-        workspaceId: ws,
+        accountId: devTenant.accountId,
+        workspaceId: devTenant.workspaceId,
         traceId,
         correlationId,
         metadata: { devAuth: true },
@@ -140,40 +149,8 @@ export async function authenticateWebSocket(
   options: { allowDevHeaders?: boolean } = {},
 ): Promise<AuthContext | null> {
   try {
-    // 1. Try URL query parameter ?token=...
-    const url = new URL(req.url ?? "/", "http://127.0.0.1");
-    const queryToken = url.searchParams.get("token") || url.searchParams.get("access_token");
-
-    if (queryToken) {
-      if (options.allowDevHeaders && queryToken.includes(":") && !queryToken.includes(".")) {
-        const [acc, ws] = queryToken.split(":");
-        return {
-          tenant: { accountId: acc, workspaceId: ws, metadata: { devAuth: true } },
-          rawToken: queryToken,
-          isDevAuth: true,
-        };
-      }
-
-      const verifyResult = await authService.tokens.verifyAccessToken(queryToken);
-      if (verifyResult.valid && verifyResult.claims) {
-        const claims = verifyResult.claims;
-        const tenant: TenantContext = {
-          accountId: claims.accountId,
-          workspaceId: claims.workspaceId,
-          deviceId: claims.deviceId,
-          userId: claims.subject,
-          metadata: {
-            scopes: claims.scopes,
-            rawUploadConsent: claims.rawUploadConsent,
-            installationId: claims.installationId,
-          },
-        };
-        return { tenant, claims, rawToken: queryToken, isDevAuth: false };
-      }
-      return null;
-    }
-
-    // 2. Try standard Authorization header
+    // 1. Standard Authorization header. Query-string tokens are intentionally rejected.
+    // They leak through browser history, reverse-proxy logs, and referrer headers.
     const authHeader = req.headers.authorization;
     if (authHeader?.startsWith("Bearer ")) {
       const token = authHeader.slice(7).trim();
@@ -196,7 +173,7 @@ export async function authenticateWebSocket(
       return null;
     }
 
-    // 3. Try Sec-WebSocket-Protocol token
+    // 2. Try Sec-WebSocket-Protocol token
     const subprotocols = req.headers["sec-websocket-protocol"];
     if (subprotocols) {
       const protocols = subprotocols.split(",").map((p) => p.trim());
@@ -223,7 +200,7 @@ export async function authenticateWebSocket(
       }
     }
 
-    // 4. Dev headers
+    // 3. Dev headers
     if (options.allowDevHeaders) {
       const accountId = req.headers["x-account-id"] as string | undefined;
       const workspaceId = req.headers["x-workspace-id"] as string | undefined;

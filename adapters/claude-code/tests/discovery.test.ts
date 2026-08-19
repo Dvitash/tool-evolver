@@ -90,6 +90,24 @@ describe("Claude Code Discovery & Installation Probing", () => {
     expect(installation.version).toBe("0.0.8");
   });
 
+  it("fails closed when an executable cannot report a parseable version", async () => {
+    const fsBridge = new InMemoryConfigFsBridge();
+    const mockExec = async () => ({ stdout: "Claude Code development build\n", stderr: "" });
+
+    const installation = await probeClaudeInstallation(
+      {
+        customExecutablePath: "/usr/local/bin/claude",
+        customConfigPath: "/home/test/.claude/claude.json",
+      },
+      fsBridge,
+      mockExec,
+    );
+
+    expect(installation.isInstalled).toBe(false);
+    expect(installation.status).toBe("corrupt");
+    expect(installation.version).toBe("0.0.0");
+  });
+
   it("reports missing_executable when executable is not found", async () => {
     const fsBridge = new InMemoryConfigFsBridge();
     const mockExec = async () => {

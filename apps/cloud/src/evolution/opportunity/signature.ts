@@ -67,6 +67,34 @@ function normalizeToolName(toolName: string): string {
 }
 
 /**
+ * Normalizes an observed command into a stable, non-shell command profile.
+ * Paths are reduced to semantic aliases while executable, subcommand, and flags remain exact.
+ */
+export function normalizeCommandProfile(rawCommand: string): string {
+  const normalized = rawCommand
+    .replace(/[\r\n\0]/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!normalized) return "";
+
+  return normalized
+    .split(" ")
+    .slice(0, 32)
+    .map((part, index) => {
+      if (index === 0) {
+        const portable = part.replace(/\\/g, "/");
+        return portable.slice(portable.lastIndexOf("/") + 1).toLowerCase();
+      }
+      if (part.startsWith("-")) return part;
+      if (part.includes("/") || /\.(?:ts|tsx|js|jsx|json|md|py|rs|go|java)$/i.test(part)) {
+        return normalizePathAlias(part);
+      }
+      return part;
+    })
+    .join(" ");
+}
+
+/**
  * Classifies a tool or command into a high-level ToolClass.
  */
 export function classifyToolOrCommand(name: string, commandText?: string): ToolClass {
@@ -252,8 +280,19 @@ export class SignatureExtractor {
         const op = `tool:${normName}`;
         operationSequence.push(op);
 
-        const cls = classifyToolOrCommand(toolEvt.toolName);
+        const rawCommand =
+          toolEvt.parameters && typeof toolEvt.parameters === "object"
+            ? ((toolEvt.parameters as Record<string, unknown>).command ??
+              (toolEvt.parameters as Record<string, unknown>).cmd ??
+              (toolEvt.parameters as Record<string, unknown>).executable)
+            : undefined;
+        const commandText = typeof rawCommand === "string" ? rawCommand : undefined;
+        const cls = classifyToolOrCommand(toolEvt.toolName, commandText);
         toolClasses.push(cls);
+        if (commandText) {
+          const commandProfile = normalizeCommandProfile(commandText);
+          if (commandProfile) commandPatterns.push(commandProfile);
+        }
 
         const argHash = extractArgumentShape(toolEvt.parameters);
         argumentShapeHashes.push(argHash);
@@ -279,9 +318,10 @@ export class SignatureExtractor {
         const cls = classifyToolOrCommand(cmdName, cmdEvt.command);
         toolClasses.push(cls);
 
-        // Normalize command pattern: e.g. "pnpm test" -> "pnpm:test"
-        const parts = cmdEvt.command.trim().split(/\s+/).slice(0, 3);
-        commandPatterns.push(parts.join(":"));
+        const commandProfile = normalizeCommandProfile(
+          [cmdEvt.command, ...(cmdEvt.args ?? [])].join(" "),
+        );
+        if (commandProfile) commandPatterns.push(commandProfile);
 
         const argHash = extractArgumentShape(cmdEvt.args);
         argumentShapeHashes.push(argHash);
@@ -310,6 +350,7 @@ export class SignatureExtractor {
     const structuralDescriptor = {
       ops: operationSequence,
       classes: toolClasses,
+      commands: commandPatterns,
       args: argumentShapeHashes,
     };
     const structuralHash = hashCanonicalContent(structuralDescriptor);

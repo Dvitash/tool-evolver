@@ -51,7 +51,10 @@ export const REQUIRED_SAFETY_CHECKS = [
   "networkIsolation",
   "filesystemMediation",
   "secretRedaction",
+  "secretNonDisclosure",
   "signatureVerification",
+  "commandIdentity",
+  "resourceLimits",
 ] as const;
 
 export type RequiredSafetyCheck = (typeof REQUIRED_SAFETY_CHECKS)[number];

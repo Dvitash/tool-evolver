@@ -145,50 +145,51 @@ export async function findOmpExecutable(options?: {
   return null;
 }
 
+function parseOmpSemver(value: string): string | null {
+  const match = value.trim().match(/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/);
+  return match?.[1] ?? null;
+}
+
 /**
  * Detects the version of an OMP executable by running --version or inspecting package metadata.
+ * Returns null when the executable cannot be verified; callers must fail closed.
  */
 export async function detectOmpVersion(
   executablePath: string,
   options?: { timeoutMs?: number },
-): Promise<string> {
+): Promise<string | null> {
   const timeoutMs = options?.timeoutMs ?? 3000;
 
   try {
     const { stdout } = await execFileAsync(executablePath, ["--version"], {
       timeout: timeoutMs,
     });
-    const trimmed = stdout.trim();
-    const semverMatch = trimmed.match(/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/);
-    if (semverMatch?.[1]) {
-      return semverMatch[1];
-    }
-    if (trimmed) {
-      return trimmed;
+    const detected = parseOmpSemver(stdout);
+    if (detected) {
+      return detected;
     }
   } catch {
-    // If running executable fails, attempt package.json fallback
-    try {
-      let currentDir = path.dirname(executablePath);
-      for (let i = 0; i < 3; i++) {
-        const pkgJsonPath = path.join(currentDir, "package.json");
-        try {
-          const content = await fsp.readFile(pkgJsonPath, "utf8");
-          const parsed = JSON.parse(content) as { name?: string; version?: string };
-          if (parsed.version) {
-            return parsed.version;
-          }
-        } catch {
-          // continue upwards
-        }
-        currentDir = path.dirname(currentDir);
-      }
-    } catch {
-      // fallback
-    }
+    // Fall through to package metadata. The executable itself is not trusted
+    // until a real version can be established.
   }
 
-  return "0.1.0";
+  let currentDir = path.dirname(executablePath);
+  for (let i = 0; i < 3; i++) {
+    const pkgJsonPath = path.join(currentDir, "package.json");
+    try {
+      const content = await fsp.readFile(pkgJsonPath, "utf8");
+      const parsed = JSON.parse(content) as { version?: string };
+      if (parsed.version) {
+        const detected = parseOmpSemver(parsed.version);
+        if (detected) return detected;
+      }
+    } catch {
+      // continue upwards
+    }
+    currentDir = path.dirname(currentDir);
+  }
+
+  return null;
 }
 
 /**
@@ -214,7 +215,7 @@ export async function probeOmpInstallation(
     return {
       harnessId: "omp",
       displayName: "Oh My Pi",
-      version: "0.1.0",
+      version: "0.0.0",
       executablePath: options.customExecutablePath,
       configPath: path.join(ompHome, "config.json"),
       homePath: ompHome,
@@ -235,20 +236,19 @@ export async function probeOmpInstallation(
     ? path.resolve(options.customConfigPath)
     : path.join(ompHome, "config.json");
 
-  let status: InstallationStatus = "ready";
-  let version = "0.1.0";
-  let isInstalled = true;
+  let status: InstallationStatus = "missing_executable";
+  let version = "0.0.0";
+  let isInstalled = false;
 
   if (execPath) {
-    try {
-      version = await detectOmpVersion(execPath);
+    const detectedVersion = await detectOmpVersion(execPath);
+    if (detectedVersion) {
+      version = detectedVersion;
+      status = "ready";
       isInstalled = true;
-    } catch {
-      version = "0.1.0";
+    } else {
+      status = "corrupt";
     }
-  } else {
-    status = "missing_executable";
-    isInstalled = false;
   }
 
   if (options?.checkPermissions && execPath) {

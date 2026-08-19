@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "test": "vitest run",
+    "test": "vitest run --exclude scripts/verify-release.test.mjs --exclude scripts/platform-qualification.test.mjs --exclude scripts/release-evidence.test.mjs --exclude scripts/standalone-release-artifact.test.mjs",
     "test:e2e": "pnpm --filter @tool-evolver/e2e test",
     "test:watch": "vitest",
     "lint": "biome check .",
@@ -27,8 +27,8 @@
     "release:package": "node scripts/package-release.mjs",
     "release:evidence": "node scripts/generate-release-evidence.mjs",
     "release:publish": "node scripts/publish-v1-release.mjs",
-    "release:verify": "node scripts/verify-release.mjs",
-    "release:test": "vitest run scripts/verify-release.test.mjs scripts/platform-qualification.test.mjs scripts/release-evidence.test.mjs",
+    "release:verify": "node scripts/verify-release-cli.mjs",
+    "release:test": "vitest run --no-file-parallelism --testTimeout=90000 --hookTimeout=30000 scripts/verify-release.test.mjs && vitest run --no-file-parallelism --testTimeout=90000 --hookTimeout=30000 scripts/platform-qualification.test.mjs && vitest run --no-file-parallelism --testTimeout=90000 --hookTimeout=30000 scripts/release-evidence.test.mjs && vitest run --no-file-parallelism --testTimeout=90000 --hookTimeout=30000 scripts/standalone-release-artifact.test.mjs",
     "clean": "turbo run clean"
   },
   "devDependencies": {
