@@ -98,8 +98,11 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $workspace = (wsl.exe -d ToolEvolverQual -- wslpath -a "$env:GITHUB_WORKSPACE").Trim()
-          if (-not $workspace) { throw "Could not resolve workspace path inside WSL" }
+          $drive = $env:GITHUB_WORKSPACE.Substring(0, 1).ToLowerInvariant()
+          $rest = $env:GITHUB_WORKSPACE.Substring(2).Replace('\', '/')
+          $workspace = "/mnt/$drive$rest"
+          wsl.exe -d ToolEvolverQual -- bash -lc "test -d '$workspace'"
+          if ($LASTEXITCODE -ne 0) { throw "Windows checkout is not visible inside WSL at $workspace" }
           wsl.exe -d ToolEvolverQual -- bash -lc @"
           set -euo pipefail
           apt-get update
@@ -137,8 +140,12 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
-          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\dist\qualification" | Out-Null
-          wsl.exe -d ToolEvolverQual -- bash -lc "test -f /root/tool-evolver/dist/qualification/wsl.json && cat /root/tool-evolver/dist/qualification/wsl.json" | Out-File -Encoding utf8 "$env:GITHUB_WORKSPACE\dist\qualification\wsl.json"
+          $targetDir = "$env:GITHUB_WORKSPACE\dist\qualification"
+          New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+          $evidence = wsl.exe -d ToolEvolverQual -- bash -lc "cat /root/tool-evolver/dist/qualification/wsl.json 2>/dev/null"
+          if ($LASTEXITCODE -eq 0 -and $evidence) {
+            $evidence | Out-File -Encoding utf8 "$targetDir\wsl.json"
+          }
 
       - name: Upload WSL qualification evidence
         if: always()
