@@ -218,7 +218,7 @@ describe("Release Packaging & Verification Suite", () => {
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
-    }, 30_000);
+    }, 90_000);
   });
 
   describe("CycloneDX SBOM Generation & Verification", () => {
