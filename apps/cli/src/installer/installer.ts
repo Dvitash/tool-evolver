@@ -196,6 +196,7 @@ export class ToolEvolverInstaller {
           downloadDir: downloadsDir,
           sourceUrlOrPath: productionRelease.releaseAssetUrl,
           fsBridge: this.fsBridge,
+          fetchImpl: options.fetchImpl,
           logger: this.log.bind(this),
         });
         releaseTarball = downloadedRelease.path;
@@ -213,6 +214,7 @@ export class ToolEvolverInstaller {
           downloadDir: downloadsDir,
           sourceUrlOrPath: denoAsset.url,
           fsBridge: this.fsBridge,
+          fetchImpl: options.fetchImpl,
           logger: this.log.bind(this),
         });
         denoRuntimeArchive = downloadedDeno.path;
@@ -512,16 +514,20 @@ export class ToolEvolverInstaller {
         this.journal.failStep(activeStep, error);
       }
 
-      if (
-        !dryRun &&
-        (activeStep === "apply" || activeStep === "directories" || activeStep === "verify")
-      ) {
-        this.log("\n❌ Installation failed. Rolling back configuration changes...");
+      if (!dryRun) {
+        this.log("\n❌ Installation failed. Rolling back installation transaction...");
         try {
           await this.journal.rollback(this.fsBridge);
-          this.log("✔ Configuration rollback completed successfully.");
+          this.log("✔ Installation rollback completed successfully.");
         } catch (rollbackErr: unknown) {
           this.log(`⚠️  Warning: Rollback encountered an error: ${String(rollbackErr)}`);
+        }
+        try {
+          const failedStateDir = path.join(customHome, ".tool-evolver", "state");
+          await this.fsBridge.mkdirp(failedStateDir);
+          await this.journal.save(path.join(failedStateDir, "install-journal.json"), this.fsBridge);
+        } catch {
+          // A missing/unwritable home is itself recoverable from the thrown error.
         }
       }
 

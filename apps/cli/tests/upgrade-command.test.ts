@@ -99,6 +99,7 @@ describe("upgrade command & orchestrator", () => {
       toolEvolverHome,
       fsBridge,
       customFetch: mockFetch as unknown as typeof fetch,
+      releaseMode: "test-simulated",
     });
 
     const result = await orchestrator.runUpgrade({
@@ -128,6 +129,7 @@ describe("upgrade command & orchestrator", () => {
       homeDir,
       toolEvolverHome,
       fsBridge,
+      releaseMode: "test-simulated",
     });
 
     // We can simulate failure by deleting toolEvolverHome or using a mock that fails

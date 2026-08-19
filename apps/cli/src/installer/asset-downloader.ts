@@ -16,6 +16,7 @@ export interface AssetDownloadOptions {
   readonly sourceBuffer?: Buffer;
   readonly fsBridge?: ConfigFsBridge;
   readonly timeoutMs?: number;
+  readonly fetchImpl?: typeof fetch;
   readonly logger?: (msg: string) => void;
 }
 
@@ -217,7 +218,8 @@ export async function downloadAndVerifyAsset(
     fileBuffer = await fsPromises.readFile(options.sourceUrlOrPath);
   } else if (options.sourceUrlOrPath && options.sourceUrlOrPath.startsWith("http")) {
     log(`Downloading asset from ${options.sourceUrlOrPath}...`);
-    const response = await fetch(options.sourceUrlOrPath, {
+    const fetchImpl = options.fetchImpl ?? fetch;
+    const response = await fetchImpl(options.sourceUrlOrPath, {
       signal: options.timeoutMs ? AbortSignal.timeout(options.timeoutMs) : undefined,
     });
     if (!response.ok) {
@@ -347,7 +349,31 @@ export async function installReleaseVersion(
       (await fsBridge.exists(daemonBin)) || (await fsBridge.exists(`${daemonBin}.js`));
     const hasMcp = (await fsBridge.exists(mcpBin)) || (await fsBridge.exists(`${mcpBin}.js`));
 
-    if (hasDaemon && hasMcp) {
+    let reusable = hasDaemon && hasMcp;
+    if (options.denoRuntime) {
+      reusable = reusable && (await fsBridge.exists(denoBin));
+    }
+    if (reusable && options.provenance) {
+      try {
+        const versionMetadata = JSON.parse(
+          await fsPromises.readFile(path.join(targetVersionDir, "version.json"), "utf8"),
+        ) as { provenance?: ReleaseProvenance; deno?: { version?: string; sha256?: string } };
+        reusable =
+          versionMetadata.provenance?.manifestSha256 === options.provenance.manifestSha256 &&
+          versionMetadata.provenance?.releaseAssetSha256 ===
+            options.provenance.releaseAssetSha256 &&
+          versionMetadata.provenance?.version === options.provenance.version;
+        if (options.denoRuntime) {
+          reusable =
+            reusable &&
+            versionMetadata.deno?.version === options.denoRuntime.version &&
+            versionMetadata.deno?.sha256 === options.denoRuntime.sha256;
+        }
+      } catch {
+        reusable = false;
+      }
+    }
+    if (reusable) {
       log(
         `Version v${cleanVersion} is already installed at ${targetVersionDir}. Reusing verified installation.`,
       );
@@ -365,113 +391,120 @@ export async function installReleaseVersion(
     }
   }
 
-  log(`Extracting release archive for version v${cleanVersion} into staging directory...`);
+  try {
+    log(`Extracting release archive for version v${cleanVersion} into staging directory...`);
 
-  let tarGzBuffer: Buffer;
-  if (Buffer.isBuffer(tarballPathOrBuffer)) {
-    tarGzBuffer = tarballPathOrBuffer;
-  } else {
-    tarGzBuffer = await fsPromises.readFile(tarballPathOrBuffer);
-  }
+    let tarGzBuffer: Buffer;
+    if (Buffer.isBuffer(tarballPathOrBuffer)) {
+      tarGzBuffer = tarballPathOrBuffer;
+    } else {
+      tarGzBuffer = await fsPromises.readFile(tarballPathOrBuffer);
+    }
 
-  // Extract into staging directory
-  const { extractedFiles } = extractTarGzBuffer(tarGzBuffer, stagingDir);
+    // Extract into staging directory
+    const { extractedFiles } = extractTarGzBuffer(tarGzBuffer, stagingDir);
 
-  // Entry Point Resolution & Verification
-  const expectedDaemon = path.join(stagingDir, "bin", "tool-evolver-daemon");
-  const expectedMcp = path.join(stagingDir, "bin", "tool-evolver-mcp");
-  const expectedCli = path.join(stagingDir, "bin", "tool-evolver");
-  const expectedDeno = path.join(stagingDir, "deno", "deno");
+    // Entry Point Resolution & Verification
+    const expectedDaemon = path.join(stagingDir, "bin", "tool-evolver-daemon");
+    const expectedMcp = path.join(stagingDir, "bin", "tool-evolver-mcp");
+    const expectedCli = path.join(stagingDir, "bin", "tool-evolver");
+    const expectedDeno = path.join(stagingDir, "deno", "deno");
 
-  if (options.denoRuntime) {
-    const runtimeBuffer = Buffer.isBuffer(options.denoRuntime.archivePathOrBuffer)
-      ? options.denoRuntime.archivePathOrBuffer
-      : await fsPromises.readFile(options.denoRuntime.archivePathOrBuffer);
-    const runtimeDigest = sha256Hex(runtimeBuffer);
-    const expectedRuntimeDigest = options.denoRuntime.sha256.replace(/^sha256:/i, "").toLowerCase();
-    if (runtimeDigest !== expectedRuntimeDigest) {
-      throw new Error(
-        `Pinned Deno runtime digest mismatch: expected ${expectedRuntimeDigest}, got ${runtimeDigest}.`,
+    if (options.denoRuntime) {
+      const runtimeBuffer = Buffer.isBuffer(options.denoRuntime.archivePathOrBuffer)
+        ? options.denoRuntime.archivePathOrBuffer
+        : await fsPromises.readFile(options.denoRuntime.archivePathOrBuffer);
+      const runtimeDigest = sha256Hex(runtimeBuffer);
+      const expectedRuntimeDigest = options.denoRuntime.sha256
+        .replace(/^sha256:/i, "")
+        .toLowerCase();
+      if (runtimeDigest !== expectedRuntimeDigest) {
+        throw new Error(
+          `Pinned Deno runtime digest mismatch: expected ${expectedRuntimeDigest}, got ${runtimeDigest}.`,
+        );
+      }
+      const denoBytes = extractSingleFileZip(runtimeBuffer, options.denoRuntime.executable);
+      await fsBridge.mkdirp(path.dirname(expectedDeno));
+      await fsPromises.writeFile(expectedDeno, denoBytes, { mode: 0o755 });
+    }
+
+    // Create bin shims if archive contains apps structure
+    const observerDistBin = path.join(stagingDir, "apps", "observer", "dist", "bin", "daemon.js");
+    const gatewayDistBin = path.join(stagingDir, "apps", "gateway", "dist", "bin", "mcp-shim.js");
+    const cliDistBin = path.join(stagingDir, "apps", "cli", "dist", "bin", "cli.js");
+
+    const binDir = path.join(stagingDir, "bin");
+    await fsBridge.mkdirp(binDir);
+
+    if (!fs.existsSync(expectedDaemon) && fs.existsSync(observerDistBin)) {
+      fs.writeFileSync(
+        expectedDaemon,
+        `#!/usr/bin/env node\nimport path from "node:path";\nimport { fileURLToPath } from "node:url";\nconst __dirname = path.dirname(fileURLToPath(import.meta.url));\nawait import(path.resolve(__dirname, "../apps/observer/dist/bin/daemon.js"));\n`,
+        { mode: 0o755 },
       );
     }
-    const denoBytes = extractSingleFileZip(runtimeBuffer, options.denoRuntime.executable);
-    await fsBridge.mkdirp(path.dirname(expectedDeno));
-    await fsPromises.writeFile(expectedDeno, denoBytes, { mode: 0o755 });
-  }
-
-  // Create bin shims if archive contains apps structure
-  const observerDistBin = path.join(stagingDir, "apps", "observer", "dist", "bin", "daemon.js");
-  const gatewayDistBin = path.join(stagingDir, "apps", "gateway", "dist", "bin", "mcp-shim.js");
-  const cliDistBin = path.join(stagingDir, "apps", "cli", "dist", "bin", "cli.js");
-
-  const binDir = path.join(stagingDir, "bin");
-  await fsBridge.mkdirp(binDir);
-
-  if (!fs.existsSync(expectedDaemon) && fs.existsSync(observerDistBin)) {
-    fs.writeFileSync(
-      expectedDaemon,
-      `#!/usr/bin/env node\nimport path from "node:path";\nimport { fileURLToPath } from "node:url";\nconst __dirname = path.dirname(fileURLToPath(import.meta.url));\nawait import(path.resolve(__dirname, "../apps/observer/dist/bin/daemon.js"));\n`,
-      { mode: 0o755 },
-    );
-  }
-  if (!fs.existsSync(expectedMcp) && fs.existsSync(gatewayDistBin)) {
-    fs.writeFileSync(
-      expectedMcp,
-      `#!/usr/bin/env node\nimport path from "node:path";\nimport { fileURLToPath } from "node:url";\nconst __dirname = path.dirname(fileURLToPath(import.meta.url));\nawait import(path.resolve(__dirname, "../apps/gateway/dist/bin/mcp-shim.js"));\n`,
-      { mode: 0o755 },
-    );
-  }
-  if (!fs.existsSync(expectedCli) && fs.existsSync(cliDistBin)) {
-    fs.writeFileSync(
-      expectedCli,
-      `#!/usr/bin/env node\nimport path from "node:path";\nimport { fileURLToPath } from "node:url";\nconst __dirname = path.dirname(fileURLToPath(import.meta.url));\nawait import(path.resolve(__dirname, "../apps/cli/dist/bin/cli.js"));\n`,
-      { mode: 0o755 },
-    );
-  }
-
-  // Ensure all entry points have executable permissions
-  for (const binPath of [expectedDaemon, expectedMcp, expectedCli, expectedDeno]) {
-    if (fs.existsSync(binPath)) {
-      try {
-        fs.chmodSync(binPath, 0o755);
-      } catch {}
+    if (!fs.existsSync(expectedMcp) && fs.existsSync(gatewayDistBin)) {
+      fs.writeFileSync(
+        expectedMcp,
+        `#!/usr/bin/env node\nimport path from "node:path";\nimport { fileURLToPath } from "node:url";\nconst __dirname = path.dirname(fileURLToPath(import.meta.url));\nawait import(path.resolve(__dirname, "../apps/gateway/dist/bin/mcp-shim.js"));\n`,
+        { mode: 0o755 },
+      );
     }
-  }
+    if (!fs.existsSync(expectedCli) && fs.existsSync(cliDistBin)) {
+      fs.writeFileSync(
+        expectedCli,
+        `#!/usr/bin/env node\nimport path from "node:path";\nimport { fileURLToPath } from "node:url";\nconst __dirname = path.dirname(fileURLToPath(import.meta.url));\nawait import(path.resolve(__dirname, "../apps/cli/dist/bin/cli.js"));\n`,
+        { mode: 0o755 },
+      );
+    }
 
-  // Atomically move staging directory to final version directory
-  if (fs.existsSync(targetVersionDir)) {
-    await fsPromises.rm(targetVersionDir, { recursive: true, force: true });
-  }
-  await fsPromises.rename(stagingDir, targetVersionDir);
+    // Ensure all entry points have executable permissions
+    for (const binPath of [expectedDaemon, expectedMcp, expectedCli, expectedDeno]) {
+      if (fs.existsSync(binPath)) {
+        try {
+          fs.chmodSync(binPath, 0o755);
+        } catch {}
+      }
+    }
 
-  // Write version metadata record
-  const versionMetadataPath = path.join(targetVersionDir, "version.json");
-  const versionInfo = {
-    version: cleanVersion,
-    installedAt: new Date().toISOString(),
-    sha256: sha256Hex(tarGzBuffer),
-    provenance: options.provenance,
-    denoRuntime: options.denoRuntime
-      ? { version: options.denoRuntime.version, sha256: options.denoRuntime.sha256 }
-      : undefined,
-  };
-  await fsPromises.writeFile(versionMetadataPath, JSON.stringify(versionInfo, null, 2), "utf8");
+    // Atomically move staging directory to final version directory
+    if (fs.existsSync(targetVersionDir)) {
+      await fsPromises.rm(targetVersionDir, { recursive: true, force: true });
+    }
+    await fsPromises.rename(stagingDir, targetVersionDir);
 
-  log(`Version v${cleanVersion} installed into immutable directory: ${targetVersionDir}`);
-
-  return {
-    version: cleanVersion,
-    versionDir: targetVersionDir,
-    installedFiles: extractedFiles.map((f) => f.replace(stagingDir, targetVersionDir)),
-    entryPoints: {
-      daemon: path.join(targetVersionDir, "bin", "tool-evolver-daemon"),
-      mcpShim: path.join(targetVersionDir, "bin", "tool-evolver-mcp"),
-      cli: path.join(targetVersionDir, "bin", "tool-evolver"),
-      deno: fs.existsSync(path.join(targetVersionDir, "deno", "deno"))
-        ? path.join(targetVersionDir, "deno", "deno")
+    // Write version metadata record
+    const versionMetadataPath = path.join(targetVersionDir, "version.json");
+    const versionInfo = {
+      version: cleanVersion,
+      installedAt: new Date().toISOString(),
+      sha256: sha256Hex(tarGzBuffer),
+      provenance: options.provenance,
+      denoRuntime: options.denoRuntime
+        ? { version: options.denoRuntime.version, sha256: options.denoRuntime.sha256 }
         : undefined,
-    },
-  };
+    };
+    await fsPromises.writeFile(versionMetadataPath, JSON.stringify(versionInfo, null, 2), "utf8");
+
+    log(`Version v${cleanVersion} installed into immutable directory: ${targetVersionDir}`);
+
+    return {
+      version: cleanVersion,
+      versionDir: targetVersionDir,
+      installedFiles: extractedFiles.map((f) => f.replace(stagingDir, targetVersionDir)),
+      entryPoints: {
+        daemon: path.join(targetVersionDir, "bin", "tool-evolver-daemon"),
+        mcpShim: path.join(targetVersionDir, "bin", "tool-evolver-mcp"),
+        cli: path.join(targetVersionDir, "bin", "tool-evolver"),
+        deno: fs.existsSync(path.join(targetVersionDir, "deno", "deno"))
+          ? path.join(targetVersionDir, "deno", "deno")
+          : undefined,
+      },
+    };
+  } catch (error) {
+    await fsPromises.rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 /**

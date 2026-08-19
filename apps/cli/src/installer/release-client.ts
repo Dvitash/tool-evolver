@@ -239,7 +239,11 @@ export async function resolveProductionRelease(
     new URL(releaseAsset.filename, manifestUrl).toString(),
     allowInsecure,
   ).toString();
-  const denoAsset = resolveDenoAsset(manifest.runtimes?.deno, options.platform);
+  const denoAsset = resolveDenoAsset(
+    manifest.runtimes?.deno,
+    options.platform,
+    options.allowInsecureHttpForTests === true,
+  );
   const signingKeyIds = [
     ...(channel.signatures ?? []).map((entry) => entry.keyId),
     ...(manifest.signatures ?? []).map((entry) => entry.keyId),
