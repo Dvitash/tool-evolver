@@ -102,10 +102,41 @@ export function normalizeCommandProfile(rawCommand: string): string {
  */
 export function splitCompositeCommand(rawCommand: string): string[] {
   const cleaned = rawCommand.replace(/[\r\n\0]/g, " ");
-  return cleaned
-    .split(/&&|\|\||[;|]/)
-    .map((segment) => segment.trim())
-    .filter((segment) => segment.length > 0);
+  // Quote-aware split on shell control operators (&&, ||, ;, |) so operators
+  // inside single/double quotes (e.g. grep "a|b") do not split the command.
+  const segments: string[] = [];
+  let current = "";
+  let quote: string | undefined;
+  for (let i = 0; i < cleaned.length; i++) {
+    const ch = cleaned[i]!;
+    if (quote) {
+      current += ch;
+      if (ch === quote) quote = undefined;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === ";" || ch === "|" || ch === "&") {
+      const next = cleaned[i + 1];
+      const isOperator = ch === ";" || (ch === next && (ch === "|" || ch === "&")) || (ch === "|" && next !== "|");
+      if (ch === "&" && next !== "&") {
+        current += ch;
+        continue;
+      }
+      if (isOperator) {
+        if (ch === next) i++;
+        segments.push(current);
+        current = "";
+        continue;
+      }
+    }
+    current += ch;
+  }
+  segments.push(current);
+  return segments.map((segment) => segment.trim()).filter((segment) => segment.length > 0);
 }
 
 /**

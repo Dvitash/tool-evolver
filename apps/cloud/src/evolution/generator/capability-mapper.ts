@@ -11,6 +11,24 @@ import {
 import { splitCompositeCommand } from "../opportunity/signature.js";
 import type { CapabilityDiff, WorkflowStep } from "./types.js";
 
+/** Shell builtins that produce no executable capability on their own. */
+const SHELL_BUILTINS = new Set([
+  "cd",
+  "echo",
+  "printf",
+  "export",
+  "set",
+  "unset",
+  "source",
+  ".",
+  "alias",
+  "dirs",
+  "pushd",
+  "popd",
+  "true",
+  "false",
+]);
+
 /**
  * Maps required broker operations and workflow steps to minimal CapabilityManifests.
  */
@@ -212,7 +230,8 @@ export class CapabilityMapper {
               throw new Error("Dynamic command placeholders cannot be converted into capabilities");
             }
             const binary = segment.split(/\s+/)[0];
-            if (binary && !cmdCap.allowedBinaries.includes(binary)) {
+            if (!binary || SHELL_BUILTINS.has(binary)) continue;
+            if (!cmdCap.allowedBinaries.includes(binary)) {
               cmdCap.allowedBinaries.push(binary);
             }
             if (!cmdCap.allowedCommands.includes(segment)) {
@@ -319,12 +338,15 @@ export class CapabilityMapper {
     }
     if (options.commands) {
       for (const c of options.commands) {
-        const bin = c.trim().split(/\s+/)[0];
-        if (bin && !manifest.command.allowedCommands.includes(bin)) {
-          manifest.command.allowedCommands.push(bin);
-        }
-        if (bin && !manifest.command.allowedBinaries.includes(bin)) {
-          manifest.command.allowedBinaries.push(bin);
+        for (const segment of splitCompositeCommand(c)) {
+          const bin = segment.split(/\s+/)[0];
+          if (!bin || SHELL_BUILTINS.has(bin)) continue;
+          if (!manifest.command.allowedCommands.includes(segment)) {
+            manifest.command.allowedCommands.push(segment);
+          }
+          if (bin && !manifest.command.allowedBinaries.includes(bin)) {
+            manifest.command.allowedBinaries.push(bin);
+          }
         }
       }
     }

@@ -115,6 +115,13 @@ describe("splitCompositeCommand", () => {
     expect(splitCompositeCommand("cat out.txt | wc -l")).toEqual(["cat out.txt", "wc -l"]);
   });
 
+  it("does not split on operators inside quotes", () => {
+    expect(splitCompositeCommand('grep "a|b" file.txt && echo \'done;\'')).toEqual([
+      'grep "a|b" file.txt',
+      "echo 'done;'",
+    ]);
+  });
+
   it("returns a single segment for simple commands", () => {
     expect(splitCompositeCommand("git status --porcelain")).toEqual(["git status --porcelain"]);
     expect(splitCompositeCommand("")).toEqual([]);

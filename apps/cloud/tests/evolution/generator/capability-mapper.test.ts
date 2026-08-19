@@ -192,6 +192,26 @@ describe("CapabilityMapper composite command derivation", () => {
     );
   });
 
+  it("skips shell builtin segments when deriving capabilities", () => {
+    const mapper = new CapabilityMapper();
+    const steps: WorkflowStep[] = [
+      {
+        id: "step_cmd",
+        name: "Run git workflow",
+        toolClass: "command",
+        action: "cmd.exec",
+        service: "cmd",
+        inputs: { command: "cd apps/cloud && git status --porcelain" },
+        dependsOn: [],
+      },
+    ];
+
+    const manifest = mapper.mapRequiredCapabilities(steps);
+
+    expect(manifest.command.allowedCommands).toEqual(["git status --porcelain"]);
+    expect(manifest.command.allowedBinaries).toEqual(["git"]);
+  });
+
   it("rejects dynamic placeholders inside threaded command profiles", () => {
     const mapper = new CapabilityMapper();
     const steps: WorkflowStep[] = [
