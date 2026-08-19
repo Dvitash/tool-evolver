@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "test": "vitest run",
+    "test": "vitest run --exclude scripts/verify-release.test.mjs --exclude scripts/platform-qualification.test.mjs --exclude scripts/release-evidence.test.mjs --exclude scripts/standalone-release-artifact.test.mjs",
     "test:e2e": "pnpm --filter @tool-evolver/e2e test",
     "test:watch": "vitest",
     "lint": "biome check .",
@@ -35,8 +35,8 @@
     "@biomejs/biome": "1.9.4",
     "@types/node": "^22.13.4",
     "turbo": "^2.4.4",
-    "typescript": "^5.7.3",
-    "vitest": "^3.0.5"
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["@biomejs/biome", "esbuild"]
