@@ -581,3 +581,86 @@ export default defineTool(async (context) => {
     expect(brokerErrors(sourceCode)).toHaveLength(0);
   });
 });
+
+describe("DeterministicSelfReviewer schema export gate", () => {
+  const planner = new CandidatePlanner();
+  const reviewer = new DeterministicSelfReviewer();
+
+  const makeArtifacts = (sourceCode: string): GeneratedArtifactSet => {
+    const opp = createMockOpportunity();
+    // Force single_tool: the mock opportunity's classification pattern plans as
+    // workflow, and the schema-export gate applies to single-tool candidates.
+    const plan = { ...planner.plan(opp), targetType: "single_tool" as const };
+    return {
+      plan,
+      manifest: {
+        id: "tool-123",
+        name: plan.name,
+        version: "1.0.0",
+        description: plan.description,
+        parameters: plan.inputSchema,
+        outputSchema: plan.outputSchema,
+        runtime: plan.runtime,
+        capabilities: plan.capabilityRequirements,
+        limits: {
+          timeoutMs: 30000,
+          maxOutputBytes: 1048576,
+          maxMemoryBytes: 134217728,
+          maxConcurrentInvocations: 4,
+        },
+        scope: "workspace",
+        digest: "hash-123",
+        metadata: {},
+        createdAt: new Date().toISOString(),
+      },
+      capabilities: plan.capabilityRequirements,
+      sourceCode,
+      generatedAt: new Date().toISOString(),
+    };
+  };
+
+  it("flags missing InputSchema/OutputSchema exports as gate errors", () => {
+    const sourceCode = `
+import { defineTool } from "@tool-evolver/runtime";
+export default defineTool(async (context) => {
+  try {
+    const result = await context.broker.cmd.exec("git", ["status", "--porcelain"]);
+    await context.logger.info("done");
+    return { success: result.exitCode === 0, data: { stdout: result.stdout }, error: null };
+  } catch (err) {
+    await context.logger.error(String(err));
+    return { success: false, data: null, error: String(err) };
+  }
+});
+`;
+    const verdict = reviewer.review(makeArtifacts(sourceCode));
+    const schemaErrors = verdict.issues.filter(
+      (i) => i.severity === "error" && i.category === "schema",
+    );
+    expect(schemaErrors.some((i) => i.message.includes("InputSchema"))).toBe(true);
+    expect(schemaErrors.some((i) => i.message.includes("OutputSchema"))).toBe(true);
+  });
+
+  it("accepts tools exporting both schemas", () => {
+    const sourceCode = `
+import { defineTool } from "@tool-evolver/runtime";
+import { z } from "zod";
+export const InputSchema = z.object({}).strict();
+export const OutputSchema = z.object({ success: z.boolean() }).strict();
+export default defineTool(async (context) => {
+  try {
+    const result = await context.broker.cmd.exec("git", ["status", "--porcelain"]);
+    await context.logger.info("done");
+    return { success: result.exitCode === 0, data: { stdout: result.stdout }, error: null };
+  } catch (err) {
+    await context.logger.error(String(err));
+    return { success: false, data: null, error: String(err) };
+  }
+});
+`;
+    const verdict = reviewer.review(makeArtifacts(sourceCode));
+    expect(
+      verdict.issues.filter((i) => i.severity === "error" && i.category === "schema"),
+    ).toHaveLength(0);
+  });
+});

@@ -81,6 +81,8 @@ export class DeterministicSelfReviewer {
     let hasTryCatch = false;
     let hasLoggerError = false;
     let hasLoggerInfo = false;
+    let hasInputSchema = false;
+    let hasOutputSchema = false;
     const imports: string[] = [];
     const brokerCalls: Array<{ service: string; method: string; line: number }> = [];
     const accessedInputProperties: string[] = [];
@@ -171,6 +173,15 @@ export class DeterministicSelfReviewer {
         }
       }
 
+      // schema export tracking (mirrors testing/static-analyzer.ts)
+      if (ts.isVariableStatement(node)) {
+        for (const decl of node.declarationList.declarations) {
+          const varName = decl.name.getText(sourceFile);
+          if (varName === "InputSchema") hasInputSchema = true;
+          if (varName === "OutputSchema") hasOutputSchema = true;
+        }
+      }
+
       // input property accesses: params.foo or input.foo
       if (ts.isPropertyAccessExpression(node)) {
         const obj = node.expression;
@@ -188,6 +199,28 @@ export class DeterministicSelfReviewer {
     this.checkBrokerResultContract(sourceFile, issues);
 
     // Structure validation
+    // Schema exports: validation reports schema_mismatch warnings for missing
+    // InputSchema/OutputSchema exports; at command-exec risk tier those warnings
+    // fail the publish security gate, so surface them as gate errors with
+    // repair-ready hints instead.
+    if (artifacts.plan.targetType !== "workflow" && !hasInputSchema) {
+      issues.push({
+        severity: "error",
+        category: "schema",
+        message:
+          "Tool code does not export 'InputSchema'. Downstream validation reports a schema_mismatch warning, and command-exec risk tier allows no static warnings at publish.",
+        fixHint: "Export const InputSchema = z.object({ ... }).strict() matching the manifest parameters.",
+      });
+    }
+    if (artifacts.plan.targetType !== "workflow" && !hasOutputSchema) {
+      issues.push({
+        severity: "error",
+        category: "schema",
+        message:
+          "Tool code does not export 'OutputSchema'. Downstream validation reports a schema_mismatch warning, and command-exec risk tier allows no static warnings at publish.",
+        fixHint: "Export const OutputSchema = z.object({ success: z.boolean(), ... }).strict() matching the manifest outputSchema.",
+      });
+    }
     if (!hasDefineTool && artifacts.plan.targetType !== "workflow") {
       issues.push({
         severity: "error",
