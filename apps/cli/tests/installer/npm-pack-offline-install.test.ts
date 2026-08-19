@@ -23,15 +23,16 @@ describe("public npm bootstrap offline installation", () => {
     fs.mkdirSync(packDir, { recursive: true });
     fs.mkdirSync(installDir, { recursive: true });
 
-    execFileSync(
-      "pnpm",
-      ["--dir", path.join(rootDir, "apps", "cli"), "pack", "--pack-destination", packDir],
-      { cwd: rootDir, stdio: "pipe" },
-    );
+    const packed = JSON.parse(
+      execFileSync(
+        process.execPath,
+        [path.join(rootDir, "scripts", "pack-npm-bootstrap.mjs"), `--output-dir=${packDir}`],
+        { cwd: rootDir, encoding: "utf8" },
+      ),
+    ) as { tarballPath: string; filename: string };
 
-    const tarballs = fs.readdirSync(packDir).filter((name) => name.endsWith(".tgz"));
-    expect(tarballs).toEqual(["tool-evolver-1.0.0.tgz"]);
-    const tarballPath = path.join(packDir, tarballs[0]);
+    expect(packed.filename).toBe("tool-evolver-1.0.0.tgz");
+    expect(fs.existsSync(packed.tarballPath)).toBe(true);
 
     execFileSync(
       "npm",
@@ -43,7 +44,7 @@ describe("public npm bootstrap offline installation", () => {
         "--offline",
         "--no-audit",
         "--no-fund",
-        tarballPath,
+        packed.tarballPath,
       ],
       {
         cwd: installDir,
@@ -75,5 +76,5 @@ describe("public npm bootstrap offline installation", () => {
       encoding: "utf8",
     });
     expect(version.trim()).toBe("tool-evolver v1.0.0");
-  }, 30_000);
+  }, 60_000);
 });
