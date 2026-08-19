@@ -46,17 +46,6 @@ function preparePortableManifest(stagingDir) {
   }
 
   const dependencies = Object.keys(manifest.dependencies ?? {});
-  for (const [name, specifier] of Object.entries(manifest.dependencies ?? {})) {
-    if (typeof specifier === "string" && specifier.startsWith("workspace:")) {
-      throw new Error(
-        `Deployed npm bootstrap retained workspace protocol for ${name}: ${specifier}`,
-      );
-    }
-  }
-
-  manifest.bundledDependencies = dependencies;
-  fs.writeFileSync(packagePath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-
   for (const dependency of dependencies) {
     const dependencyPath = path.join(stagingDir, "node_modules", ...dependency.split("/"));
     if (!fs.existsSync(dependencyPath)) {
@@ -69,7 +58,34 @@ function preparePortableManifest(stagingDir) {
         `Bundled dependency '${dependency}' resolves outside deployment: ${resolved}`,
       );
     }
+
+    const specifier = manifest.dependencies[dependency];
+    if (typeof specifier === "string" && specifier.startsWith("workspace:")) {
+      const dependencyManifestPath = path.join(dependencyPath, "package.json");
+      if (!fs.existsSync(dependencyManifestPath)) {
+        throw new Error(`Bundled workspace dependency '${dependency}' is missing package.json.`);
+      }
+      const dependencyManifest = JSON.parse(fs.readFileSync(dependencyManifestPath, "utf8"));
+      if (
+        typeof dependencyManifest.version !== "string" ||
+        !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(dependencyManifest.version)
+      ) {
+        throw new Error(
+          `Bundled workspace dependency '${dependency}' has invalid version '${dependencyManifest.version ?? "<missing>"}'.`,
+        );
+      }
+      manifest.dependencies[dependency] = dependencyManifest.version;
+    }
   }
+
+  for (const [name, specifier] of Object.entries(manifest.dependencies ?? {})) {
+    if (typeof specifier === "string" && specifier.startsWith("workspace:")) {
+      throw new Error(`Portable npm bootstrap retained workspace protocol for ${name}: ${specifier}`);
+    }
+  }
+
+  manifest.bundledDependencies = dependencies;
+  fs.writeFileSync(packagePath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   return manifest;
 }
 
