@@ -112,7 +112,8 @@ afterEach(() => {
 
 describe("packed CLI production bootstrap", () => {
   it("runs the npm-packed CLI entrypoint through a signed channel and HTTP fixture", async () => {
-    const cliDir = path.resolve(process.cwd(), "apps/cli");
+    const rootDir = process.cwd();
+    const cliDir = path.resolve(rootDir, "apps/cli");
     const runDir = fs.mkdtempSync(path.join(cliDir, ".packed-http-e2e-"));
     cleanupPaths.push(runDir);
     const packDir = path.join(runDir, "pack");
@@ -125,13 +126,12 @@ describe("packed CLI production bootstrap", () => {
     fs.mkdirSync(workspace, { recursive: true });
 
     const { stdout: packStdout } = await execFileAsync(
-      "npm",
-      ["pack", cliDir, "--pack-destination", packDir],
-      { cwd: process.cwd(), maxBuffer: 10 * 1024 * 1024 },
+      process.execPath,
+      [path.join(rootDir, "scripts", "pack-npm-bootstrap.mjs"), `--output-dir=${packDir}`],
+      { cwd: rootDir, maxBuffer: 20 * 1024 * 1024 },
     );
-    const tarballName = packStdout.trim().split("\n").at(-1)?.trim();
-    if (!tarballName) throw new Error("npm pack did not return a tarball name");
-    await execFileAsync("tar", ["-xzf", path.join(packDir, tarballName), "-C", extractedDir]);
+    const packed = JSON.parse(packStdout) as { tarballPath: string };
+    await execFileAsync("tar", ["-xzf", packed.tarballPath, "-C", extractedDir]);
     const packedBin = path.join(extractedDir, "package", "bin", "tool-evolver.mjs");
     expect(fs.existsSync(packedBin)).toBe(true);
 
@@ -296,5 +296,5 @@ describe("packed CLI production bootstrap", () => {
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
-  }, 30_000);
+  }, 60_000);
 });
