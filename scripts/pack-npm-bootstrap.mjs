@@ -33,7 +33,7 @@ function parseArgs(argv) {
   return options;
 }
 
-function assertPortableManifest(stagingDir) {
+function preparePortableManifest(stagingDir) {
   const packagePath = path.join(stagingDir, "package.json");
   if (!fs.existsSync(packagePath)) {
     throw new Error(`Deployed npm bootstrap is missing package.json: ${packagePath}`);
@@ -44,27 +44,26 @@ function assertPortableManifest(stagingDir) {
       `Unexpected deployed bootstrap identity: ${manifest.name ?? "<missing>"}@${manifest.version ?? "<missing>"}`,
     );
   }
+
+  const dependencies = Object.keys(manifest.dependencies ?? {});
   for (const [name, specifier] of Object.entries(manifest.dependencies ?? {})) {
     if (typeof specifier === "string" && specifier.startsWith("workspace:")) {
       throw new Error(`Deployed npm bootstrap retained workspace protocol for ${name}: ${specifier}`);
     }
   }
-  const bundled = new Set(manifest.bundledDependencies ?? manifest.bundleDependencies ?? []);
-  for (const dependency of Object.keys(manifest.dependencies ?? {})) {
-    if (!bundled.has(dependency)) {
-      throw new Error(`Runtime dependency '${dependency}' is not declared as bundled.`);
-    }
+
+  manifest.bundledDependencies = dependencies;
+  fs.writeFileSync(packagePath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+  for (const dependency of dependencies) {
     const dependencyPath = path.join(stagingDir, "node_modules", ...dependency.split("/"));
     if (!fs.existsSync(dependencyPath)) {
       throw new Error(`Deployed npm bootstrap is missing bundled dependency '${dependency}'.`);
     }
-    const stat = fs.lstatSync(dependencyPath);
-    if (stat.isSymbolicLink()) {
-      const resolved = fs.realpathSync(dependencyPath);
-      const relative = path.relative(stagingDir, resolved);
-      if (relative.startsWith("..") || path.isAbsolute(relative)) {
-        throw new Error(`Bundled dependency '${dependency}' resolves outside deployment: ${resolved}`);
-      }
+    const resolved = fs.realpathSync(dependencyPath);
+    const relative = path.relative(stagingDir, resolved);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw new Error(`Bundled dependency '${dependency}' resolves outside deployment: ${resolved}`);
     }
   }
   return manifest;
@@ -90,7 +89,7 @@ export function packNpmBootstrap(options = {}) {
       ["--filter=tool-evolver", "--prod", "deploy", "--legacy", stagingDir],
       { cwd: rootDir },
     );
-    const manifest = assertPortableManifest(stagingDir);
+    const manifest = preparePortableManifest(stagingDir);
     const packOutput = run(
       npm,
       ["pack", stagingDir, "--pack-destination", outputDir, "--json"],
