@@ -103,7 +103,7 @@ describe("CandidateValidationPipeline and Safety Gate Attestation Binding", () =
     }
 
     export default defineTool<{ text: string }, OutputType>(async (ctx) => {
-      ctx.log?.("Processing input", { text: ctx.input.text });
+      await ctx.log("info", "Processing input", { text: ctx.input.text });
       return {
         result: ctx.input.text.toUpperCase(),
         length: ctx.input.text.length,
