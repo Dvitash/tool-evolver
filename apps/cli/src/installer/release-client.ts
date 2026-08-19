@@ -10,7 +10,8 @@ import {
   verifyManifest,
 } from "./channel-verifier.js";
 
-export const DEFAULT_PRODUCTION_CHANNEL_URL = "https://releases.tool-evolver.dev/channels.json";
+export const DEFAULT_PRODUCTION_CHANNEL_URL =
+  "https://github.com/Dvitash/tool-evolver/releases/download/v1.0.0/channels.json";
 export const PINNED_DENO_VERSION = "2.9.5";
 
 export interface RuntimeAssetDescriptor {
