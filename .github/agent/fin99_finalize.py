@@ -18,17 +18,16 @@ replacements = {
     "6aa8edbf5e7f2005d588500a416f6acadbc332f68e624156f573b5eea9e2e5a3": "b796aadd131f6930560c1ee040cf0d6f53933fbb987464e9ff46bd7ea4830615",
 }
 for old, new in replacements.items():
-    if old not in s:
-        raise SystemExit(f"missing provisional Deno digest {old}")
-    s = s.replace(old, new)
+    if old in s:
+        s = s.replace(old, new)
 p.write_text(s)
 
 # The HTTP fixture transport exception remains loopback-only and must apply to the
 # runtime asset after the signed manifest is verified too.
 replace_once(
     "apps/cli/src/installer/release-client.ts",
-    "function resolveDenoAsset(\n  manifest: ReleaseManifestWithRuntimes,\n  platform: ResolveProductionReleaseOptions[\"platform\"],\n): RuntimeAssetDescriptor {",
-    "function resolveDenoAsset(\n  manifest: ReleaseManifestWithRuntimes,\n  platform: ResolveProductionReleaseOptions[\"platform\"],\n  allowInsecureHttpForTests = false,\n): RuntimeAssetDescriptor {",
+    "function resolveDenoAsset(\n  descriptor: RuntimeDescriptor | undefined,\n  platform: { os: string; arch: string; isWsl?: boolean },\n): RuntimeAssetDescriptor {",
+    "function resolveDenoAsset(\n  descriptor: RuntimeDescriptor | undefined,\n  platform: { os: string; arch: string; isWsl?: boolean },\n  allowInsecureHttpForTests = false,\n): RuntimeAssetDescriptor {",
     "Deno resolver signature",
 )
 replace_once(

@@ -159,6 +159,7 @@ function platformKey(platform: { os: string; arch: string; isWsl?: boolean }): s
 function resolveDenoAsset(
   descriptor: RuntimeDescriptor | undefined,
   platform: { os: string; arch: string; isWsl?: boolean },
+  allowInsecureHttpForTests = false,
 ): RuntimeAssetDescriptor {
   if (!descriptor || !descriptor.required) {
     throw new Error("Signed release manifest is missing the required Deno runtime descriptor.");
@@ -173,7 +174,7 @@ function resolveDenoAsset(
   const asset =
     descriptor.assets[key] ?? (linuxFallback ? descriptor.assets[linuxFallback] : undefined);
   if (!asset) throw new Error(`No pinned Deno runtime asset exists for '${key}'.`);
-  assertTransport(asset.url, false);
+  assertTransport(asset.url, allowInsecureHttpForTests);
   assertSha256(asset.sha256, `Deno ${descriptor.version} asset`);
   return asset;
 }
