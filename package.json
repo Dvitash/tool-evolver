@@ -28,7 +28,7 @@
     "release:evidence": "node scripts/generate-release-evidence.mjs",
     "release:publish": "node scripts/publish-v1-release.mjs",
     "release:verify": "node scripts/verify-release-cli.mjs",
-    "release:test": "vitest run --testTimeout=90000 --hookTimeout=30000 scripts/verify-release.test.mjs scripts/platform-qualification.test.mjs scripts/release-evidence.test.mjs scripts/standalone-release-artifact.test.mjs",
+    "release:test": "vitest run --no-file-parallelism --testTimeout=90000 --hookTimeout=30000 scripts/verify-release.test.mjs && vitest run --no-file-parallelism --testTimeout=90000 --hookTimeout=30000 scripts/platform-qualification.test.mjs && vitest run --no-file-parallelism --testTimeout=90000 --hookTimeout=30000 scripts/release-evidence.test.mjs && vitest run --no-file-parallelism --testTimeout=90000 --hookTimeout=30000 scripts/standalone-release-artifact.test.mjs",
     "clean": "turbo run clean"
   },
   "devDependencies": {
