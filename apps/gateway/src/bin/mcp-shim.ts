@@ -39,6 +39,7 @@ Options:
   --no-standalone        Disable standalone fallback
   -S, --socket <path>    Daemon socket path
   -C, --cwd <path>       Working directory
+  -d, --db <path>        Database path for local state store
   -H, --harness <id>     Harness identifier
   -h, --help             Show command line help
 `;
@@ -51,6 +52,7 @@ function parseArgs(args: string[]) {
   let socketPath: string | undefined;
   let cwd: string | undefined;
   let harnessId: string | undefined;
+  let dbPath: string | undefined;
   let showHelp = false;
 
   for (let i = 0; i < args.length; i++) {
@@ -68,10 +70,12 @@ function parseArgs(args: string[]) {
       cwd = args[++i];
     } else if ((arg === "--harness" || arg === "-H") && i + 1 < args.length) {
       harnessId = args[++i];
+    } else if ((arg === "--db" || arg === "-d") && i + 1 < args.length) {
+      dbPath = args[++i];
     }
   }
 
-  return { standaloneMode, standaloneFallback, socketPath, cwd, harnessId, showHelp };
+  return { standaloneMode, standaloneFallback, socketPath, cwd, harnessId, dbPath, showHelp };
 }
 
 async function main(): Promise<void> {
@@ -81,9 +85,9 @@ async function main(): Promise<void> {
     printHelp();
     return;
   }
-
   const shim = new McpStdioShim({
     standaloneFallback: args.standaloneFallback,
+    db: args.dbPath,
     socketPath: args.standaloneMode && !args.socketPath ? "" : args.socketPath,
     cwd: args.cwd,
     harnessId: args.harnessId,

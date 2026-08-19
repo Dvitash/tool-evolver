@@ -164,4 +164,8 @@ export interface ToolRegistryOptions {
    * Optional Safety Gate evaluator for enforcing production readiness.
    */
   safetyGateEvaluator?: SafetyGateEvaluator;
+  /**
+   * Whether to automatically hydrate tools from the database on startup (default: true).
+   */
+  autoHydrate?: boolean;
 }

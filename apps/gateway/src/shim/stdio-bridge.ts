@@ -2,8 +2,10 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import { getDaemonPaths } from "@tool-evolver/observer";
+import { createSystemMetaTools } from "../meta/index.js";
+import { ToolRegistry } from "../registry/registry.js";
 import { LocalMcpGateway } from "../gateway.js";
-import { FakeGatewayRouter } from "../router.js";
+import { FakeGatewayRouter, type GatewayRouter, createRegistryGatewayRouter } from "../router.js";
 import { withResolvers } from "../utils/deferred.js";
 
 export interface McpStdioShimOptions {
@@ -16,6 +18,11 @@ export interface McpStdioShimOptions {
   stdin?: NodeJS.ReadableStream;
   stdout?: NodeJS.WritableStream;
   stderr?: NodeJS.WritableStream;
+  db?: unknown;
+  stateStore?: unknown;
+  toolRepo?: unknown;
+  registry?: ToolRegistry;
+  router?: GatewayRouter;
 }
 
 export type ShimMode = "daemon_ipc" | "standalone_inprocess" | "failed";
@@ -103,6 +110,7 @@ export async function attemptDaemonStartup(socketPath: string, maxWaitMs = 3000)
  * to either the background Tool Evolver daemon or standalone in-process gateway.
  */
 export class McpStdioShim {
+  private readonly options: McpStdioShimOptions;
   private readonly socketPath: string;
   private readonly standaloneFallback: boolean;
   private readonly cwd: string;
@@ -118,6 +126,7 @@ export class McpStdioShim {
   private isRunning = false;
 
   constructor(options: McpStdioShimOptions = {}) {
+    this.options = options;
     const defaultPaths = getDaemonPaths();
     this.socketPath = options.socketPath ?? defaultPaths.socketPath;
     this.standaloneFallback = options.standaloneFallback ?? true;
@@ -214,7 +223,23 @@ export class McpStdioShim {
   }
 
   private async startStandaloneGateway(): Promise<void> {
-    const router = new FakeGatewayRouter();
+    let router: GatewayRouter;
+
+    if (this.options.router) {
+      router = this.options.router;
+    } else if (this.options.registry) {
+      router = createRegistryGatewayRouter(this.options.registry);
+    } else {
+      const db = this.options.db ?? this.options.stateStore ?? this.options.toolRepo;
+      const registry = new ToolRegistry({ db });
+      const systemMetaTools = createSystemMetaTools(registry);
+      for (const tool of systemMetaTools) {
+        registry.registerToolSync(tool);
+      }
+      await registry.hydrateFromStore();
+      router = createRegistryGatewayRouter(registry);
+    }
+
     this.activeGateway = new LocalMcpGateway({
       router,
       serverInfo: {

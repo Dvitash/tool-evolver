@@ -1,10 +1,16 @@
-import { isSafetyGateBypassTool } from "@tool-evolver/contracts";
+import { type ToolVersion, isSafetyGateBypassTool } from "@tool-evolver/contracts";
 import type { SafetyGateEvaluator } from "@tool-evolver/runtime";
 import type { ToolInvocationRouter } from "./meta/router-contract.js";
 import { MCP_ERROR_CODES, McpProtocolError } from "./protocol/errors.js";
 import type { CallToolResult, McpTool, McpToolInput } from "./protocol/types.js";
 import { CanaryRouter } from "./registry/canary-router.js";
-import type { CatalogSnapshotRecord, ToolRegistry } from "./registry/index.js";
+import {
+  type CatalogSnapshotRecord,
+  ToolRegistry,
+  createEvolvedToolHandler,
+  extractToolRepo,
+  type ToolRepoLike,
+} from "./registry/index.js";
 import { withResolvers } from "./utils/deferred.js";
 import type { WorkspaceContext } from "./workspace-resolver.js";
 
@@ -37,6 +43,14 @@ export interface RegisteredTool {
   workspaceId?: string;
   isSystem?: boolean;
 }
+
+export interface FakeGatewayRouterOptions {
+  db?: unknown;
+  toolRepo?: unknown;
+  safetyGateEvaluator?: SafetyGateEvaluator;
+  autoHydrate?: boolean;
+}
+
 /**
  * Fake in-memory GatewayRouter implementation for testing and development.
  */
@@ -45,9 +59,18 @@ export class FakeGatewayRouter implements GatewayRouter {
   private readonly listeners = new Set<() => void>();
   private readonly delays = new Map<string, number>();
   private safetyGateEvaluator?: SafetyGateEvaluator;
-
-  constructor(safetyGateEvaluator?: SafetyGateEvaluator) {
-    this.safetyGateEvaluator = safetyGateEvaluator;
+  private readonly toolRepo: ToolRepoLike | null = null;
+  private hydrationPromise?: Promise<number>;
+  constructor(optionsOrEvaluator?: SafetyGateEvaluator | FakeGatewayRouterOptions) {
+    if (optionsOrEvaluator && "canExecuteTool" in optionsOrEvaluator) {
+      this.safetyGateEvaluator = optionsOrEvaluator;
+    } else if (optionsOrEvaluator && typeof optionsOrEvaluator === "object") {
+      this.safetyGateEvaluator = optionsOrEvaluator.safetyGateEvaluator;
+      this.toolRepo = extractToolRepo(optionsOrEvaluator.db ?? optionsOrEvaluator.toolRepo);
+      if (this.toolRepo && optionsOrEvaluator.autoHydrate !== false) {
+        void this.loadFromStore();
+      }
+    }
     this.registerDefaultTools();
   }
 
@@ -218,6 +241,9 @@ export class FakeGatewayRouter implements GatewayRouter {
   }
 
   async listTools(context: WorkspaceContext): Promise<McpTool[]> {
+    if (this.toolRepo && (!this.tools.size || this.hydrationPromise)) {
+      await this.loadFromStore();
+    }
     const result: McpTool[] = [];
     for (const entry of this.tools.values()) {
       if (!entry.workspaceId || entry.workspaceId === context.workspaceId) {
@@ -280,6 +306,90 @@ export class FakeGatewayRouter implements GatewayRouter {
         // Ignore listener errors
       }
     }
+  }
+  getToolRepo(): ToolRepoLike | null {
+    return this.toolRepo;
+  }
+
+  async loadFromStore(): Promise<number> {
+    if (!this.toolRepo) {
+      return 0;
+    }
+    if (this.hydrationPromise) {
+      return this.hydrationPromise;
+    }
+    const repo = this.toolRepo;
+    this.hydrationPromise = (async () => {
+      let count = 0;
+      try {
+        if (typeof repo.listManifests === "function") {
+          const manifests = await repo.listManifests();
+          for (const manifest of manifests) {
+            const toolId = manifest.id;
+            let versionObj: ToolVersion | null = null;
+            if (typeof repo.getToolVersion === "function") {
+              try {
+                versionObj = await repo.getToolVersion(toolId, manifest.version);
+              } catch {
+                // Ignore
+              }
+            }
+            if (versionObj) {
+              if (
+                versionObj.status === "deprecated" ||
+                (versionObj.status as string) === "revoked" ||
+                (versionObj.status as string) === "quarantined"
+              ) {
+                continue;
+              }
+              const handler = createEvolvedToolHandler(versionObj);
+              const inputSchema = toMcpInputSchema(
+                manifest.parameters && typeof manifest.parameters === "object"
+                  ? (manifest.parameters as Record<string, unknown>)
+                  : undefined,
+              );
+              this.registerTool(
+                {
+                  name: manifest.name,
+                  description: manifest.description || `Tool ${manifest.name}`,
+                  inputSchema,
+                },
+                handler,
+              );
+              count++;
+            } else {
+              const handler = createEvolvedToolHandler({ manifest });
+              const inputSchema = toMcpInputSchema(
+                manifest.parameters && typeof manifest.parameters === "object"
+                  ? (manifest.parameters as Record<string, unknown>)
+                  : undefined,
+              );
+              this.registerTool(
+                {
+                  name: manifest.name,
+                  description: manifest.description || `Tool ${manifest.name}`,
+                  inputSchema,
+                },
+                handler,
+              );
+              count++;
+            }
+          }
+        }
+      } catch {
+        // Ignore
+      } finally {
+        this.hydrationPromise = undefined;
+      }
+      return count;
+    })();
+    return this.hydrationPromise;
+  }
+
+  async refresh(): Promise<number> {
+    const count = await this.loadFromStore();
+    this.triggerToolListChanged();
+    return count;
   }
 }
 function toMcpInputSchema(rawSchema?: Record<string, unknown>): McpToolInput {
@@ -520,6 +630,11 @@ export class RegistryGatewayRouter implements GatewayRouter {
       this.unsubscribeEvents();
     }
     this.listeners.clear();
+  }
+  async refresh(workspaceId?: string): Promise<number> {
+    const count = await this.registry.refresh(workspaceId);
+    this.triggerToolListChanged();
+    return count;
   }
 }
 
