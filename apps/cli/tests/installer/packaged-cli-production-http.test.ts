@@ -90,7 +90,8 @@ function createStoredZip(name: string, body: Buffer): Buffer {
 }
 
 function platformAssetKey(): string {
-  if (process.platform === "darwin") return process.arch === "arm64" ? "darwin-arm64" : "darwin-x64";
+  if (process.platform === "darwin")
+    return process.arch === "arm64" ? "darwin-arm64" : "darwin-x64";
   return process.arch === "arm64" ? "linux-arm64" : "linux-x64";
 }
 
@@ -174,7 +175,8 @@ describe("packed CLI production bootstrap", () => {
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
-    if (!address || typeof address === "string") throw new Error("HTTP fixture did not bind a port");
+    if (!address || typeof address === "string")
+      throw new Error("HTTP fixture did not bind a port");
     baseUrl = `http://127.0.0.1:${address.port}`;
 
     const manifestPayload = {
@@ -213,7 +215,12 @@ describe("packed CLI production bootstrap", () => {
     const manifest = {
       ...manifestPayload,
       signatures: [
-        { keyId, algorithm: "Ed25519", publicKeyHex, signatureHex: sign(manifestPayload, privateKey) },
+        {
+          keyId,
+          algorithm: "Ed25519",
+          publicKeyHex,
+          signatureHex: sign(manifestPayload, privateKey),
+        },
       ],
     };
     manifestBytes = Buffer.from(JSON.stringify(manifest), "utf8");
@@ -236,7 +243,12 @@ describe("packed CLI production bootstrap", () => {
     const channel = {
       ...channelPayload,
       signatures: [
-        { keyId, algorithm: "Ed25519", publicKeyHex, signatureHex: sign(channelPayload, privateKey) },
+        {
+          keyId,
+          algorithm: "Ed25519",
+          publicKeyHex,
+          signatureHex: sign(channelPayload, privateKey),
+        },
       ],
     };
     channelBytes = Buffer.from(JSON.stringify(channel), "utf8");
