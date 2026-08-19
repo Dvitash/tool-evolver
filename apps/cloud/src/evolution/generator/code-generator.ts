@@ -75,8 +75,9 @@ export class CodeGenerator {
           },
         });
 
+        let parsed: ToolSynthesisOutput | undefined;
         if (response.output) {
-          const parsed = ToolSynthesisOutputSchema.parse(response.output);
+          parsed = ToolSynthesisOutputSchema.parse(response.output);
 
           if (
             parsed.code &&
@@ -147,7 +148,9 @@ ${customLogic}
         }
 
         if (!allowFallback) {
-          throw new Error("Structured inference did not return capability-compatible tool source");
+          throw new Error(
+            `Structured inference did not return capability-compatible tool source: ${this.describeGateRejection(plan, parsed)}`,
+          );
         }
       } catch (error) {
         if (!allowFallback) {
@@ -168,6 +171,23 @@ ${customLogic}
    * Model output can implement a plan, but it cannot substitute a different side-effect class.
    */
   private isBrokerUsageCompatible(plan: ToolPlan, sourceCode: string): boolean {
+    return this.brokerUsageReport(plan, sourceCode).compatible;
+  }
+
+  /**
+   * Compares broker families referenced by the source against the deterministic plan.
+   * Returns the full report so gate rejections can be diagnosed without re-running inference.
+   */
+  private brokerUsageReport(
+    plan: ToolPlan,
+    sourceCode: string,
+  ): {
+    compatible: boolean;
+    used: Record<"fs" | "net" | "cmd" | "secret", boolean>;
+    permitted: Record<"fs" | "net" | "cmd" | "secret", boolean>;
+    overUsed: string[];
+    unmetStepFamilies: string[];
+  } {
     const usesBroker = (service: "fs" | "net" | "cmd" | "secret"): boolean =>
       new RegExp(`\\b(?:broker|context)\\.${service}\\b`).test(sourceCode);
 
@@ -193,27 +213,28 @@ ${customLogic}
         plan.capabilities.secrets.allowedPrefixes.length > 0,
     };
 
-    if (
-      (used.fs && !permitted.fs) ||
-      (used.net && !permitted.net) ||
-      (used.cmd && !permitted.cmd) ||
-      (used.secret && !permitted.secret)
-    ) {
-      return false;
-    }
+    const families = ["fs", "net", "cmd", "secret"] as const;
+    const overUsed = families.filter((family) => used[family] && !permitted[family]);
 
+    const unmetStepFamilies: string[] = [];
     for (const step of plan.steps) {
       const service = step.service?.toLowerCase();
       const action = step.action?.toLowerCase() ?? "";
-      if ((service === "fs" || action.startsWith("fs.")) && !used.fs) return false;
+      if ((service === "fs" || action.startsWith("fs.")) && !used.fs) {
+        unmetStepFamilies.push("fs");
+      }
       if (
         (service === "net" || action.startsWith("net.") || action.startsWith("http.")) &&
         !used.net
       ) {
-        return false;
+        unmetStepFamilies.push("net");
       }
-      if ((service === "cmd" || action.startsWith("cmd.")) && !used.cmd) return false;
-      if ((service === "secret" || action.startsWith("secret.")) && !used.secret) return false;
+      if ((service === "cmd" || action.startsWith("cmd.")) && !used.cmd) {
+        unmetStepFamilies.push("cmd");
+      }
+      if ((service === "secret" || action.startsWith("secret.")) && !used.secret) {
+        unmetStepFamilies.push("secret");
+      }
     }
 
     const requiresSecret =
@@ -226,7 +247,40 @@ ${customLogic}
         );
       });
 
-    return !requiresSecret || used.secret;
+    const compatible =
+      overUsed.length === 0 && unmetStepFamilies.length === 0 && (!requiresSecret || used.secret);
+
+    return { compatible, used, permitted, overUsed, unmetStepFamilies };
+  }
+
+  /**
+   * Human-readable explanation of why structured inference output failed the gate.
+   */
+  private describeGateRejection(plan: ToolPlan, parsed: ToolSynthesisOutput | undefined): string {
+    if (!parsed) return "inference returned no structured output";
+    const summarize = (field: string, source: string | undefined): string => {
+      if (!source) return `${field}=empty`;
+      const markers: string[] = [];
+      if (!source.includes("defineTool")) markers.push("defineTool");
+      if (!source.includes("export default defineTool")) markers.push("export default defineTool");
+      const report = this.brokerUsageReport(plan, source);
+      const parts = [
+        `${field}: markersMissing=[${markers.join(",")}]`,
+        `used=${JSON.stringify(report.used)}`,
+        `permitted=${JSON.stringify(report.permitted)}`,
+      ];
+      if (report.overUsed.length > 0) parts.push(`overUsed=[${report.overUsed.join(",")}]`);
+      if (report.unmetStepFamilies.length > 0) {
+        parts.push(`unmetStepFamilies=[${report.unmetStepFamilies.join(",")}]`);
+      }
+      return parts.join(" ");
+    };
+    const codeSummary = summarize("code", parsed.code);
+    const customLogic = parsed.executionBody || parsed.transformationLogic;
+    if (customLogic && customLogic !== parsed.code) {
+      return `${codeSummary}; ${summarize("executionBody", customLogic)}`;
+    }
+    return codeSummary;
   }
 
   /**
