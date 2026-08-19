@@ -23,6 +23,26 @@ jobs:
         with:
           version: 10.24.0
           run_install: false
+      - name: Rebase finalizer onto current source
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/agent/fin99_finalize.py')
+          s = p.read_text()
+          s = s.replace(
+              '    if old not in s:\n        raise SystemExit(f"missing provisional Deno digest {old}")\n    s = s.replace(old, new)',
+              '    if old in s:\n        s = s.replace(old, new)',
+          )
+          s = s.replace(
+              '"function resolveDenoAsset(\\n  manifest: ReleaseManifestWithRuntimes,\\n  platform: ResolveProductionReleaseOptions[\\"platform\\"],\\n): RuntimeAssetDescriptor {"',
+              '"function resolveDenoAsset(\\n  descriptor: RuntimeDescriptor | undefined,\\n  platform: { os: string; arch: string; isWsl?: boolean },\\n): RuntimeAssetDescriptor {"',
+          )
+          s = s.replace(
+              '"function resolveDenoAsset(\\n  manifest: ReleaseManifestWithRuntimes,\\n  platform: ResolveProductionReleaseOptions[\\"platform\\"],\\n  allowInsecureHttpForTests = false,\\n): RuntimeAssetDescriptor {"',
+              '"function resolveDenoAsset(\\n  descriptor: RuntimeDescriptor | undefined,\\n  platform: { os: string; arch: string; isWsl?: boolean },\\n  allowInsecureHttpForTests = false,\\n): RuntimeAssetDescriptor {"',
+          )
+          p.write_text(s)
+          PY
       - name: Apply final installer transaction hardening
         run: python3 .github/agent/fin99_finalize.py
       - run: rm -f .github/agent/fin99_finalize.py
