@@ -292,38 +292,34 @@ describe("Release Packaging & Verification Suite", () => {
   });
 
   describe("Full End-to-End Package & Verify Cycle", () => {
-    it(
-      "packages and validates full release in isolated target directory",
-      () => {
-        const result = packageRelease({
-          rootDir,
-          distDir: tempReleaseDir,
-          skipBuild: true,
-          testOnly: true,
-        });
+    it("packages and validates full release in isolated target directory", () => {
+      const result = packageRelease({
+        rootDir,
+        distDir: tempReleaseDir,
+        skipBuild: true,
+        testOnly: true,
+      });
 
-        expect(result.success).toBe(true);
-        expect(result.packagesCount).toBe(15);
-        expect(result.assetsCount).toBe(PLATFORMS.length);
+      expect(result.success).toBe(true);
+      expect(result.packagesCount).toBe(15);
+      expect(result.assetsCount).toBe(PLATFORMS.length);
 
-        const verifyResult = verifyRelease({
-          rootDir,
-          releaseDir: tempReleaseDir,
-          allowTestEvidence: true,
-          trustedKeys: result.trustedKeys,
-          expectedCommitSha: result.releaseIdentity.commitSha,
-        });
+      const verifyResult = verifyRelease({
+        rootDir,
+        releaseDir: tempReleaseDir,
+        allowTestEvidence: true,
+        trustedKeys: result.trustedKeys,
+        expectedCommitSha: result.releaseIdentity.commitSha,
+      });
 
-        if (!verifyResult.valid) {
-          console.error("Release verification failed:", verifyResult.violations);
-        }
+      if (!verifyResult.valid) {
+        console.error("Release verification failed:", verifyResult.violations);
+      }
 
-        expect(verifyResult.valid).toBe(true);
-        expect(verifyResult.violations).toHaveLength(0);
-        expect(verifyResult.stats.platformsCount).toBe(5);
-        expect(verifyResult.stats.packagesCount).toBe(15);
-      },
-      20_000,
-    );
+      expect(verifyResult.valid).toBe(true);
+      expect(verifyResult.violations).toHaveLength(0);
+      expect(verifyResult.stats.platformsCount).toBe(5);
+      expect(verifyResult.stats.packagesCount).toBe(15);
+    }, 20_000);
   });
 });
