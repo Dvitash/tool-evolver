@@ -2,7 +2,6 @@ import type { NormalizedSessionEvent } from "@tool-evolver/contracts";
 import type { ObservationBatchRequest, ObservationBatchResponse } from "@tool-evolver/protocol";
 import { describe, expect, it } from "vitest";
 import { createCloudService } from "../src/index.js";
-import { createGetEvolutionStatusTool } from "../src/mcp/tools/get-evolution-status.js";
 
 describe("Regression #107 & #108: Queue Split & Ingest Store Chain", () => {
   it("executes jobs submitted via HTTP POST /v1/jobs on the shared worker queue (#107)", async () => {
@@ -135,14 +134,26 @@ describe("Regression #107 & #108: Queue Split & Ingest Store Chain", () => {
       expect(session).toBeDefined();
       expect(session?.id).toBe("sess-reg-1");
 
-      // Verify get_evolution_status tool reflects observations
-      const statusTool = createGetEvolutionStatusTool({ dbPool: cloud.dbPool });
-      const statusResult = await statusTool.handler(
-        {},
-        {
-          tenant: { accountId: "acc-reg-1", workspaceId: "ws-reg-1" },
+      // Verify get_evolution_status through the real MCP/HTTP path (catalog-registered tool)
+      const statusRes = await fetch(`${baseUrl}/v1/mcp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-account-id": "acc-reg-1",
+          "x-workspace-id": "ws-reg-1",
         },
-      );
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "get_evolution_status", arguments: { timeframe: "all" } },
+        }),
+      });
+      expect(statusRes.status).toBe(200);
+      const statusJson = (await statusRes.json()) as {
+        result: { isError?: boolean; structuredData: unknown };
+      };
+      const statusResult = statusJson.result;
       expect(statusResult.isError).toBe(false);
       const report = statusResult.structuredData as {
         observations: { totalEvents: number; totalSessions: number };

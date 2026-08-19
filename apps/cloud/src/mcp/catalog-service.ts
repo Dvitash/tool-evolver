@@ -16,8 +16,8 @@ import type { ToolRegistryRepository } from "../evolution/artifacts/repositories
 import type { TenantContext } from "../tenant.js";
 import {
   echoFixtureTool,
-  getEvolutionStatusTool,
-  getToolLineageTool,
+  createGetEvolutionStatusTool,
+  createGetToolLineageTool,
   statusFixtureTool,
   testFailureFixtureTool,
 } from "./tools/index.js";
@@ -74,8 +74,18 @@ export class CloudCatalogService {
 
     // Register default platform tools unless explicitly disabled
     if (options.includeDefaultPlatformTools !== false) {
-      this.registerTool(getEvolutionStatusTool);
-      this.registerTool(getToolLineageTool);
+      this.registerTool(
+        createGetEvolutionStatusTool({
+          dbPool: options.dbPool,
+          toolRegistryRepo: options.toolRegistryRepo,
+        }),
+      );
+      this.registerTool(
+        createGetToolLineageTool({
+          dbPool: options.dbPool,
+          toolRegistryRepo: options.toolRegistryRepo,
+        }),
+      );
       this.registerTool(echoFixtureTool);
       this.registerTool(statusFixtureTool);
       this.registerTool(testFailureFixtureTool);
