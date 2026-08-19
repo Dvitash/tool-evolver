@@ -24,8 +24,8 @@ export class CapabilityMapper {
     const fsCap: FsCapability = {
       readPaths: [],
       writePaths: [],
-      allowWorkspaceRoot: true,
-      allowTemp: true,
+      allowWorkspaceRoot: false,
+      allowTemp: false,
       denyPaths: [],
       maxFileSizeBytes: 10485760, // 10MB
     };
@@ -85,6 +85,8 @@ export class CapabilityMapper {
         toolClass === "fs"
       ) {
         needsFs = true;
+        fsCap.allowTemp = true;
+        fsCap.allowWorkspaceRoot = true;
         const readPath =
           step.inputs.readPath ??
           step.inputs.path ??

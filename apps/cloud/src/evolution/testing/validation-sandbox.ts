@@ -597,18 +597,45 @@ export class ValidationSandbox {
               });
             }
           } else {
-            failed++;
-            results.push({
-              testId: testCase.id,
-              name: testCase.name,
-              testType: testCase.testType,
-              status: "fail",
-              durationMs,
-              passed: false,
-              input: testCase.input,
-              error: `Expected error outcome '${testCase.expectedOutcome}' but execution succeeded.`,
-              logs,
-            });
+            // Structured error contract: tools whose output schema declares
+            // { success: boolean, error?: string } report execution failures as
+            // success:false results instead of throwing. Accept that as the
+            // expected error outcome.
+            const out = execResult.output as { success?: unknown; error?: unknown } | undefined;
+            const structuredError =
+              testCase.expectedOutcome === "execution_error" &&
+              out !== null &&
+              typeof out === "object" &&
+              out.success === false;
+
+            if (structuredError) {
+              passed++;
+              results.push({
+                testId: testCase.id,
+                name: testCase.name,
+                testType: testCase.testType,
+                status: "pass",
+                durationMs,
+                passed: true,
+                input: testCase.input,
+                actualOutput: execResult.output,
+                logs,
+                assertionsPassed: 1,
+              });
+            } else {
+              failed++;
+              results.push({
+                testId: testCase.id,
+                name: testCase.name,
+                testType: testCase.testType,
+                status: "fail",
+                durationMs,
+                passed: false,
+                input: testCase.input,
+                error: `Expected error outcome '${testCase.expectedOutcome}' but execution succeeded.`,
+                logs,
+              });
+            }
           }
         }
       } catch (err: unknown) {
