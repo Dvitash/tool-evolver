@@ -51,11 +51,14 @@ export function finalizePublicRelease(options = {}) {
     throw new Error("Release manifest is missing version or exact release identity.");
   }
   if (!/^[0-9a-f]{40}$/i.test(manifest.releaseIdentity.commitSha)) {
-    throw new Error(`Release manifest commit SHA is invalid: ${manifest.releaseIdentity.commitSha}`);
+    throw new Error(
+      `Release manifest commit SHA is invalid: ${manifest.releaseIdentity.commitSha}`,
+    );
   }
 
   const testOnly = options.testOnly === true || process.env.TOOL_EVOLVER_RELEASE_TEST_ONLY === "1";
-  const signingKey = options.signingKey ??
+  const signingKey =
+    options.signingKey ??
     (testOnly ? createTestReleaseSigningKey() : loadReleaseSigningKeyFromEnv());
   if (!testOnly && signingKey.trustDomain !== "production") {
     throw new Error("Public release channel must be signed by the production trust domain.");
@@ -116,7 +119,9 @@ if (
     const result = finalizePublicRelease(parseArgs(process.argv.slice(2)));
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
+    process.stderr.write(
+      `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+    );
     process.exit(1);
   }
 }
