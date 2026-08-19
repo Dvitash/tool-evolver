@@ -98,13 +98,12 @@ describe("Asset Acquisition & Verification", () => {
     expect(result.digestMismatches[0].name).toBe("daemon");
   });
 
-  it("finds Deno executable from custom path or environment variables", async () => {
+  it("does not treat a merely existing path as a working Deno executable", async () => {
     const bridge = new InMemoryConfigFsBridge();
-    await bridge.writeFile("/home/developer/.deno/bin/deno", "binary");
+    await bridge.writeFile("/home/developer/.deno/bin/deno", "not-an-executable-deno");
 
     const found = await findDenoExecutable(undefined, { HOME: "/home/developer" }, bridge);
 
-    expect(found).not.toBeNull();
-    expect(found?.path).toBe("/home/developer/.deno/bin/deno");
+    expect(found).toBeNull();
   });
 });
