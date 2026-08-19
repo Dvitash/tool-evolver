@@ -23,10 +23,37 @@ jobs:
         with:
           version: 10.24.0
           run_install: false
-      - name: Apply signed installer hardening
+      - name: Apply remaining signed installer hardening
         run: |
-          sed -i 's/platform_end = "]\\n\\nexport const WORKSPACE_PACKAGES"/platform_end = "];\\n\\nexport const WORKSPACE_PACKAGES"/' .github/agent/fin99_apply.py
-          sed -i 's/s = s.replace(platform_end, "]" + deno, 1)/s = s.replace(platform_end, "];" + deno, 1)/' .github/agent/fin99_apply.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/agent/fin99_apply.py')
+          s = p.read_text()
+          # The release-manifest/runtime-signature tranche was committed by the
+          # previous attempt. Continue from immutable version installation.
+          section = s.index('# Runtime installation happens inside the immutable version staging directory.')
+          header_end = s.index('# ---------------------------------------------------------------------------\n# Signed manifest owns')
+          s = s[:header_end] + '# ---------------------------------------------------------------------------\n' + s[section:]
+          # Align replacement targets with the current FIN-002 source shape.
+          s = s.replace(
+              '  readonly fsBridge?: ConfigFsBridge;\n  readonly logger?: (message: string) => void;\n  readonly force?: boolean;\n}',
+              '  readonly fsBridge?: ConfigFsBridge;\n  readonly force?: boolean;\n  readonly logger?: (msg: string) => void;\n}',
+              1,
+          )
+          s = s.replace(
+              'export interface VersionStateRecord {\n  activeVersion: string;\n  previousVersion: string | null;\n  updatedAt: string;\n  installedVersions: string[];\n}',
+              'export interface VersionStateRecord {\n  readonly activeVersion: string;\n  readonly previousVersion: string | null;\n  readonly updatedAt: string;\n  readonly installedVersions: string[];\n}',
+              1,
+          )
+          s = s.replace(
+              '/**\n * Atomically installs a verified release tarball into an immutable version directory.\n */',
+              '/**\n * Installs a release package into an immutable version directory.\n */',
+              1,
+          )
+          s = s.replace('downloadedRelease.actualSha256', 'downloadedRelease.sha256')
+          s = s.replace('downloadedDeno.actualSha256', 'downloadedDeno.sha256')
+          p.write_text(s)
+          PY
           python3 .github/agent/fin99_apply.py
       - run: rm -f .github/agent/fin99_apply.py
       - run: pnpm install --frozen-lockfile
