@@ -86,7 +86,7 @@ export function packNpmBootstrap(options = {}) {
   try {
     run(
       pnpm,
-      ["--filter=tool-evolver", "--prod", "deploy", "--legacy", stagingDir],
+      ["--filter=./apps/cli", "--prod", "deploy", "--legacy", stagingDir],
       { cwd: rootDir },
     );
     const manifest = preparePortableManifest(stagingDir);
