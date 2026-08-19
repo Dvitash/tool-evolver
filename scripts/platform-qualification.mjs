@@ -185,9 +185,7 @@ function validatePlatformMetadata(installedRoot, lane, manifest) {
     metadata.arch !== expectedArch ||
     Boolean(metadata.isWsl) !== expectedWsl
   ) {
-    throw new Error(
-      `Platform metadata mismatch for ${lane}: ${JSON.stringify(metadata)}`,
-    );
+    throw new Error(`Platform metadata mismatch for ${lane}: ${JSON.stringify(metadata)}`);
   }
   if (metadata.releaseVersion !== manifest.version) {
     throw new Error(
@@ -229,9 +227,7 @@ function qualifyCli(installedRoot, sandboxDir, manifest) {
     { cwd: outside, env, timeoutMs: 30_000 },
   );
   if (initDryRun.status !== 0 || !initDryRun.stdout.includes('"success": true')) {
-    throw new Error(
-      `Packaged CLI init dry-run failed: ${initDryRun.stderr || initDryRun.stdout}`,
-    );
+    throw new Error(`Packaged CLI init dry-run failed: ${initDryRun.stderr || initDryRun.stdout}`);
   }
   return {
     versionOutput: version.stdout.trim(),
@@ -291,11 +287,11 @@ async function qualifyDaemon(installedRoot, sandboxDir) {
         `Packaged daemon diagnostics failed: ${diagnostics.stderr || diagnostics.stdout}`,
       );
     }
-    const stop = runNode(
-      daemonBin,
-      ["--stop", "--home", daemonHome, "--socket", socketPath],
-      { cwd: sandboxDir, env, timeoutMs: 5000 },
-    );
+    const stop = runNode(daemonBin, ["--stop", "--home", daemonHome, "--socket", socketPath], {
+      cwd: sandboxDir,
+      env,
+      timeoutMs: 5000,
+    });
     if (stop.status !== 0) {
       throw new Error(`Packaged daemon stop failed: ${stop.stderr || stop.stdout}`);
     }
@@ -537,7 +533,7 @@ async function probeHarnesses(installedRoot) {
         detectedStatus: installation.status,
         version: installation.version ?? null,
         executablePath: installation.executablePath ?? null,
-        reason: qualified ? null : installation.status ?? "not_ready",
+        reason: qualified ? null : (installation.status ?? "not_ready"),
       });
     } catch (error) {
       results.push({
@@ -589,10 +585,7 @@ export async function qualifyPlatformLane(lane, options = {}) {
   try {
     const manifest = readManifest(releaseDir);
     const resolved = resolveAsset(releaseDir, lane, manifest);
-    const installedRoot = extractRelease(
-      resolved.archivePath,
-      path.join(sandboxDir, "extracted"),
-    );
+    const installedRoot = extractRelease(resolved.archivePath, path.join(sandboxDir, "extracted"));
     const platformMetadata = validatePlatformMetadata(installedRoot, lane, manifest);
     const cli = qualifyCli(installedRoot, sandboxDir, manifest);
     const daemon = await qualifyDaemon(installedRoot, sandboxDir);
@@ -694,7 +687,10 @@ function parseArgs(argv) {
   return options;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)
+) {
   const result = await runPlatformQualification(parseArgs(process.argv.slice(2)));
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   process.exitCode = result.passed ? 0 : 1;
