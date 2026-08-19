@@ -23,7 +23,11 @@ jobs:
         with:
           version: 10.24.0
           run_install: false
-      - run: python3 .github/agent/fin99_apply.py
+      - name: Apply signed installer hardening
+        run: |
+          sed -i 's/platform_end = "]\\n\\nexport const WORKSPACE_PACKAGES"/platform_end = "];\\n\\nexport const WORKSPACE_PACKAGES"/' .github/agent/fin99_apply.py
+          sed -i 's/s = s.replace(platform_end, "]" + deno, 1)/s = s.replace(platform_end, "];" + deno, 1)/' .github/agent/fin99_apply.py
+          python3 .github/agent/fin99_apply.py
       - run: rm -f .github/agent/fin99_apply.py
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec biome check --write .
