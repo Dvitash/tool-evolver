@@ -78,6 +78,7 @@ export interface SignedManifest {
   readonly releaseDate: string;
   readonly packages?: Record<string, ManifestPackage>;
   readonly assets: Record<string, ManifestAsset>;
+  readonly runtimes?: Record<string, unknown>;
   readonly signatures?: SignatureEntry[];
 }
 
@@ -430,6 +431,7 @@ export function verifyManifest(
         ...(manifest.releaseIdentity ? { releaseIdentity: manifest.releaseIdentity } : {}),
         packages: manifest.packages,
         assets: manifest.assets,
+        ...(manifest.runtimes ? { runtimes: manifest.runtimes } : {}),
         ...(manifest.evidence ? { evidence: manifest.evidence } : {}),
       };
 

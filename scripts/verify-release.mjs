@@ -247,6 +247,7 @@ export function verifyManifestSignatures(manifest, options = {}) {
     releaseIdentity: manifest.releaseIdentity,
     packages: manifest.packages,
     assets: manifest.assets,
+    ...(manifest.runtimes ? { runtimes: manifest.runtimes } : {}),
     evidence: manifest.evidence,
   };
   const result = verifyReleasePayloadSignature(payload, signature, options.trustedKeys);

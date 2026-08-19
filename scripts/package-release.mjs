@@ -70,6 +70,41 @@ export const PLATFORMS = [
   },
 ];
 
+export const PINNED_DENO_RUNTIME = Object.freeze({
+  version: "2.9.5",
+  required: true,
+  assets: {
+    "linux-x64": {
+      filename: "deno-x86_64-unknown-linux-gnu.zip",
+      url: "https://github.com/denoland/deno/releases/download/v2.9.5/deno-x86_64-unknown-linux-gnu.zip",
+      sha256: "11d8df76601162f7d60a95deebb2b668e7da26863fbb8dad1f69f85dd7c24fe5",
+      archive: "zip",
+      executable: "deno",
+    },
+    "linux-arm64": {
+      filename: "deno-aarch64-unknown-linux-gnu.zip",
+      url: "https://github.com/denoland/deno/releases/download/v2.9.5/deno-aarch64-unknown-linux-gnu.zip",
+      sha256: "190fffcdb34e19f608df71c0cf7543ad273c7c6ad88c376af1103906044b1b0f",
+      archive: "zip",
+      executable: "deno",
+    },
+    "darwin-x64": {
+      filename: "deno-x86_64-apple-darwin.zip",
+      url: "https://github.com/denoland/deno/releases/download/v2.9.5/deno-x86_64-apple-darwin.zip",
+      sha256: "7569bf6b6a504dfba1c48ac8b918528d8e956197551e494da1d8fff6d9bdaa11",
+      archive: "zip",
+      executable: "deno",
+    },
+    "darwin-arm64": {
+      filename: "deno-aarch64-apple-darwin.zip",
+      url: "https://github.com/denoland/deno/releases/download/v2.9.5/deno-aarch64-apple-darwin.zip",
+      sha256: "6aa8edbf5e7f2005d588500a416f6acadbc332f68e624156f573b5eea9e2e5a3",
+      archive: "zip",
+      executable: "deno",
+    },
+  },
+});
+
 export const WORKSPACE_PACKAGES = [
   {
     name: "@tool-evolver/contracts",
@@ -569,6 +604,7 @@ export function generateSignedManifest(packageDigests, assetDigests, options = {
     releaseIdentity,
     packages: packageDigests,
     assets: assetDigests,
+    runtimes: { deno: PINNED_DENO_RUNTIME },
     evidence: evidence || { status: "TEST_ONLY" },
   };
   const signature = signReleasePayload(manifestPayload, keyPair);

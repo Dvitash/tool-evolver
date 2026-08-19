@@ -19,7 +19,7 @@ def replace_once(text, old, new, label):
 # ---------------------------------------------------------------------------
 p = "scripts/package-release.mjs"
 s = read(p)
-platform_end = "]\n\nexport const WORKSPACE_PACKAGES"
+platform_end = "];\n\nexport const WORKSPACE_PACKAGES"
 if platform_end not in s:
     raise SystemExit("platform list marker missing")
 deno = '''\n\nexport const PINNED_DENO_RUNTIME = Object.freeze({
@@ -56,7 +56,7 @@ deno = '''\n\nexport const PINNED_DENO_RUNTIME = Object.freeze({
     },
   },
 });\n\nexport const WORKSPACE_PACKAGES'''
-s = s.replace(platform_end, "]" + deno, 1)
+s = s.replace(platform_end, "];" + deno, 1)
 s = replace_once(
     s,
     '''    packages: packageDigests,
