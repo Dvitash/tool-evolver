@@ -40,6 +40,8 @@ jobs:
           run_install: false
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - name: Embed active public release trust root in packaged CLI
+        run: node scripts/embed-cli-release-trust.mjs
       - run: pnpm test
       - name: Require production qualification evidence
         run: test -s "$TOOL_EVOLVER_RELEASE_EVIDENCE_PATH"
