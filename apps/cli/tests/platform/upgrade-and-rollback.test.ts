@@ -136,6 +136,7 @@ describe("Cross-Platform Upgrade and Rollback Suite", () => {
           fsBridge,
           customFetch: mockFetch as unknown as typeof fetch,
           platformInfo,
+          releaseMode: "test-simulated",
         });
 
         const result = await orchestrator.runUpgrade({
@@ -206,6 +207,7 @@ describe("Cross-Platform Upgrade and Rollback Suite", () => {
         toolEvolverHome,
         fsBridge,
         customFetch: mockFetch as unknown as typeof fetch,
+        releaseMode: "test-simulated",
       });
 
       const result = await orchestrator.runUpgrade({
@@ -261,6 +263,7 @@ describe("Cross-Platform Upgrade and Rollback Suite", () => {
         toolEvolverHome,
         fsBridge,
         customFetch: mockFetch as unknown as typeof fetch,
+        releaseMode: "test-simulated",
       });
 
       const result = await orchestrator.runUpgrade({
