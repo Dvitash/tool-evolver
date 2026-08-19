@@ -30,6 +30,10 @@ jobs:
           p = Path('.github/agent/fin99_finalize.py')
           s = p.read_text()
           s = s.replace(
+              '    if old not in text:\n        raise SystemExit(f"missing replacement target: {label}")\n    p.write_text(text.replace(old, new, 1))',
+              '    if old not in text:\n        if new in text:\n            return\n        raise SystemExit(f"missing replacement target: {label}")\n    p.write_text(text.replace(old, new, 1))',
+          )
+          s = s.replace(
               '    if old not in s:\n        raise SystemExit(f"missing provisional Deno digest {old}")\n    s = s.replace(old, new)',
               '    if old in s:\n        s = s.replace(old, new)',
           )
@@ -40,6 +44,14 @@ jobs:
           s = s.replace(
               '"function resolveDenoAsset(\\n  manifest: ReleaseManifestWithRuntimes,\\n  platform: ResolveProductionReleaseOptions[\\"platform\\"],\\n  allowInsecureHttpForTests = false,\\n): RuntimeAssetDescriptor {"',
               '"function resolveDenoAsset(\\n  descriptor: RuntimeDescriptor | undefined,\\n  platform: { os: string; arch: string; isWsl?: boolean },\\n  allowInsecureHttpForTests = false,\\n): RuntimeAssetDescriptor {"',
+          )
+          s = s.replace(
+              '"  const denoAsset = resolveDenoAsset(manifest, options.platform);"',
+              '"  const denoAsset = resolveDenoAsset(manifest.runtimes?.deno, options.platform);"',
+          )
+          s = s.replace(
+              '"  const denoAsset = resolveDenoAsset(\\n    manifest,\\n    options.platform,\\n    options.allowInsecureHttpForTests === true,\\n  );"',
+              '"  const denoAsset = resolveDenoAsset(\\n    manifest.runtimes?.deno,\\n    options.platform,\\n    options.allowInsecureHttpForTests === true,\\n  );"',
           )
           p.write_text(s)
           PY
@@ -55,7 +67,7 @@ jobs:
         continue-on-error: true
       - name: Exclude workflow changes from bot commit
         if: always()
-        run: git checkout HEAD -- .github/workflows/ci.yml
+        run: git checkout HEAD -- .github/workflows/ci.yml .github/workflows/release.yml
       - name: Commit finalized FIN-003 source
         if: always()
         run: |
