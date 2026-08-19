@@ -662,6 +662,8 @@ export interface OpenAiCompatibleProviderOptions {
   timeoutMs?: number;
   capabilities?: ModelCapability[];
   customFetch?: typeof fetch;
+  extraHeaders?: Record<string, string>;
+  extraBody?: Record<string, unknown>;
 }
 
 interface OpenAiChatCompletionResponse {
@@ -692,6 +694,8 @@ export class OpenAiCompatibleProvider implements ModelProvider {
   private defaultModel: string;
   private timeoutMs: number;
   private fetchFn: typeof fetch;
+  private extraHeaders: Record<string, string>;
+  private extraBody: Record<string, unknown>;
 
   constructor(options: OpenAiCompatibleProviderOptions) {
     this.id = options.id ?? "openai-compatible";
@@ -702,6 +706,8 @@ export class OpenAiCompatibleProvider implements ModelProvider {
     this.defaultModel = options.defaultModel ?? "gpt-4o-mini";
     this.timeoutMs = options.timeoutMs ?? 30000;
     this.fetchFn = options.customFetch ?? globalThis.fetch;
+    this.extraHeaders = options.extraHeaders ?? {};
+    this.extraBody = options.extraBody ?? {};
 
     this.capabilities = options.capabilities ?? [
       {
@@ -741,6 +747,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
+      ...this.extraHeaders,
     };
 
     if (this.apiKey) {
@@ -757,6 +764,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
         { role: "user", content: request.userMessage },
       ],
       temperature: request.temperature ?? 0.2,
+      ...this.extraBody,
     };
 
     if (request.maxTokens) {

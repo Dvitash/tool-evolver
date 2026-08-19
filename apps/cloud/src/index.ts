@@ -4,6 +4,7 @@
  * Cloud service platform, persistence, queue, storage, and worker runtime.
  */
 
+import process from "node:process";
 import {
   CapabilityManifestSchema,
   type EvaluationResult,
@@ -237,6 +238,46 @@ export class CloudService {
       if (!this.config.models.baseUrl) {
         throw new Error("MODEL_BASE_URL is required for the openai-compatible provider");
       }
+      const extraBody: Record<string, unknown> = {};
+      const reasoningEffort = process.env.MODEL_REASONING_EFFORT?.trim();
+      const reasoningEnabledRaw = process.env.MODEL_REASONING_ENABLED?.trim();
+      if (reasoningEffort || reasoningEnabledRaw) {
+        extraBody.reasoning = {
+          enabled:
+            reasoningEnabledRaw === undefined
+              ? true
+              : ["1", "true", "yes"].includes(reasoningEnabledRaw.toLowerCase()),
+          ...(reasoningEffort ? { effort: reasoningEffort } : {}),
+        };
+      }
+      const extraHeaders: Record<string, string> = {
+        "HTTP-Referer": process.env.OPENROUTER_HTTP_REFERER ?? "http://localhost:8080",
+        "X-Title": process.env.OPENROUTER_APP_TITLE ?? "tool-evolver-dev",
+      };
+      const modelId = this.config.models.model;
+      const verbose = this.config.server.logLevel === "debug";
+      const fetchFn: typeof fetch = async (input, init) => {
+        const started = Date.now();
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : String(input);
+        console.log(`[model] request ${init?.method ?? "GET"} ${url} model=${modelId}`);
+        if (verbose && extraBody.reasoning) {
+          console.log(`[model] reasoning=${JSON.stringify(extraBody.reasoning)}`);
+        }
+        try {
+          const response = await globalThis.fetch(input, init);
+          console.log(
+            `[model] response status=${response.status} latencyMs=${Date.now() - started} model=${modelId}`,
+          );
+          return response;
+        } catch (err) {
+          console.error(
+            `[model] request failed after ${Date.now() - started}ms:`,
+            err instanceof Error ? err.message : err,
+          );
+          throw err;
+        }
+      };
       this.inferenceService.router.registerProvider(
         new OpenAiCompatibleProvider({
           id: this.config.models.providerId,
@@ -246,6 +287,9 @@ export class CloudService {
           organizationId: this.config.models.organizationId,
           defaultModel: this.config.models.model,
           timeoutMs: this.config.models.timeoutMs,
+          extraHeaders,
+          extraBody,
+          customFetch: fetchFn,
         }),
       );
     }

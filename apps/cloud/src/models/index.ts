@@ -23,6 +23,7 @@ export * from "./privacy-gate.js";
 
 // Inference Service Orchestrator
 export * from "./service.js";
+export * from "./from-env.js";
 
 /**
  * Factory function creating an InferenceService instance.

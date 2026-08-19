@@ -20,6 +20,7 @@
     "migrate": "node dist/bin/migrate.js",
     "worker": "node dist/bin/worker.js",
     "api": "node dist/bin/api.js",
+    "dev": "node dist/bin/dev.js",
     "scheduler": "node dist/bin/scheduler.js",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
