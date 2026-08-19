@@ -117,11 +117,11 @@ describe("packed CLI production bootstrap", () => {
     const runDir = fs.mkdtempSync(path.join(cliDir, ".packed-http-e2e-"));
     cleanupPaths.push(runDir);
     const packDir = path.join(runDir, "pack");
-    const extractedDir = path.join(runDir, "extracted");
+    const installDir = path.join(runDir, "install");
     const home = path.join(runDir, "home");
     const workspace = path.join(runDir, "workspace");
     fs.mkdirSync(packDir, { recursive: true });
-    fs.mkdirSync(extractedDir, { recursive: true });
+    fs.mkdirSync(installDir, { recursive: true });
     fs.mkdirSync(home, { recursive: true });
     fs.mkdirSync(workspace, { recursive: true });
 
@@ -131,8 +131,32 @@ describe("packed CLI production bootstrap", () => {
       { cwd: rootDir, maxBuffer: 20 * 1024 * 1024 },
     );
     const packed = JSON.parse(packStdout) as { tarballPath: string };
-    await execFileAsync("tar", ["-xzf", packed.tarballPath, "-C", extractedDir]);
-    const packedBin = path.join(extractedDir, "package", "bin", "tool-evolver.mjs");
+    const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+    await execFileAsync(
+      npm,
+      [
+        "install",
+        "--prefix",
+        installDir,
+        "--ignore-scripts",
+        "--offline",
+        "--no-audit",
+        "--no-fund",
+        packed.tarballPath,
+      ],
+      {
+        cwd: installDir,
+        env: { ...process.env, npm_config_update_notifier: "false" },
+        maxBuffer: 20 * 1024 * 1024,
+      },
+    );
+    const packedBin = path.join(
+      installDir,
+      "node_modules",
+      "tool-evolver",
+      "bin",
+      "tool-evolver.mjs",
+    );
     expect(fs.existsSync(packedBin)).toBe(true);
 
     const releaseArchive = createTarGz();
