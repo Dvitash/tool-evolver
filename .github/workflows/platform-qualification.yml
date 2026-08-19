@@ -87,9 +87,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $rootfs = Join-Path $env:RUNNER_TEMP "ubuntu-noble-wsl.rootfs.tar.gz"
           $distroDir = Join-Path $env:RUNNER_TEMP "tool-evolver-wsl"
-          Invoke-WebRequest \
-            -Uri "https://cloud-images.ubuntu.com/wsl/releases/noble/current/ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz" \
-            -OutFile $rootfs
+          Invoke-WebRequest -Uri "https://cloud-images.ubuntu.com/wsl/releases/noble/current/ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz" -OutFile $rootfs
           New-Item -ItemType Directory -Force -Path $distroDir | Out-Null
           wsl.exe --import ToolEvolverQual $distroDir $rootfs --version 1
           if ($LASTEXITCODE -ne 0) { throw "wsl --import failed with exit code $LASTEXITCODE" }
