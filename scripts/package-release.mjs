@@ -186,6 +186,8 @@ export const WORKSPACE_PACKAGES = [
   { name: "@tool-evolver/e2e", path: "fixtures/e2e", entry: "dist/index.js", type: "fixture" },
 ];
 
+const RELEASE_RUNTIME_DEPENDENCIES = ["typescript"];
+
 export function sha256Hex(data) {
   return crypto.createHash("sha256").update(data).digest("hex");
 }
@@ -233,8 +235,8 @@ export function createUstarHeader({
   buf.write(typeflag, 156, 1, "ascii");
   buf.write("ustar\0", 257, 6, "ascii");
   buf.write("00", 263, 2, "ascii");
-  buf.write(uname, 265, 32, "utf8");
-  buf.write(gname, 297, 32, "utf8");
+  buf.write(uname, 265, 32, "ascii");
+  buf.write(gname, 297, 32, "ascii");
   if (prefixField) buf.write(prefixField, 345, 155, "utf8");
 
   buf.fill(0x20, 148, 156);
@@ -358,6 +360,9 @@ export function collectStandaloneRuntimeEntries(rootDir = process.cwd()) {
     name,
     importerDir: cliDir,
   }));
+  for (const name of RELEASE_RUNTIME_DEPENDENCIES) {
+    queue.push({ name, importerDir: rootDir });
+  }
   const visited = new Map();
   const entries = [];
 
@@ -455,20 +460,17 @@ export function createPlatformReleaseTarballs(rootDir, outputDir) {
     },
     {
       path: "tool-evolver/bin/tool-evolver",
-      content:
-        "#!/usr/bin/env node\nimport { cliMain } from '../apps/cli/dist/index.js';\ncliMain(process.argv.slice(2));\n",
+      content: "#!/usr/bin/env node\nawait import('../apps/cli/dist/bin/cli.js');\n",
       mode: 0o755,
     },
     {
       path: "tool-evolver/bin/tool-evolver-daemon",
-      content:
-        "#!/usr/bin/env node\nimport { daemonMain } from '../apps/observer/dist/index.js';\ndaemonMain();\n",
+      content: "#!/usr/bin/env node\nawait import('../apps/observer/dist/bin/daemon.js');\n",
       mode: 0o755,
     },
     {
       path: "tool-evolver/bin/tool-evolver-mcp",
-      content:
-        "#!/usr/bin/env node\nimport { gatewayMain } from '../apps/gateway/dist/index.js';\ngatewayMain();\n",
+      content: "#!/usr/bin/env node\nawait import('../apps/gateway/dist/bin/mcp-shim.js');\n",
       mode: 0o755,
     },
     {
