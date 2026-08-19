@@ -57,19 +57,5 @@
     "@tool-evolver/protocol": "workspace:*",
     "@tool-evolver/runtime": "workspace:*",
     "zod": "^3.25.76"
-  },
-  "bundledDependencies": [
-    "@tool-evolver/adapter-claude-code",
-    "@tool-evolver/adapter-codex",
-    "@tool-evolver/adapter-omp",
-    "@tool-evolver/contracts",
-    "@tool-evolver/crypto",
-    "@tool-evolver/db",
-    "@tool-evolver/gateway",
-    "@tool-evolver/harness-contracts",
-    "@tool-evolver/observer",
-    "@tool-evolver/protocol",
-    "@tool-evolver/runtime",
-    "zod"
-  ]
+  }
 }
