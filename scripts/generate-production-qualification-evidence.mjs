@@ -33,7 +33,7 @@ function requireRunId(value, label) {
 function requireCommitSha(value) {
   const commitSha = String(value ?? "").trim();
   if (!/^[0-9a-f]{40}$/i.test(commitSha)) {
-    throw new Error(`Production qualification evidence requires an exact 40-character commit SHA.`);
+    throw new Error("Production qualification evidence requires an exact 40-character commit SHA.");
   }
   return commitSha;
 }
@@ -187,7 +187,9 @@ if (
     const result = generateProductionQualificationEvidence(parseArgs(process.argv.slice(2)));
     process.stdout.write(`${JSON.stringify({ outputPath: result.outputPath })}\n`);
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
+    process.stderr.write(
+      `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+    );
     process.exit(1);
   }
 }
