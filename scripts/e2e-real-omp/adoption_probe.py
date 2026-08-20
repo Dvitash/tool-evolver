@@ -143,6 +143,16 @@ def proxy_provider_entry() -> dict:
     the built-in gateway (baseUrl here is informational; requests go direct
     to https://opencode.ai/zen/go/v1). Key is read from the copied agent.db
     at runtime (never echoed), matching the built-in opencode-go credential.
+
+    Model note (2026-08-20): opencode-go's catalog exposes ONLY
+    ``muse-spark-1.2-contributor`` (openai-responses, 1M context). The
+    bare ``muse-spark-1.2`` id is NOT a real gateway model — requesting it
+    returns 401 ``Model muse-spark-1.2 is not supported`` and omp falls
+    back to cursor/cursor-grok which reports input:0. This entry therefore
+    exposes the contributor model as the default te-ocg model; the vanilla
+    id is retained as a deprecated alias that will trigger the same 401
+    (handled in harness.run_metrics with an estimated input and a note).
+    Prefer ``te-ocg/muse-spark-1.2-contributor`` for real inputTokens.
     """
     key = ""
     try:
@@ -160,16 +170,28 @@ def proxy_provider_entry() -> dict:
         "baseUrl": "https://opencode.ai/zen/go/v1",
         "api": "openai-responses",
         "apiKey": key,
-        "models": [{
-            "id": "muse-spark-1.2",
-            "name": "Muse Spark 1.2",
-            "reasoning": True,
-            "input": ["text"],
-            "contextWindow": 1048576,
-            "maxTokens": 131072,
-            "thinking": {"mode": "effort",
-                         "efforts": ["minimal", "low", "medium", "high", "xhigh"]},
-        }],
+        "models": [
+            {
+                "id": "muse-spark-1.2-contributor",
+                "name": "Muse Spark 1.2 Contributor",
+                "reasoning": True,
+                "input": ["text", "image"],
+                "contextWindow": 1048576,
+                "maxTokens": 131072,
+                "thinking": {"mode": "effort",
+                             "efforts": ["minimal", "low", "medium", "high", "xhigh"]},
+            },
+            {
+                "id": "muse-spark-1.2",
+                "name": "Muse Spark 1.2 (deprecated — use muse-spark-1.2-contributor)",
+                "reasoning": True,
+                "input": ["text"],
+                "contextWindow": 1048576,
+                "maxTokens": 131072,
+                "thinking": {"mode": "effort",
+                             "efforts": ["minimal", "low", "medium", "high", "xhigh"]},
+            },
+        ],
     }
 
 
@@ -300,7 +322,7 @@ def run_one(cell, shim, instr, prompt_name, model, rep, instructions, xdev=True)
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=3)
-    ap.add_argument("--model", default="te-ocg/muse-spark-1.2")
+    ap.add_argument("--model", default="te-ocg/muse-spark-1.2-contributor")
     ap.add_argument("--replicate-model", default="",
                     help="Second model for the both-cell replication. Empty to skip.")
     ap.add_argument("--skip-hostile", action="store_true")

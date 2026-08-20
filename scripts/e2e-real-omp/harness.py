@@ -249,6 +249,68 @@ def run_metrics(path):
             cache_read += cr
             if first_cache_read is None:
                 first_cache_read = cr
+    # --- post-pass fallback detection (second pass over file if needed) ---
+    # We need to know whether the transcript fell back from te-ocg to cursor.
+    # Do a lightweight second scan only when usage_in == 0 (rare, vanilla).
+    fallback_model = None
+    saw_te_ocg_error = False
+    saw_te_ocg_success = False
+    if usage_in == 0 and usage_out > 0:
+        try:
+            for line in open(path):
+                try:
+                    je = json.loads(line)
+                except Exception:
+                    continue
+                if je.get("type") == "message_end":
+                    msg = je.get("message", {}) or {}
+                    prov = msg.get("provider") or ""
+                    mdl = msg.get("model") or ""
+                    err = msg.get("errorMessage") or ""
+                    if "muse-spark-1.2" in err and "not supported" in err:
+                        saw_te_ocg_error = True
+                    if prov == "te-ocg" and (msg.get("usage") or {}).get("input", 0):
+                        saw_te_ocg_success = True
+                    if prov == "cursor" or "cursor" in str(mdl):
+                        fallback_model = mdl or prov
+                if je.get("type") == "retry_fallback_applied":
+                    fallback_model = je.get("model") or fallback_model
+        except Exception:
+            pass
+    # Decide whether to synthesize an estimated input for the vanilla
+    # fallback case. Contributor and other providers already report real
+    # input (>0) so they are untouched. Estimate is deliberately conservative
+    # and clearly labeled; see proxy_provider_entry doc in adoption_probe.py
+    # for why vanilla is not a real model.
+    input_is_estimated = False
+    input_estimated = None
+    input_raw = usage_in
+    note = None
+    if usage_in == 0 and usage_out > 0 and fallback_model:
+        # Plausible audit input: 98KB system prompt + 40+ tool results
+        # accumulated across ~20 turns. Contributor runs on the same prompt
+        # average ~159k (prompt5 factorial ctrl/shim/both 159-181k). Use that
+        # as the estimate so fallback transcripts (vanilla 401 or transient
+        # JSON-parse retry) are not misrepresented as 0.
+        input_estimated = 159120
+        # Also honour output-based floor to avoid underestimating huge outputs.
+        # Fallback outputs are ~130k (single turn bulk); ensure
+        # estimated input is at least output * 1.1 (defensible lower bound).
+        floor_from_output = int(usage_out * 1.1)
+        if floor_from_output > input_estimated:
+            input_estimated = floor_from_output
+        usage_in = input_estimated
+        input_is_estimated = True
+        if saw_te_ocg_error:
+            note = ("vanilla te-ocg/muse-spark-1.2 is not a real opencode-go model; "
+                    "relay 401 fallback to {} reported input:0. "
+                    "inputTokens is estimated (~159k, contributor median) "
+                    "and labeled via inputTokensIsEstimated; use "
+                    "te-ocg/muse-spark-1.2-contributor for real input.").format(fallback_model)
+        else:
+            note = ("fallback to {} reported input:0; inputTokens is estimated "
+                    "(~159k, contributor median) and labeled via "
+                    "inputTokensIsEstimated.").format(fallback_model)
     bash = tools.get("bash", 0)
     # Adopted evolved-tool invocations, both transport modes:
     #   xdev:true  -> write {"path": "xd://mcp__tool_evolver_gateway_*"}
@@ -265,10 +327,15 @@ def run_metrics(path):
             "toolCalls": dict(tools), "bashCalls": bash,
             "evolvedCalls": evolved, "toolErrors": errors,
             "toolTimeSeconds": round(float(tool_time), 3),
-            "evolvedTimeSeconds": round(float(evolved_time), 3)}
+            "evolvedTimeSeconds": round(float(evolved_time), 3),
+            "inputTokensRaw": input_raw,
+            "inputTokensEstimated": input_estimated,
+            "inputTokensIsEstimated": input_is_estimated,
+            "fallbackModel": fallback_model,
+            "note": note}
 
 
-def omp_argv(prompt, model="te-ocg/muse-spark-1.2", profile=None, overlay=None):
+def omp_argv(prompt, model="te-ocg/muse-spark-1.2-contributor", profile=None, overlay=None):
     """Headless argv with prompt-cache isolation (no --no-cache exists)."""
     argv = ["omp", "-p", "--mode", "json", "--model", model,
             "--approval-mode=yolo", "--no-session", "--no-title"]
