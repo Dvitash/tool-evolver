@@ -184,7 +184,7 @@ def summarize(rows):
 
 def run_one(cell, shim, instr, prompt_name, model, rep, instructions):
     run_id = f"{cell}-{model.replace('/', '_')}-r{rep}-{uuid.uuid4().hex[:8]}"
-    profile = f"te-probe-{run_id}"
+    profile = f"te-pr-{uuid.uuid4().hex[:12]}"
     prepare_profile(profile, shim, instr, instructions)
     work = prepare_workdir(run_id)
     prompt_path = PROMPT4 if prompt_name == "prompt4" else PROMPT3
