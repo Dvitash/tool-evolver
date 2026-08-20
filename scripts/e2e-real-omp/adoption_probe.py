@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time
 import uuid
+import yaml
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -34,6 +35,10 @@ SHIM = HERE / "evolved-mcp-server.mjs"
 OUT = Path("/tmp/te-omp-runs/e2e/probe")
 PROMPT4 = Path("/tmp/te-omp-bench2-prompt4.txt")
 PROMPT3 = Path("/tmp/te-omp-bench2-prompt3.txt")
+# prompt4 + trailing '?' suppresses omp 17.3.8's eager-todo-prelude, whose
+# forced first tool call Muse frequently emits with malformed JSON args
+# (JSON Parse error kills the turn). Baseline for Muse factorial runs.
+PROMPT4Q = Path("/tmp/te-omp-bench2-prompt4q.txt")
 TEMPLATE = Path(os.path.expanduser("~/.omp/profiles/te-spark-e2e"))
 PROFILES_ROOT = Path(os.path.expanduser("~/.omp/profiles"))
 DEFAULT_AGENT = Path(os.path.expanduser("~/.omp/agent"))
@@ -42,10 +47,10 @@ TOOL = "git_operation_helper"
 XD = f"xd://mcp__{SERVER.replace('-', '_')}_{TOOL}"
 
 FACTORIAL = [
-    ("ctrl", False, False, "prompt4"),
-    ("shim", True, False, "prompt4"),
-    ("instr", False, True, "prompt4"),
-    ("both", True, True, "prompt4"),
+    ("ctrl", False, False, "prompt4q"),
+    ("shim", True, False, "prompt4q"),
+    ("instr", False, True, "prompt4q"),
+    ("both", True, True, "prompt4q"),
 ]
 
 
@@ -124,6 +129,59 @@ def mcp_payload(shim: bool) -> dict:
     }
 
 
+def proxy_provider_entry() -> dict:
+    """Muse via the opencode-go gateway, openai-responses API.
+
+    Fixes the omp 17.3.8 abort: the relay's /v1/chat/completions endpoint
+    closes SSE streams without a finish_reason chunk ('OpenAI completions
+    stream closed before a finish_reason was received' kills any turn that
+    streamed content). The /v1/responses endpoint emits proper terminal
+    events, so custom provider 'te-ocg' uses openai-responses and completes
+    multi-turn workflows. Note omp re-resolves responses-API models through
+    the built-in gateway (baseUrl here is informational; requests go direct
+    to https://opencode.ai/zen/go/v1). Key is read from the copied agent.db
+    at runtime (never echoed), matching the built-in opencode-go credential.
+    """
+    key = ""
+    try:
+        import sqlite3
+        db = sqlite3.connect(str(DEFAULT_AGENT / "agent.db"))
+        for row in db.execute(
+            "SELECT data FROM auth_credentials "
+            "WHERE provider='opencode-go' AND credential_type='api_key' "
+            "ORDER BY created_at DESC LIMIT 1"
+        ):
+            key = (json.loads(row[0]).get("key") or "").strip()
+    except Exception:
+        key = ""
+    return {
+        "baseUrl": "https://opencode.ai/zen/go/v1",
+        "api": "openai-responses",
+        "apiKey": key,
+        "models": [{
+            "id": "muse-spark-1.2-contributor",
+            "name": "Muse Spark 1.2 Contributor",
+            "reasoning": True,
+            "input": ["text"],
+            "contextWindow": 1048576,
+            "maxTokens": 131072,
+            "thinking": {"mode": "effort",
+                         "efforts": ["minimal", "low", "medium", "high", "xhigh"]},
+        }],
+    }
+
+
+def inject_proxy_provider(agent: Path) -> None:
+    mp = agent / "models.yml"
+    m = yaml.safe_load(mp.read_text())
+    m.setdefault("providers", {})["te-ocg"] = proxy_provider_entry()
+    mp.write_text(yaml.safe_dump(m))
+    try:
+        os.chmod(mp, 0o600)
+    except OSError:
+        pass
+
+
 def prepare_profile(name: str, shim: bool, instr: bool, instructions: str) -> Path:
     dest = PROFILES_ROOT / name
     if dest.exists():
@@ -141,6 +199,7 @@ def prepare_profile(name: str, shim: bool, instr: bool, instructions: str) -> Pa
         src = DEFAULT_AGENT / name
         if src.is_file():
             shutil.copy2(src, agent / name)
+    inject_proxy_provider(agent)
     (agent / "mcp.json").write_text(json.dumps(mcp_payload(shim), indent=2) + "\n")
     append = agent / "APPEND_SYSTEM.md"
     body = instructions if instr else ""
@@ -187,7 +246,8 @@ def run_one(cell, shim, instr, prompt_name, model, rep, instructions):
     profile = f"te-pr-{uuid.uuid4().hex[:12]}"
     prepare_profile(profile, shim, instr, instructions)
     work = prepare_workdir(run_id)
-    prompt_path = PROMPT4 if prompt_name == "prompt4" else PROMPT3
+    prompt_path = {"prompt4": PROMPT4, "prompt3": PROMPT3}.get(
+        prompt_name, PROMPT4Q)
     nonce = f"<!-- probe-nonce:{run_id} -->\n"
     prompt = nonce + prompt_path.read_text()
     OUT.mkdir(parents=True, exist_ok=True)
@@ -218,7 +278,7 @@ def run_one(cell, shim, instr, prompt_name, model, rep, instructions):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=3)
-    ap.add_argument("--model", default="opencode-go/muse-spark-1.2-contributor")
+    ap.add_argument("--model", default="te-ocg/muse-spark-1.2-contributor")
     ap.add_argument("--replicate-model", default="",
                     help="Second model for the both-cell replication. Empty to skip.")
     ap.add_argument("--skip-hostile", action="store_true")
