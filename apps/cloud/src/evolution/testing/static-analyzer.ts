@@ -42,6 +42,14 @@ const FORBIDDEN_IMPORT_PATTERNS = [
   /^tls$/,
 ];
 
+const COMMANDS_WITH_LITERAL_FILE_OPERANDS: Record<string, true> = {
+  cat: true,
+  grep: true,
+  head: true,
+  tail: true,
+  wc: true,
+};
+
 // Patterns indicative of polynomial / exponential catastrophic backtracking in regex
 const CATASTROPHIC_REGEX_PATTERNS = [
   /\((?:[^)]*\+[^)]*)\)\+/, // e.g. (a+)+
@@ -241,6 +249,7 @@ export class StaticAnalyzer {
       // Detect broker calls
       if (ts.isCallExpression(node)) {
         this.inspectPotentialBrokerCall(node, sourceFile, brokerCalls);
+        this.inspectLiteralCommandGlobs(node, sourceFile, pos, findings);
       }
 
       // Static Flaw: Infinite Loops without break/progress/return/cancellation
@@ -336,6 +345,54 @@ export class StaticAnalyzer {
     }
 
     return findings;
+  }
+
+  /**
+   * execFile-style command execution never performs shell glob expansion.
+   * Catch literal wildcard file operands that would otherwise pass validation
+   * but fail against real files at runtime.
+   */
+  private inspectLiteralCommandGlobs(
+    node: ts.CallExpression,
+    sourceFile: ts.SourceFile,
+    pos: { line: number; column: number },
+    findings: StaticAnalysisFinding[],
+  ): void {
+    const callee = node.expression.getText(sourceFile);
+    if (!/(?:context\.)?broker\.cmd\.exec$/.test(callee)) return;
+
+    const commandNode = node.arguments[0];
+    const argsNode = node.arguments[1];
+    if (
+      !commandNode ||
+      !ts.isStringLiteralLike(commandNode) ||
+      !COMMANDS_WITH_LITERAL_FILE_OPERANDS[commandNode.text] ||
+      !argsNode ||
+      !ts.isArrayLiteralExpression(argsNode)
+    ) {
+      return;
+    }
+
+    const literalArgs = argsNode.elements
+      .filter(ts.isStringLiteralLike)
+      .map((arg) => arg.text);
+    const lastArg = literalArgs.at(-1);
+    if (!lastArg || !["*", "?", "["].some((marker) => lastArg.includes(marker))) return;
+
+    const nonOptionArgs = literalArgs.filter((arg) => !arg.startsWith("-"));
+    if (commandNode.text === "grep" && nonOptionArgs.length < 2) return;
+
+    findings.push({
+      severity: "error",
+      category: "static_flaw",
+      message:
+        `broker.cmd.exec('${commandNode.text}', ...) passes wildcard file operand ` +
+        `'${lastArg}', but command broker arguments are literal and do not expand shell globs.`,
+      location: pos,
+      fixHint:
+        "Enumerate concrete file paths before execution, or use an allowed command " +
+        "that interprets its own pattern argument (for example, find -name).",
+    });
   }
 
   /**

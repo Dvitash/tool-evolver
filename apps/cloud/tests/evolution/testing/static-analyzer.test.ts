@@ -559,6 +559,41 @@ describe("StaticAnalyzer (AST & Security Analysis)", () => {
       expect(redosFinding?.severity).toBe("error");
     });
 
+    it("should reject shell globs passed as literal command file operands", () => {
+      const globCode = `
+        import { defineTool } from "@tool-evolver/runtime";
+        export default defineTool(async (context) => {
+          await context.broker.cmd.exec("wc", ["-l", "module_*.txt"]);
+          await context.broker.cmd.exec("grep", ["-o", "TODO", "module_*.txt"]);
+          return { success: true };
+        });
+      `;
+
+      const findings = analyzer.analyze(globCode);
+      const globFindings = findings.filter(
+        (finding) =>
+          finding.category === "static_flaw" &&
+          finding.message.includes("do not expand shell globs"),
+      );
+      expect(globFindings).toHaveLength(2);
+      expect(globFindings.every((finding) => finding.severity === "error")).toBe(true);
+    });
+
+    it("should allow patterns interpreted by the command itself", () => {
+      const findCode = `
+        import { defineTool } from "@tool-evolver/runtime";
+        export default defineTool(async (context) => {
+          await context.broker.cmd.exec("find", [".", "-name", "module_*.txt"]);
+          return { success: true };
+        });
+      `;
+
+      const findings = analyzer.analyze(findCode);
+      expect(findings.some((finding) => finding.message.includes("do not expand shell globs"))).toBe(
+        false,
+      );
+    });
+
     it("should warn on top-level mutable collections accumulating state across runs", () => {
       const leakCode = `
         import { defineTool } from "@tool-evolver/runtime";
