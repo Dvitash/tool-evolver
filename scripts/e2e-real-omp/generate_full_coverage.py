@@ -54,14 +54,9 @@ def main():
 
     if not H.drain("ingest", headers=HDR):
         _fail("ingest drain failed", 2)
-    st, body = H.req("POST", "/v1/jobs",
-                     {"jobType": "opportunity.detect", "payload": {"sessionIds": sessions}},
-                     headers=HDR)
-    H.log(f"detect job: {st} {body}")
-    if st not in (200, 201, 202):
-        _fail(f"detect job failed http={st} body={body}", 2)
-    if not H.drain("detect", 240, headers=HDR):
-        _fail("detect drain failed", 2)
+    # Detect once from the same normalized events. Enqueuing opportunity.detect
+    # as well duplicates the model-heavy pass and its global queue drain can be
+    # blocked by unrelated/dead-lettered jobs.
 
     st, body = H.req("POST", "/v1/evolution/opportunity/detect", {"events": all_events},
                      headers=HDR)
