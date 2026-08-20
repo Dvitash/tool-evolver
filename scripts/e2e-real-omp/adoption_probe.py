@@ -16,13 +16,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
+import re
 import shutil
 import statistics
 import subprocess
 import sys
 import time
 import uuid
-import re
 import yaml
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -469,6 +470,9 @@ def main():
     if args.replicate_model:
         for rep in range(1, args.n + 1):
             jobs.append(("both", True, True, "prompt4", args.replicate_model, rep, instructions, xdev))
+    # Interleave cells so relay load and time drift do not align with a
+    # treatment. Fixed seed keeps the launch order reproducible.
+    random.Random(0).shuffle(jobs)
     H.log(f"dispatch {len(jobs)} runs jobs={args.jobs}")
     rows = []
     workers = max(1, args.jobs)
