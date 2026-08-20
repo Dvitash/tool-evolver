@@ -28,7 +28,9 @@ import type {
   CandidateGenerationOptions,
   CandidateRevision,
   SelfReviewIssue,
+  WorkflowCoverage,
 } from "../generator/types.js";
+import type { WorkflowContract } from "../opportunity/types.js";
 import type { InferenceService } from "../../models/service.js";
 import { HistoricalReplayService } from "../replay/service.js";
 import type {
@@ -1081,6 +1083,13 @@ export class CandidateLifecycleOrchestrator {
       updatedAt: candidate.trigger.detectedAt || nowIso,
     };
 
+    // Authoritative persisted revision plan overrides caller-supplied stale fields
+    const authoritativePlan = activeRevision?.artifacts?.plan as unknown as
+      | { workflowContract?: unknown; workflowCoverage?: unknown }
+      | undefined;
+    const authoritativeWorkflowContract = authoritativePlan?.workflowContract;
+    const authoritativeWorkflowCoverage = authoritativePlan?.workflowCoverage;
+
     try {
       const evaluationResult: EvaluationResult = await this.evaluationService.evaluateCandidate({
         candidate: {
@@ -1093,11 +1102,14 @@ export class CandidateLifecycleOrchestrator {
           workflowDefinition,
         },
         opportunity,
+        envelope: options.envelope,
+        ...(options.evaluationOptions as Record<string, unknown>),
+        // Authoritative persisted evidence overrides any stale caller fields
         validationResult: record.validationResult as unknown as CandidateValidationResult,
         replayResult: record.replayResult as unknown as HistoricalReplayResult,
-        envelope: options.envelope,
-        ...options.evaluationOptions,
-      });
+        workflowContract: authoritativeWorkflowContract as unknown as WorkflowContract | undefined,
+        workflowCoverage: authoritativeWorkflowCoverage as unknown as WorkflowCoverage | undefined,
+      } as unknown as Parameters<CandidateEvaluationService["evaluateCandidate"]>[0]);
 
       const durationMs = Date.now() - startTime;
       const rawResult: unknown = evaluationResult;

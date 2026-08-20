@@ -105,6 +105,14 @@ export class CandidateEvaluationService {
     const candidateInfo = this.extractCandidateInfo(input.candidate);
     const { candidateId, revisionId, manifest, sourceCode, requiredCapabilities } = candidateInfo;
 
+    // Resolve authoritative workflow contract/coverage (explicit input preferred, fallback to CandidateRevision plan)
+    const candidateAsRevision = input.candidate as unknown as CandidateRevision & {
+      artifacts?: CandidateRevision["artifacts"];
+    };
+    const revisionPlan = candidateAsRevision?.artifacts?.plan;
+    const workflowContract = input.workflowContract ?? revisionPlan?.workflowContract;
+    const workflowCoverage = input.workflowCoverage ?? revisionPlan?.workflowCoverage;
+
     // 2. Resolve active evaluation policy
     const policy = this.policyRegistry.resolve(input.policy);
 
@@ -123,7 +131,10 @@ export class CandidateEvaluationService {
       envelope: input.envelope,
       policy,
       riskTier,
-    });
+      workflowContract,
+      workflowCoverage,
+    } as unknown as Parameters<HardGateEvaluator["evaluate"]>[0]);
+
 
     // 5. Multi-dimensional scoring
     const scoringResult = this.scorer.score({

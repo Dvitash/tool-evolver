@@ -1,5 +1,7 @@
 import type { CapabilityEnvelope, CapabilityManifest, ToolManifest } from "@tool-evolver/contracts";
-import type { HistoricalReplayResult } from "../replay/types.js";
+import type { WorkflowCoverage } from "../generator/types.js";
+import type { WorkflowContract } from "../opportunity/types.js";
+import type { HistoricalReplayResult, WorkloadBenchmarkComparison, WorkloadSize } from "../replay/types.js";
 import type { CandidateValidationResult, StaticAnalysisFinding } from "../testing/types.js";
 import { classifyRiskTier } from "./policy.js";
 import type { EvaluationPolicy, GateCheckResult, HardGateResult, RiskTier } from "./types.js";
@@ -16,6 +18,8 @@ export interface HardGateEvaluationContext {
   envelope?: CapabilityEnvelope;
   policy: EvaluationPolicy;
   riskTier?: RiskTier;
+  workflowContract?: WorkflowContract;
+  workflowCoverage?: WorkflowCoverage;
 }
 
 /**
@@ -101,6 +105,20 @@ export class HardGateEvaluator {
           replayResult,
           tierThresholds.minReplayScenarioCount,
         ),
+      );
+    }
+
+    // 9. Workflow Coverage Gate (only for workflow-contract candidates)
+    if (this.shouldEvaluateWorkflowCoverage(policy, context.workflowContract)) {
+      gateResults.push(
+        this.evaluateWorkflowCoverageGate(context.workflowContract, context.workflowCoverage),
+      );
+    }
+
+    // 10. Workload Cost Non-Regression Gate (only for workflow-contract candidates)
+    if (this.shouldEvaluateWorkloadCostNonRegression(policy, context.workflowContract)) {
+      gateResults.push(
+        this.evaluateWorkloadCostNonRegressionGate(context.workflowContract, replayResult),
       );
     }
 
@@ -612,6 +630,312 @@ export class HardGateEvaluator {
       passed: true,
       category: "evidence",
       message: "Evidence package is complete and validated without infrastructure faults.",
+    };
+  }
+  private shouldEvaluateWorkflowCoverage(
+    policy: EvaluationPolicy,
+    workflowContract?: WorkflowContract,
+  ): boolean {
+    if (!workflowContract) return false;
+    const hg = policy.hardGates as unknown as Record<string, unknown>;
+    const flag =
+      (hg["requireWorkflowCoverage"] as boolean | undefined) ??
+      (hg["enforceWorkflowCoverage"] as boolean | undefined) ??
+      (hg["requireWorkflowCoverageGate"] as boolean | undefined) ??
+      true;
+    return Boolean(flag);
+  }
+
+  private shouldEvaluateWorkloadCostNonRegression(
+    policy: EvaluationPolicy,
+    workflowContract?: WorkflowContract,
+  ): boolean {
+    if (!workflowContract) return false;
+    const hg = policy.hardGates as unknown as Record<string, unknown>;
+    const flag =
+      (hg["requireWorkloadCostNonRegression"] as boolean | undefined) ??
+      (hg["forbidWorkloadCostRegression"] as boolean | undefined) ??
+      (hg["enforceWorkloadCostNonRegression"] as boolean | undefined) ??
+      (hg["requireWorkloadBenchmarkCostCheck"] as boolean | undefined) ??
+      true;
+    return Boolean(flag);
+  }
+
+  /**
+   * Gate 9: Workflow Coverage — requires complete=true with no uncovered IDs/names.
+   * Repairable; details contain missing IDs/names.
+   */
+  private evaluateWorkflowCoverageGate(
+    workflowContract: WorkflowContract | undefined,
+    workflowCoverage: WorkflowCoverage | undefined,
+  ): GateCheckResult {
+    if (!workflowContract) {
+      return {
+        gate: "workflow_coverage",
+        passed: true,
+        category: "workflow",
+        message: "No workflow contract present; coverage gate skipped for legacy candidate.",
+      };
+    }
+
+    if (!workflowCoverage) {
+      const uncoveredOperationIds = (workflowContract.operations ?? []).map((op) => op.id);
+      const uncoveredOutputNames = (workflowContract.outputRequirements ?? [])
+        .filter((r) => r.required)
+        .map((r) => r.name);
+      return {
+        gate: "workflow_coverage",
+        passed: false,
+        category: "workflow",
+        message: `Workflow coverage missing: coverage is undefined (required ${uncoveredOperationIds.length} operations, ${uncoveredOutputNames.length} outputs).`,
+        details: {
+          uncoveredOperationIds,
+          uncoveredOutputNames,
+          missingCoverage: true,
+        },
+        canRepair: true,
+        repairHint: "Ensure every workflow contract operation and required output is covered by plan steps and outputSchema.",
+      };
+    }
+
+    const uncoveredOperationIds = workflowCoverage.uncoveredOperationIds ?? [];
+    const uncoveredOutputNames = workflowCoverage.uncoveredOutputNames ?? [];
+    const complete = workflowCoverage.complete === true;
+
+    if (!complete || uncoveredOperationIds.length > 0 || uncoveredOutputNames.length > 0) {
+      const parts: string[] = [];
+      if (uncoveredOperationIds.length > 0) {
+        parts.push(`uncovered operations: ${uncoveredOperationIds.join(", ")}`);
+      }
+      if (uncoveredOutputNames.length > 0) {
+        parts.push(`uncovered outputs: ${uncoveredOutputNames.join(", ")}`);
+      }
+      if (!complete && parts.length === 0) {
+        parts.push("coverage incomplete");
+      }
+      return {
+        gate: "workflow_coverage",
+        passed: false,
+        category: "workflow",
+        message: `Workflow coverage incomplete: ${parts.join("; ")}`,
+        details: {
+          uncoveredOperationIds,
+          uncoveredOutputNames,
+          complete,
+        },
+        canRepair: true,
+        repairHint: "Add steps covering missing operations and ensure outputSchema includes required outputs.",
+      };
+    }
+
+    return {
+      gate: "workflow_coverage",
+      passed: true,
+      category: "workflow",
+      message: "Workflow coverage complete: all operations and required outputs are covered.",
+    };
+  }
+
+  /**
+   * Gate 10: Workload Cost Non-Regression — requires exactly small/medium/large comparisons,
+   * candidate.correct, candidateCostUsd <= baselineCostUsd at each size, and redundantVerificationCalls===0.
+   * Missing data, incorrect result, cost regression, or redundancy is terminal and names the workload.
+   */
+  private evaluateWorkloadCostNonRegressionGate(
+    workflowContract: WorkflowContract | undefined,
+    replayResult: HistoricalReplayResult | undefined,
+  ): GateCheckResult {
+    if (!workflowContract) {
+      return {
+        gate: "workload_cost_non_regression",
+        passed: true,
+        category: "workflow",
+        message: "No workflow contract present; workload cost gate skipped for legacy candidate.",
+      };
+    }
+
+    const benchmarks: WorkloadBenchmarkComparison[] | undefined = (replayResult as unknown as { workloadBenchmarks?: WorkloadBenchmarkComparison[] })?.workloadBenchmarks;
+
+    const expectedSizes: WorkloadSize[] = ["small", "medium", "large"];
+
+    if (!benchmarks || !Array.isArray(benchmarks) || benchmarks.length === 0) {
+      return {
+        gate: "workload_cost_non_regression",
+        passed: false,
+        category: "workflow",
+        message: `Missing workload benchmarks: expected workloads ${expectedSizes.join(", ")} but received none.`,
+        details: {
+          missingWorkloads: expectedSizes,
+          expectedSizes,
+          actualCount: 0,
+        },
+        canRepair: false,
+        repairHint: "Provide workload benchmark comparisons for small, medium, and large workloads.",
+      };
+    }
+
+    const sizeSet = new Set(benchmarks.map((b) => b.workloadSize));
+    const missingSizes = expectedSizes.filter((s) => !sizeSet.has(s));
+    const extraSizes = [...sizeSet].filter((s) => !expectedSizes.includes(s));
+    if (benchmarks.length !== 3 || missingSizes.length > 0 || extraSizes.length > 0) {
+      const actualSizes = benchmarks.map((b) => String(b.workloadSize)).join(", ");
+      return {
+        gate: "workload_cost_non_regression",
+        passed: false,
+        category: "workflow",
+        message: `Workload benchmarks incomplete: expected exactly ${expectedSizes.join(", ")} (3 entries), got [${actualSizes}]${missingSizes.length ? `; missing ${missingSizes.join(", ")}` : ""}${extraSizes.length ? `; unexpected ${extraSizes.join(", ")}` : ""}.`,
+        details: {
+          expectedSizes,
+          actualSizes: benchmarks.map((b) => b.workloadSize),
+          missingWorkloads: missingSizes,
+          extraWorkloads: extraSizes,
+          actualCount: benchmarks.length,
+        },
+        canRepair: false,
+        repairHint: "Provide exactly three workload comparisons for small, medium, and large.",
+      };
+    }
+
+    for (const bm of benchmarks) {
+      const ws = String(bm.workloadSize);
+      const baseline = bm.baseline as unknown as { correct?: boolean; redundantToolCalls?: number } & Record<string, unknown>;
+      const candidate = bm.candidate as unknown as { correct?: boolean; redundantToolCalls?: number } & Record<string, unknown>;
+      const baselineCost = bm.baselineCostUsd;
+      const candidateCost = bm.candidateCostUsd;
+      const correctnessPassed = bm.correctnessPassed;
+      const redundant = bm.redundantVerificationCalls;
+
+      const candidateCorrect = candidate?.correct;
+
+      if (candidateCorrect === undefined && correctnessPassed === undefined) {
+        return {
+          gate: "workload_cost_non_regression",
+          passed: false,
+          category: "workflow",
+          message: `Workload ${ws} missing correctness data: candidate.correct and correctnessPassed undefined.`,
+          details: { workloadSize: ws, baseline, candidate },
+          canRepair: false,
+          repairHint: `Provide correctness for workload ${ws}.`,
+        };
+      }
+
+      if (candidateCorrect !== true) {
+        return {
+          gate: "workload_cost_non_regression",
+          passed: false,
+          category: "workflow",
+          message: `Workload ${ws} failed correctness: candidate incorrect (candidate.correct=${String(candidateCorrect)}, correctnessPassed=${String(correctnessPassed)}).`,
+          details: {
+            workloadSize: ws,
+            candidateCorrect,
+            correctnessPassed,
+            baseline,
+            candidate,
+          },
+          canRepair: false,
+          repairHint: `Ensure workload ${ws} candidate is correct.`,
+        };
+      }
+
+      if (correctnessPassed !== undefined && correctnessPassed !== true) {
+        return {
+          gate: "workload_cost_non_regression",
+          passed: false,
+          category: "workflow",
+          message: `Workload ${ws} failed correctness: correctnessPassed false (candidate.correct=${String(candidateCorrect)}, correctnessPassed=${String(correctnessPassed)}).`,
+          details: {
+            workloadSize: ws,
+            candidateCorrect,
+            correctnessPassed,
+            baseline,
+            candidate,
+          },
+          canRepair: false,
+          repairHint: `Ensure workload ${ws} candidate is correct.`,
+        };
+      }
+
+      if (typeof redundant === "number" && redundant !== 0) {
+        return {
+          gate: "workload_cost_non_regression",
+          passed: false,
+          category: "workflow",
+          message: `Workload ${ws} has redundant verification calls: ${redundant} (expected 0).`,
+          details: {
+            workloadSize: ws,
+            redundantVerificationCalls: redundant,
+            candidateRedundantToolCalls: candidate?.redundantToolCalls,
+          },
+          canRepair: false,
+          repairHint: `Remove redundant verification tool calls for workload ${ws}.`,
+        };
+      }
+
+      if (typeof candidate?.redundantToolCalls === "number" && candidate.redundantToolCalls !== 0) {
+        return {
+          gate: "workload_cost_non_regression",
+          passed: false,
+          category: "workflow",
+          message: `Workload ${ws} has redundant verification calls: candidate redundantToolCalls=${candidate.redundantToolCalls} (expected 0).`,
+          details: {
+            workloadSize: ws,
+            redundantVerificationCalls: redundant,
+            candidateRedundantToolCalls: candidate.redundantToolCalls,
+          },
+          canRepair: false,
+          repairHint: `Remove redundant verification tool calls for workload ${ws}.`,
+        };
+      }
+
+      if (typeof baselineCost !== "number" || !Number.isFinite(baselineCost) || baselineCost < 0) {
+        return {
+          gate: "workload_cost_non_regression",
+          passed: false,
+          category: "workflow",
+          message: `Workload ${ws} has invalid baselineCostUsd: ${String(baselineCost)}.`,
+          details: { workloadSize: ws, baselineCostUsd: baselineCost, candidateCostUsd: candidateCost },
+          canRepair: false,
+          repairHint: `Provide finite baselineCostUsd for workload ${ws}.`,
+        };
+      }
+      if (typeof candidateCost !== "number" || !Number.isFinite(candidateCost) || candidateCost < 0) {
+        return {
+          gate: "workload_cost_non_regression",
+          passed: false,
+          category: "workflow",
+          message: `Workload ${ws} has invalid candidateCostUsd: ${String(candidateCost)}.`,
+          details: { workloadSize: ws, baselineCostUsd: baselineCost, candidateCostUsd: candidateCost },
+          canRepair: false,
+          repairHint: `Provide finite candidateCostUsd for workload ${ws}.`,
+        };
+      }
+
+      if (candidateCost > baselineCost) {
+        const delta = candidateCost - baselineCost;
+        const deltaPercent = baselineCost > 0 ? ((delta / baselineCost) * 100).toFixed(2) : "N/A";
+        return {
+          gate: "workload_cost_non_regression",
+          passed: false,
+          category: "workflow",
+          message: `Workload ${ws} cost regression: candidateCostUsd ${candidateCost} > baselineCostUsd ${baselineCost} (delta ${delta.toFixed(2)}, ${deltaPercent}%).`,
+          details: {
+            workloadSize: ws,
+            baselineCostUsd: baselineCost,
+            candidateCostUsd: candidateCost,
+            delta,
+            costDeltaPercent: bm.costDeltaPercent,
+          },
+          canRepair: false,
+          repairHint: `Reduce candidate cost for workload ${ws} to be <= baseline.`,
+        };
+      }
+    }
+
+    return {
+      gate: "workload_cost_non_regression",
+      passed: true,
+      category: "workflow",
+      message: "Workload benchmarks passed: all small/medium/large workloads are correct, non-redundant, and cost non-regressing.",
     };
   }
 }

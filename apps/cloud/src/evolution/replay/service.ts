@@ -9,9 +9,13 @@ import type {
   EvidenceSource,
   HistoricalReplayOptions,
   HistoricalReplayResult,
+  ModelUsageMetrics,
   ReplayScenario,
   ReplayScenarioExecutionResult,
+  WorkloadBenchmarkComparison,
+  WorkloadSize,
 } from "./types.js";
+import { WORKLOAD_SIZE_ORDER } from "./types.js";
 
 /**
  * Options for replaying a candidate against historical evidence.
@@ -47,6 +51,136 @@ type LooseCapabilityManifest = {
     allowedCommands?: string[];
   };
 };
+
+function workloadOrderIndex(size: WorkloadSize): number {
+  const idx = WORKLOAD_SIZE_ORDER.indexOf(size);
+  return idx >= 0 ? idx : 999;
+}
+
+const ALLOWED_WORKLOAD_SIZES = new Set<WorkloadSize>(WORKLOAD_SIZE_ORDER as readonly WorkloadSize[]);
+
+function isFiniteNonNegative(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isFiniteNumber(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function validateModelUsageMetrics(metrics: unknown, path: string): ModelUsageMetrics {
+  if (typeof metrics !== "object" || metrics === null) {
+    throw new Error(`${path} must be an object`);
+  }
+  const m = metrics as Record<string, unknown>;
+  for (const k of ["inputTokens", "outputTokens", "cacheReadTokens", "turns", "toolCalls", "redundantToolCalls", "wallTimeMs", "correct"]) {
+    if (!(k in m)) {
+      throw new Error(`${path}.${k} is required`);
+    }
+  }
+  if (!isFiniteNonNegative(m.inputTokens) || !Number.isInteger(m.inputTokens as number)) {
+    throw new Error(`${path}.inputTokens must be a finite non-negative integer`);
+  }
+  if (!isFiniteNonNegative(m.outputTokens) || !Number.isInteger(m.outputTokens as number)) {
+    throw new Error(`${path}.outputTokens must be a finite non-negative integer`);
+  }
+  if (!isFiniteNonNegative(m.cacheReadTokens) || !Number.isInteger(m.cacheReadTokens as number)) {
+    throw new Error(`${path}.cacheReadTokens must be a finite non-negative integer`);
+  }
+  if (!isFiniteNonNegative(m.turns) || !Number.isInteger(m.turns as number)) {
+    throw new Error(`${path}.turns must be a finite non-negative integer`);
+  }
+  if (!isFiniteNonNegative(m.toolCalls) || !Number.isInteger(m.toolCalls as number)) {
+    throw new Error(`${path}.toolCalls must be a finite non-negative integer`);
+  }
+  if (!isFiniteNonNegative(m.redundantToolCalls) || !Number.isInteger(m.redundantToolCalls as number)) {
+    throw new Error(`${path}.redundantToolCalls must be a finite non-negative integer`);
+  }
+  if (!isFiniteNonNegative(m.wallTimeMs)) {
+    throw new Error(`${path}.wallTimeMs must be a finite non-negative number`);
+  }
+  if (typeof m.correct !== "boolean") {
+    throw new Error(`${path}.correct must be a boolean`);
+  }
+  return m as unknown as ModelUsageMetrics;
+}
+
+function validateWorkloadBenchmarkComparison(value: unknown, index: number): WorkloadBenchmarkComparison {
+  const path = `workloadBenchmarks[${index}]`;
+  if (typeof value !== "object" || value === null) {
+    throw new Error(`${path} must be an object`);
+  }
+  const r = value as Record<string, unknown>;
+  if (!("workloadSize" in r)) {
+    throw new Error(`${path}.workloadSize is required`);
+  }
+  if (typeof r.workloadSize !== "string" || !ALLOWED_WORKLOAD_SIZES.has(r.workloadSize as WorkloadSize)) {
+    throw new Error(`${path}.workloadSize must be one of small, medium, large`);
+  }
+  if (!("baseline" in r)) {
+    throw new Error(`${path}.baseline is required`);
+  }
+  if (!("candidate" in r)) {
+    throw new Error(`${path}.candidate is required`);
+  }
+  const baseline = validateModelUsageMetrics(r.baseline, `${path}.baseline`);
+  const candidate = validateModelUsageMetrics(r.candidate, `${path}.candidate`);
+  if (!("baselineCostUsd" in r)) {
+    throw new Error(`${path}.baselineCostUsd is required`);
+  }
+  if (!isFiniteNonNegative(r.baselineCostUsd)) {
+    throw new Error(`${path}.baselineCostUsd must be a finite non-negative number`);
+  }
+  if (!("candidateCostUsd" in r)) {
+    throw new Error(`${path}.candidateCostUsd is required`);
+  }
+  if (!isFiniteNonNegative(r.candidateCostUsd)) {
+    throw new Error(`${path}.candidateCostUsd must be a finite non-negative number`);
+  }
+  if (!("costDeltaPercent" in r)) {
+    throw new Error(`${path}.costDeltaPercent is required`);
+  }
+  if (!isFiniteNumber(r.costDeltaPercent)) {
+    throw new Error(`${path}.costDeltaPercent must be a finite number`);
+  }
+  if (!("correctnessPassed" in r)) {
+    throw new Error(`${path}.correctnessPassed is required`);
+  }
+  if (typeof r.correctnessPassed !== "boolean") {
+    throw new Error(`${path}.correctnessPassed must be a boolean`);
+  }
+  if (!("redundantVerificationCalls" in r)) {
+    throw new Error(`${path}.redundantVerificationCalls is required`);
+  }
+  if (!isFiniteNonNegative(r.redundantVerificationCalls) || !Number.isInteger(r.redundantVerificationCalls as number)) {
+    throw new Error(`${path}.redundantVerificationCalls must be a finite non-negative integer`);
+  }
+  return {
+    workloadSize: r.workloadSize as WorkloadSize,
+    baseline,
+    candidate,
+    baselineCostUsd: r.baselineCostUsd as number,
+    candidateCostUsd: r.candidateCostUsd as number,
+    costDeltaPercent: r.costDeltaPercent as number,
+    correctnessPassed: r.correctnessPassed as boolean,
+    redundantVerificationCalls: r.redundantVerificationCalls as number,
+  };
+}
+
+function validateAndSortWorkloadBenchmarks(benchmarks: unknown): WorkloadBenchmarkComparison[] {
+  if (!Array.isArray(benchmarks)) {
+    throw new Error(`workloadBenchmarks must be an array`);
+  }
+  const validated = benchmarks.map((row, idx) => validateWorkloadBenchmarkComparison(row, idx));
+  const seen = new Set<WorkloadSize>();
+  for (const b of validated) {
+    if (seen.has(b.workloadSize)) {
+      throw new Error(`workloadBenchmarks duplicate workloadSize '${b.workloadSize}'`);
+    }
+    seen.add(b.workloadSize);
+  }
+  validated.sort((a, b) => workloadOrderIndex(a.workloadSize) - workloadOrderIndex(b.workloadSize));
+  return validated;
+}
 
 function normalizeLegacyPath(path: string): string {
   const normalized = path.trim().replace(/\/\.\*$/, "");
@@ -154,6 +288,15 @@ export class HistoricalReplayService {
       timeoutMs: this.defaultTimeoutMs,
       ...options.options,
     };
+
+    // Validate and sort external workload benchmarks without fabricating missing values.
+    // Fail closed on invalid or duplicate rows before any execution.
+    const rawExternal = (replayOpts as unknown as { workloadBenchmarks?: unknown }).workloadBenchmarks;
+    if (rawExternal !== undefined) {
+      const validated = validateAndSortWorkloadBenchmarks(rawExternal);
+      (replayOpts as unknown as { workloadBenchmarks?: WorkloadBenchmarkComparison[] }).workloadBenchmarks = validated;
+    }
+
     const candidate = normalizeCandidateCapabilities(options.candidate);
     const scenarios = this.builder.buildScenarios(evidenceSource, candidate, replayOpts);
 
@@ -165,6 +308,7 @@ export class HistoricalReplayService {
     candidate: CandidateTarget,
     options?: HistoricalReplayOptions,
   ): ReplayScenario[] {
+    // Pass through without altering workloadBenchmarks; builder threads workloadSize/baselineModelUsage via scenarios
     return this.builder.buildScenarios(
       evidence,
       normalizeCandidateCapabilities(candidate),

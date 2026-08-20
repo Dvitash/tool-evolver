@@ -4,18 +4,164 @@ import type {
   DivergenceFinding,
   ExecutedBrokerOperation,
   InvariantEvaluationResult,
+  ModelUsageMetrics,
   ReplayExecutionTrace,
   ReplayInvariant,
   ReplayMetricsComparison,
   ReplayScenario,
   ReplayScenarioExecutionResult,
   ReplayStatus,
+  WorkloadBenchmarkComparison,
+  WorkloadSize,
+} from "./types.js";
+import {
+  WORKLOAD_SIZE_ORDER,
+  DEFAULT_MODEL_TOKEN_PRICES,
+  calculateWeightedModelCost,
 } from "./types.js";
 
 /**
  * Replay trace and invariant comparator assessing candidate correctness, side effects, and metrics.
+ * Extended to compute deterministic workload benchmark comparisons when baseline and candidate model usage are present.
+ * Redundancy is explicit from ModelUsageMetrics.redundantToolCalls, never inferred from broker operations.
  */
 export class ReplayTraceComparator {
+  /**
+   * Computes a single workload benchmark comparison deterministically.
+   * Validates finite non-negative metrics and workload size ordering.
+   */
+  buildWorkloadBenchmark(
+    workloadSize: WorkloadSize,
+    baseline: ModelUsageMetrics,
+    candidate: ModelUsageMetrics,
+  ): WorkloadBenchmarkComparison {
+    if (!WORKLOAD_SIZE_ORDER.includes(workloadSize)) {
+      throw new Error(
+        `Invalid workloadSize '${String(workloadSize)}' — must be one of ${WORKLOAD_SIZE_ORDER.join(",")}`,
+      );
+    }
+    // validate metrics via calculateWeightedModelCost (which validates finite non-negative)
+    const baselineCostUsd = calculateWeightedModelCost(baseline, DEFAULT_MODEL_TOKEN_PRICES);
+    const candidateCostUsd = calculateWeightedModelCost(candidate, DEFAULT_MODEL_TOKEN_PRICES);
+
+    if (!Number.isFinite(baselineCostUsd) || baselineCostUsd < 0) {
+      throw new Error(`baselineCostUsd must be finite non-negative, got ${baselineCostUsd}`);
+    }
+    if (!Number.isFinite(candidateCostUsd) || candidateCostUsd < 0) {
+      throw new Error(`candidateCostUsd must be finite non-negative, got ${candidateCostUsd}`);
+    }
+
+    const costDeltaPercent =
+      baselineCostUsd === 0 ? 0 : ((candidateCostUsd - baselineCostUsd) / baselineCostUsd) * 100;
+
+    if (!Number.isFinite(costDeltaPercent)) {
+      throw new Error(`costDeltaPercent must be finite, got ${costDeltaPercent}`);
+    }
+
+    // Redundancy must be explicit from usage, not guessed from broker calls
+    const redundantVerificationCalls = candidate.redundantToolCalls;
+    if (!Number.isInteger(redundantVerificationCalls) || !Number.isFinite(redundantVerificationCalls) || redundantVerificationCalls < 0) {
+      throw new Error(`redundantVerificationCalls must be integer finite non-negative, got ${redundantVerificationCalls}`);
+    }
+
+    const correctnessPassed = candidate.correct === true;
+
+    return {
+      workloadSize,
+      baseline,
+      candidate,
+      baselineCostUsd,
+      candidateCostUsd,
+      costDeltaPercent,
+      correctnessPassed,
+      redundantVerificationCalls,
+    };
+  }
+
+  /**
+   * Derives workload benchmark from scenario and trace when both model usages are present.
+   * Returns undefined when any canonical telemetry field is absent.
+   * Canonical fields: scenario.workloadSize, scenario.baselineModelUsage, trace.modelUsage
+   * Validates finite non-negative metrics; throws fail-closed on invalid.
+   */
+  deriveWorkloadBenchmark(
+    scenario: ReplayScenario,
+    trace: ReplayExecutionTrace,
+  ): WorkloadBenchmarkComparison | undefined {
+    const workloadSize = scenario.workloadSize;
+    const baseline = scenario.baselineModelUsage;
+    const candidate = trace.modelUsage;
+    if (!workloadSize || !baseline || !candidate) return undefined;
+    return this.buildWorkloadBenchmark(workloadSize, baseline, candidate);
+  }
+
+  /**
+   * Validates a WorkloadBenchmarkComparison for finite non-negative fields and deterministic expectations.
+   * Throws on invalid.
+   */
+  private validateWorkloadBenchmark(comp: WorkloadBenchmarkComparison): void {
+    if (!WORKLOAD_SIZE_ORDER.includes(comp.workloadSize)) {
+      throw new Error(`Invalid workloadSize '${String(comp.workloadSize)}'`);
+    }
+    // Re-use calculateWeightedModelCost validation via build logic check
+    calculateWeightedModelCost(comp.baseline, DEFAULT_MODEL_TOKEN_PRICES);
+    calculateWeightedModelCost(comp.candidate, DEFAULT_MODEL_TOKEN_PRICES);
+    if (!Number.isFinite(comp.baselineCostUsd) || comp.baselineCostUsd < 0) {
+      throw new Error(`Invalid baselineCostUsd ${comp.baselineCostUsd}`);
+    }
+    if (!Number.isFinite(comp.candidateCostUsd) || comp.candidateCostUsd < 0) {
+      throw new Error(`Invalid candidateCostUsd ${comp.candidateCostUsd}`);
+    }
+    if (!Number.isFinite(comp.costDeltaPercent)) {
+      throw new Error(`Invalid costDeltaPercent ${comp.costDeltaPercent}`);
+    }
+    if (typeof comp.correctnessPassed !== "boolean") {
+      throw new Error(`Invalid correctnessPassed ${String(comp.correctnessPassed)}`);
+    }
+    if (!Number.isInteger(comp.redundantVerificationCalls) || comp.redundantVerificationCalls < 0 || !Number.isFinite(comp.redundantVerificationCalls)) {
+      throw new Error(`Invalid redundantVerificationCalls ${comp.redundantVerificationCalls}`);
+    }
+    if (comp.redundantVerificationCalls !== comp.candidate.redundantToolCalls) {
+      throw new Error(
+        `redundantVerificationCalls must equal candidate.redundantToolCalls (${comp.candidate.redundantToolCalls})`,
+      );
+    }
+    if (comp.correctnessPassed !== comp.candidate.correct) {
+      throw new Error(
+        `correctnessPassed must equal candidate.correct (${comp.candidate.correct})`,
+      );
+    }
+    const expectedDelta =
+      comp.baselineCostUsd === 0 ? 0 : ((comp.candidateCostUsd - comp.baselineCostUsd) / comp.baselineCostUsd) * 100;
+    if (Math.abs(comp.costDeltaPercent - expectedDelta) > 1e-6) {
+      throw new Error(
+        `costDeltaPercent mismatch: expected ${expectedDelta}, got ${comp.costDeltaPercent}`,
+      );
+    }
+  }
+
+  /**
+   * Sorts workload benchmarks deterministically by WORKLOAD_SIZE_ORDER (small→medium→large).
+   * Validates no duplicate workloadSize and that entries are valid.
+   */
+  sortAndValidateWorkloadBenchmarks(
+    benchmarks: WorkloadBenchmarkComparison[],
+  ): WorkloadBenchmarkComparison[] {
+    for (const b of benchmarks) {
+      this.validateWorkloadBenchmark(b);
+    }
+    const seen = new Set<WorkloadSize>();
+    for (const b of benchmarks) {
+      if (seen.has(b.workloadSize)) {
+        throw new Error(`Duplicate workloadSize '${b.workloadSize}' in workloadBenchmarks`);
+      }
+      seen.add(b.workloadSize);
+    }
+    return [...benchmarks].sort(
+      (a, b) => WORKLOAD_SIZE_ORDER.indexOf(a.workloadSize) - WORKLOAD_SIZE_ORDER.indexOf(b.workloadSize),
+    );
+  }
+
   /**
    * Evaluates candidate execution trace against a replay scenario's invariants and constraints.
    */
@@ -68,14 +214,18 @@ export class ReplayTraceComparator {
       }
     }
 
-    // 4. Compute metrics comparison
+    // 4. Compute metrics comparison (existing behavior unchanged)
     const metricsComparison = this.computeMetricsComparison(scenario, trace);
 
-    // 5. Determine overall scenario status
+    // 5. Compute workload benchmark when canonical telemetry is present
+    let workloadBenchmark: WorkloadBenchmarkComparison | undefined;
+    workloadBenchmark = this.deriveWorkloadBenchmark(scenario, trace);
+
+    // 6. Determine overall scenario status
     const status = this.determineScenarioStatus(trace, invariantEvaluations, divergenceFindings);
     const passed = status === "pass";
 
-    return {
+    const result: ReplayScenarioExecutionResult = {
       scenarioId: scenario.id,
       scenarioName: scenario.name,
       type: scenario.type,
@@ -88,18 +238,29 @@ export class ReplayTraceComparator {
       durationMs: trace.durationMs,
       seed: trace.seed,
     };
+
+    if (workloadBenchmark) {
+      result.workloadBenchmark = workloadBenchmark;
+    }
+
+    return result;
   }
 
   /**
    * Aggregates individual scenario results into overall replay status, metrics, and findings.
+   * Also aggregates deterministic workload benchmarks when present (small→medium→large).
    */
-  compareOverall(scenarioResults: ReplayScenarioExecutionResult[]): {
+  compareOverall(
+    scenarioResults: ReplayScenarioExecutionResult[],
+    externalWorkloadBenchmarks?: WorkloadBenchmarkComparison[],
+  ): {
     status: ReplayStatus;
     passed: boolean;
     overallMetrics: ReplayMetricsComparison;
     divergenceFindings: DivergenceFinding[];
     passedScenarioCount: number;
     totalScenarioCount: number;
+    workloadBenchmarks?: WorkloadBenchmarkComparison[];
   } {
     const totalScenarioCount = scenarioResults.length;
     const passedScenarioCount = scenarioResults.filter((r) => r.passed).length;
@@ -167,7 +328,42 @@ export class ReplayTraceComparator {
       candidateToolCalls: totalCandidateToolCalls,
     };
 
-    return {
+    // Aggregate workload benchmarks deterministically
+    const derivedBenchmarks: WorkloadBenchmarkComparison[] = [];
+    for (const res of scenarioResults) {
+      if (res.workloadBenchmark) {
+        derivedBenchmarks.push(res.workloadBenchmark);
+      }
+    }
+
+    // Handle external benchmarks (e.g., HistoricalReplayOptions.workloadBenchmarks)
+    const external = externalWorkloadBenchmarks ? [...externalWorkloadBenchmarks] : [];
+
+    // Validate and merge: no duplicate workloadSize between derived and external
+    let merged: WorkloadBenchmarkComparison[] | undefined;
+    const allBenchmarks = [...derivedBenchmarks, ...external];
+    if (allBenchmarks.length > 0) {
+      // Validate no duplicates across merged set
+      const seen = new Map<WorkloadSize, WorkloadBenchmarkComparison>();
+      for (const b of allBenchmarks) {
+        this.validateWorkloadBenchmark(b);
+        if (seen.has(b.workloadSize)) {
+          throw new Error(`Duplicate workloadSize '${b.workloadSize}' between derived and external benchmarks`);
+        }
+        seen.set(b.workloadSize, b);
+      }
+      merged = this.sortAndValidateWorkloadBenchmarks(allBenchmarks);
+    }
+
+    const baseReturn: {
+      status: ReplayStatus;
+      passed: boolean;
+      overallMetrics: ReplayMetricsComparison;
+      divergenceFindings: DivergenceFinding[];
+      passedScenarioCount: number;
+      totalScenarioCount: number;
+      workloadBenchmarks?: WorkloadBenchmarkComparison[];
+    } = {
       status,
       passed: status === "pass",
       overallMetrics,
@@ -175,6 +371,12 @@ export class ReplayTraceComparator {
       passedScenarioCount,
       totalScenarioCount,
     };
+
+    if (merged && merged.length > 0) {
+      baseReturn.workloadBenchmarks = merged;
+    }
+
+    return baseReturn;
   }
 
   /**

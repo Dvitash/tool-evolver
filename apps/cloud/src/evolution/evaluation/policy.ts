@@ -160,6 +160,8 @@ export const STANDARD_HARD_GATES: PolicyHardGates = {
   requireGeneratedTestsPass: true,
   forbidReplayDivergence: true,
   requireEvidenceCompleteness: true,
+  requireWorkflowCoverage: true,
+  requireWorkloadCostNonRegression: true,
   maxAllowedStaticWarnings: 10,
 };
 
@@ -390,6 +392,8 @@ export const PERMISSIVE_EVALUATION_POLICY_V1: EvaluationPolicy = {
     requireGeneratedTestsPass: false,
     forbidReplayDivergence: false,
     requireEvidenceCompleteness: false,
+    requireWorkflowCoverage: true,
+    requireWorkloadCostNonRegression: true,
     maxAllowedStaticWarnings: 30,
   },
   minimumCoverageRequirements: {

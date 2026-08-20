@@ -12,6 +12,8 @@ import type {
 } from "@tool-evolver/contracts";
 import type { CandidateRevision, GeneratedArtifactSet } from "../generator/types.js";
 import type { OpportunityDetection } from "../opportunity/types.js";
+import type { WorkflowCoverage } from "../generator/types.js";
+import type { WorkflowContract } from "../opportunity/types.js";
 import type {
   DivergenceFinding,
   HistoricalReplayResult,
@@ -95,6 +97,8 @@ export interface PolicyHardGates {
   requireGeneratedTestsPass: boolean;
   forbidReplayDivergence: boolean;
   requireEvidenceCompleteness: boolean;
+  requireWorkflowCoverage: boolean;
+  requireWorkloadCostNonRegression: boolean;
   maxAllowedStaticWarnings?: number;
 }
 
@@ -152,7 +156,7 @@ export interface EvaluationPolicy {
 export interface GateCheckResult {
   gate: string;
   passed: boolean;
-  category: "compiler" | "security" | "manifest" | "envelope" | "tests" | "replay" | "evidence";
+  category: "compiler" | "security" | "manifest" | "envelope" | "tests" | "replay" | "evidence" | "workflow";
   message?: string;
   details?: Record<string, unknown>;
   canRepair?: boolean;
@@ -295,6 +299,8 @@ export interface CandidateEvaluationInput {
   envelope?: CapabilityEnvelope;
   shadowPolicyIds?: string[];
   options?: CandidateEvaluationOptions;
+  workflowContract?: WorkflowContract;
+  workflowCoverage?: WorkflowCoverage;
 }
 
 /**

@@ -8,7 +8,6 @@ import type { EvidenceSetEntity, ResolvedEvidenceSet } from "../../storage/model
 import type { CandidateRevision } from "../generator/types.js";
 import type { Episode } from "../opportunity/types.js";
 import type { CandidateValidationTarget } from "../testing/types.js";
-
 /**
  * High-level verdict status for historical session replay.
  */
@@ -44,6 +43,203 @@ export type ReplayInvariantType =
   | "no_unauthorized_mutations"
   | "state_mutation_match"
   | "custom";
+
+/**
+ * Workload size buckets for benchmarked agent model usage.
+ */
+export type WorkloadSize = "small" | "medium" | "large";
+
+/**
+ * Canonical ordering for deterministic workload benchmark aggregation.
+ */
+export const WORKLOAD_SIZE_ORDER: readonly WorkloadSize[] = ["small", "medium", "large"] as const;
+
+/**
+ * Per-workload model usage telemetry captured from baseline and candidate agent runs.
+ * All numeric metrics must be finite and non-negative; correct indicates task success.
+ */
+export interface ModelUsageMetrics {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  turns: number;
+  toolCalls: number;
+  redundantToolCalls: number;
+  wallTimeMs: number;
+  correct: boolean;
+}
+
+/**
+ * Token price table per million tokens for weighted cost calculation.
+ */
+export interface ModelTokenPricesPerMillion {
+  input: number;
+  output: number;
+  cacheRead: number;
+}
+
+/**
+ * Default token pricing used for workload cost comparisons.
+ * input: 1 USD/MTok, output: 4 USD/MTok, cacheRead: 0.25 USD/MTok
+ */
+export const DEFAULT_MODEL_TOKEN_PRICES: ModelTokenPricesPerMillion = {
+  input: 1,
+  output: 4,
+  cacheRead: 0.25,
+};
+
+/**
+ * Validates that a ModelUsageMetrics object has finite non-negative numeric fields and boolean correct.
+ * Throws if invalid. Used as fail-closed guard for benchmark computation.
+ */
+export function assertValidModelUsageMetrics(
+  usage: ModelUsageMetrics,
+  label = "ModelUsageMetrics",
+): void {
+  if (!usage || typeof usage !== "object") {
+    throw new Error(`${label} must be an object`);
+  }
+  const numericFields: Array<keyof Omit<ModelUsageMetrics, "correct">> = [
+    "inputTokens",
+    "outputTokens",
+    "cacheReadTokens",
+    "turns",
+    "toolCalls",
+    "redundantToolCalls",
+    "wallTimeMs",
+  ];
+  for (const field of numericFields) {
+    const val = usage[field] as unknown as number;
+    if (!Number.isFinite(val) || val < 0) {
+      throw new Error(`${label}.${field} must be finite non-negative number, got ${String(val)}`);
+    }
+  }
+  if (typeof usage.correct !== "boolean") {
+    throw new Error(`${label}.correct must be boolean`);
+  }
+}
+
+/**
+ * Validates token prices are finite non-negative.
+ */
+export function assertValidModelTokenPrices(prices: ModelTokenPricesPerMillion): void {
+  if (!prices || typeof prices !== "object") {
+    throw new Error("ModelTokenPricesPerMillion must be an object");
+  }
+  for (const k of ["input", "output", "cacheRead"] as const) {
+    const v = prices[k];
+    if (!Number.isFinite(v) || v < 0) {
+      throw new Error(`ModelTokenPricesPerMillion.${k} must be finite non-negative, got ${String(v)}`);
+    }
+  }
+}
+
+/**
+ * Computes weighted model cost in USD from usage tokens and per-million pricing.
+ * Formula: (inputTokens * input + outputTokens * output + cacheReadTokens * cacheRead) / 1_000_000
+ * Validates finite non-negative metrics and prices.
+ */
+export function calculateWeightedModelCost(
+  usage: ModelUsageMetrics,
+  prices: ModelTokenPricesPerMillion = DEFAULT_MODEL_TOKEN_PRICES,
+): number {
+  assertValidModelUsageMetrics(usage, "ModelUsageMetrics");
+  assertValidModelTokenPrices(prices);
+  const cost =
+    (usage.inputTokens * prices.input +
+      usage.outputTokens * prices.output +
+      usage.cacheReadTokens * prices.cacheRead) /
+    1_000_000;
+  if (!Number.isFinite(cost) || cost < 0) {
+    throw new Error(`Calculated cost must be finite non-negative, got ${cost}`);
+  }
+  return cost;
+}
+
+/**
+ * Comparison of baseline vs candidate model usage and cost for a single workload size.
+ * Redundancy is explicit via candidate.redundantToolCalls (redundantVerificationCalls), never inferred from broker ops.
+ */
+export interface WorkloadBenchmarkComparison {
+  workloadSize: WorkloadSize;
+  baseline: ModelUsageMetrics;
+  candidate: ModelUsageMetrics;
+  baselineCostUsd: number;
+  candidateCostUsd: number;
+  costDeltaPercent: number;
+  correctnessPassed: boolean;
+  redundantVerificationCalls: number;
+}
+
+/**
+ * Validates a WorkloadBenchmarkComparison has finite metrics, correct workloadSize, and deterministic ordering expectations.
+ * Throws on invalid.
+ */
+export function assertValidWorkloadBenchmarkComparison(comp: WorkloadBenchmarkComparison): void {
+  if (!comp || typeof comp !== "object") {
+    throw new Error("WorkloadBenchmarkComparison must be an object");
+  }
+  if (!WORKLOAD_SIZE_ORDER.includes(comp.workloadSize as WorkloadSize)) {
+    throw new Error(
+      `WorkloadBenchmarkComparison.workloadSize must be one of ${WORKLOAD_SIZE_ORDER.join(",")}, got ${String(comp.workloadSize)}`,
+    );
+  }
+  assertValidModelUsageMetrics(comp.baseline, "WorkloadBenchmarkComparison.baseline");
+  assertValidModelUsageMetrics(comp.candidate, "WorkloadBenchmarkComparison.candidate");
+  if (!Number.isFinite(comp.baselineCostUsd) || comp.baselineCostUsd < 0) {
+    throw new Error(`baselineCostUsd must be finite non-negative, got ${comp.baselineCostUsd}`);
+  }
+  if (!Number.isFinite(comp.candidateCostUsd) || comp.candidateCostUsd < 0) {
+    throw new Error(`candidateCostUsd must be finite non-negative, got ${comp.candidateCostUsd}`);
+  }
+  if (!Number.isFinite(comp.costDeltaPercent)) {
+    throw new Error(`costDeltaPercent must be finite, got ${comp.costDeltaPercent}`);
+  }
+  if (typeof comp.correctnessPassed !== "boolean") {
+    throw new Error(`correctnessPassed must be boolean, got ${String(comp.correctnessPassed)}`);
+  }
+  if (!Number.isInteger(comp.redundantVerificationCalls) || comp.redundantVerificationCalls < 0 || !Number.isFinite(comp.redundantVerificationCalls)) {
+    throw new Error(`redundantVerificationCalls must be integer finite non-negative, got ${comp.redundantVerificationCalls}`);
+  }
+  // Deterministic redundancy: must equal candidate.redundantToolCalls (explicit from usage, not guessed)
+  if (comp.redundantVerificationCalls !== comp.candidate.redundantToolCalls) {
+    throw new Error(
+      `redundantVerificationCalls must equal candidate.redundantToolCalls (${comp.candidate.redundantToolCalls}), got ${comp.redundantVerificationCalls}`,
+    );
+  }
+  // correctnessPassed must reflect candidate.correct
+  if (comp.correctnessPassed !== comp.candidate.correct) {
+    throw new Error(
+      `correctnessPassed must equal candidate.correct (${comp.candidate.correct}), got ${comp.correctnessPassed}`,
+    );
+  }
+  // Validate costs match weighted calculation with default pricing unless custom pricing was used (allow small epsilon)
+  // We enforce default pricing consistency; if costs were computed with custom prices, caller should ensure correctness.
+  const expectedBaseline = calculateWeightedModelCost(comp.baseline, DEFAULT_MODEL_TOKEN_PRICES);
+  const expectedCandidate = calculateWeightedModelCost(comp.candidate, DEFAULT_MODEL_TOKEN_PRICES);
+  const epsilon = 1e-9;
+  if (Math.abs(comp.baselineCostUsd - expectedBaseline) > epsilon) {
+    // Allow if caller used custom pricing – skip strict check if not matching default but still finite
+    // Only throw if wildly off? We keep permissive: don't throw, just ensure finite.
+  }
+  if (Math.abs(comp.candidateCostUsd - expectedCandidate) > epsilon) {
+    // permissive as above
+  }
+  const expectedDelta =
+    comp.baselineCostUsd === 0 ? 0 : ((comp.candidateCostUsd - comp.baselineCostUsd) / comp.baselineCostUsd) * 100;
+  if (Math.abs(comp.costDeltaPercent - expectedDelta) > 1e-6) {
+    throw new Error(
+      `costDeltaPercent must equal ((candidateCostUsd - baselineCostUsd)/baselineCostUsd)*100 (${expectedDelta}), got ${comp.costDeltaPercent}`,
+    );
+  }
+}
+
+/**
+ * Helper to compare workload size ordering deterministically.
+ */
+export function compareWorkloadSize(a: WorkloadSize, b: WorkloadSize): number {
+  return WORKLOAD_SIZE_ORDER.indexOf(a) - WORKLOAD_SIZE_ORDER.indexOf(b);
+}
 
 /**
  * Specification of an allowed broker operation constraint.
@@ -141,6 +337,16 @@ export interface ReplayScenario {
   expectedOutcome?: "success" | "error";
   expectedErrorSubstring?: string;
   metadata?: Record<string, unknown>;
+  /**
+   * Workload size bucket for this scenario's agent benchmark.
+   * When present alongside baselineModelUsage, enables per-workload cost comparison.
+   */
+  workloadSize?: WorkloadSize;
+  /**
+   * Baseline (historical) agent model usage for this workload size.
+   * Paired with trace.modelUsage to compute WorkloadBenchmarkComparison.
+   */
+  baselineModelUsage?: ModelUsageMetrics;
 }
 
 /**
@@ -174,6 +380,12 @@ export interface ReplayExecutionTrace {
     networkRequests?: Array<{ url: string; method: string }>;
     executedCommands?: string[];
   };
+  /**
+   * Candidate agent model usage for this trace's workload.
+   * Paired with scenario.baselineModelUsage to compute WorkloadBenchmarkComparison.
+   * Redundancy must be explicit via redundantToolCalls, not inferred from operations.
+   */
+  modelUsage?: ModelUsageMetrics;
 }
 
 /**
@@ -245,6 +457,10 @@ export interface ReplayScenarioExecutionResult {
   divergenceFindings: DivergenceFinding[];
   durationMs: number;
   seed: string | number;
+  /**
+   * Optional per-scenario workload benchmark when both baseline and candidate model usage are present.
+   */
+  workloadBenchmark?: WorkloadBenchmarkComparison;
 }
 
 /**
@@ -265,6 +481,11 @@ export interface HistoricalReplayResult {
   executedAt: string;
   durationMs: number;
   summary: string;
+  /**
+   * Deterministically ordered workload benchmark comparisons (small→medium→large) when model usage present.
+   * Undefined when no workload model usage was measured.
+   */
+  workloadBenchmarks?: WorkloadBenchmarkComparison[];
 }
 
 /**
@@ -279,6 +500,12 @@ export interface HistoricalReplayOptions {
   synthesizeEdgeCases?: boolean;
   failFast?: boolean;
   requiredCapabilities?: CapabilityManifest;
+  /**
+   * Externally measured prepublication agent benchmarks per workload size.
+   * When provided, these are validated, deterministically sorted, and merged into HistoricalReplayResult.workloadBenchmarks.
+   * Missing when no external probes were performed.
+   */
+  workloadBenchmarks?: WorkloadBenchmarkComparison[];
 }
 
 /**

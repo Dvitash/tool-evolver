@@ -85,6 +85,8 @@ export class ReplayScenarioBuilder {
         eventCount: events.length,
         extractedInputKeys: Object.keys(primaryInput),
       },
+      workloadSize: undefined,
+      baselineModelUsage: undefined,
     };
     scenarios.push(primaryScenario);
 
@@ -527,6 +529,10 @@ export class ReplayScenarioBuilder {
       ],
       allowedBrokerOperations: primary.allowedBrokerOperations,
       baselineMetrics: primary.baselineMetrics,
+      workloadSize: primary.workloadSize,
+      baselineModelUsage: primary.baselineModelUsage
+        ? { ...primary.baselineModelUsage }
+        : undefined,
       expectedOutcome: "success",
     };
   }
@@ -583,6 +589,10 @@ export class ReplayScenarioBuilder {
         ],
         allowedBrokerOperations: primary.allowedBrokerOperations,
         baselineMetrics: primary.baselineMetrics,
+        workloadSize: primary.workloadSize,
+        baselineModelUsage: primary.baselineModelUsage
+          ? { ...primary.baselineModelUsage }
+          : undefined,
         expectedOutcome: "error",
         expectedErrorSubstring: "ENOENT",
       });
@@ -616,6 +626,10 @@ export class ReplayScenarioBuilder {
         ],
         allowedBrokerOperations: primary.allowedBrokerOperations,
         baselineMetrics: primary.baselineMetrics,
+        workloadSize: primary.workloadSize,
+        baselineModelUsage: primary.baselineModelUsage
+          ? { ...primary.baselineModelUsage }
+          : undefined,
         expectedOutcome: "error",
         expectedErrorSubstring: "EACCES",
       });
@@ -656,6 +670,10 @@ export class ReplayScenarioBuilder {
         ],
         allowedBrokerOperations: primary.allowedBrokerOperations,
         baselineMetrics: primary.baselineMetrics,
+        workloadSize: primary.workloadSize,
+        baselineModelUsage: primary.baselineModelUsage
+          ? { ...primary.baselineModelUsage }
+          : undefined,
         expectedOutcome: "error",
       });
     }
@@ -697,6 +715,10 @@ export class ReplayScenarioBuilder {
         ],
         allowedBrokerOperations: primary.allowedBrokerOperations,
         baselineMetrics: primary.baselineMetrics,
+        workloadSize: primary.workloadSize,
+        baselineModelUsage: primary.baselineModelUsage
+          ? { ...primary.baselineModelUsage }
+          : undefined,
         expectedOutcome: "error",
       });
     }
@@ -730,6 +752,10 @@ export class ReplayScenarioBuilder {
       ],
       allowedBrokerOperations: primary.allowedBrokerOperations,
       baselineMetrics: primary.baselineMetrics,
+      workloadSize: primary.workloadSize,
+      baselineModelUsage: primary.baselineModelUsage
+        ? { ...primary.baselineModelUsage }
+        : undefined,
       expectedOutcome: "error",
     });
 

@@ -18,6 +18,12 @@ import {
   createMockToolManifest,
   createMockValidationResult,
 } from "./helpers.js";
+import { createMockWorkflowContract } from "../generator/helpers.js";
+import type {
+  ModelUsageMetrics,
+  WorkloadBenchmarkComparison,
+} from "../../../src/evolution/replay/types.js";
+import { calculateWeightedModelCost } from "../../../src/evolution/replay/types.js";
 
 describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibility Decisions)", () => {
   it("renders 'eligible_for_artifact' on a clean, high-scoring candidate", async () => {
@@ -423,4 +429,322 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
     expect(readOnlyEval.decisionRecord.decision).toBe("eligible_for_artifact");
     expect(secretEval.decisionRecord.decision).toBe("repair_requested"); // Stricter threshold not satisfied
   });
+  it("terminally rejects contract candidate missing workload benchmarks", async () => {
+    const service = createCandidateEvaluationService();
+    const contract = createMockWorkflowContract();
+    const candidate = createMockCandidateRevision();
+    // Attach contract/coverage to candidate plan to simulate persisted revision (also test direct threading)
+    const completeCoverage = {
+      complete: true,
+      uncoveredOperationIds: [] as string[],
+      uncoveredOutputNames: [] as string[],
+      operationCoverage: contract.operations.map((op) => ({ operationId: op.id, stepIds: [`step_${op.id}`] })),
+      outputCoverage: contract.outputRequirements.map((r) => ({
+        outputName: r.name,
+        schemaPaths: [`properties.${r.name}`],
+        sourceOperationIds: [r.sourceOperationId],
+      })),
+    };
+    // Use explicit workflow fields (also covered via candidate fallback)
+    const validationResult = createMockValidationResult();
+    const replayResult = createMockReplayResult(); // no workloadBenchmarks
+
+    const result = await service.evaluateCandidate({
+      candidate,
+      validationResult,
+      replayResult,
+      workflowContract: contract,
+      workflowCoverage: completeCoverage,
+      policy: STANDARD_EVALUATION_POLICY_V1,
+    });
+
+    expect(result.decisionRecord.hardGateResult.passed).toBe(false);
+    expect(result.decisionRecord.hardGateResult.failedGates).toContain("workload_cost_non_regression");
+    expect(result.decisionRecord.hardGateResult.canRepair).toBe(false);
+    expect(result.decisionRecord.decision).toBe("rejected");
+    expect(result.overallDecision.verdict).toBe("fail");
+  });
+
+  it("routes incomplete workflow coverage to repair (repairable gate)", async () => {
+    const service = createCandidateEvaluationService();
+    const contract = createMockWorkflowContract();
+    const candidate = createMockCandidateRevision();
+    const incompleteCoverage = {
+      complete: false,
+      uncoveredOperationIds: [contract.operations[0].id],
+      uncoveredOutputNames: [contract.outputRequirements[0].name],
+      operationCoverage: [],
+      outputCoverage: [],
+    };
+    // Provide complete workload benchmarks to isolate coverage gate
+    const makeMetrics = (overrides: Partial<ModelUsageMetrics> = {}): ModelUsageMetrics => ({
+      inputTokens: 1000,
+      outputTokens: 500,
+      cacheReadTokens: 200,
+      turns: 2,
+      toolCalls: 3,
+      redundantToolCalls: 0,
+      wallTimeMs: 1200,
+      correct: true,
+      ...overrides,
+    });
+    const mkBenchmark = (
+      workloadSize: WorkloadBenchmarkComparison["workloadSize"],
+      baselineOverrides: Partial<ModelUsageMetrics> = {},
+      candidateOverrides: Partial<ModelUsageMetrics> = {},
+    ): WorkloadBenchmarkComparison => {
+      const baseline = makeMetrics(baselineOverrides);
+      const candidateMetrics = makeMetrics({ ...candidateOverrides, correct: true, redundantToolCalls: 0 });
+      const baselineCostUsd = calculateWeightedModelCost(baseline);
+      const candidateCostUsd = calculateWeightedModelCost(candidateMetrics);
+      return {
+        workloadSize,
+        baseline,
+        candidate: candidateMetrics,
+        baselineCostUsd,
+        candidateCostUsd,
+        costDeltaPercent: ((candidateCostUsd - baselineCostUsd) / baselineCostUsd) * 100,
+        correctnessPassed: candidateMetrics.correct,
+        redundantVerificationCalls: candidateMetrics.redundantToolCalls,
+      };
+    };
+    const workloadBenchmarks: WorkloadBenchmarkComparison[] = [
+      mkBenchmark("small", { inputTokens: 1000 }, { inputTokens: 800 }),
+      mkBenchmark("medium", { inputTokens: 2000 }, { inputTokens: 1200 }),
+      mkBenchmark("large", { inputTokens: 3000 }, { inputTokens: 1500 }),
+    ];
+    const replayResult = createMockReplayResult({ workloadBenchmarks } as unknown as Record<string, unknown>);
+    const validationResult = createMockValidationResult();
+
+    const result = await service.evaluateCandidate({
+      candidate,
+      validationResult,
+      replayResult,
+      workflowContract: contract,
+      workflowCoverage: incompleteCoverage,
+      policy: STANDARD_EVALUATION_POLICY_V1,
+    });
+
+    expect(result.decisionRecord.hardGateResult.passed).toBe(false);
+    expect(result.decisionRecord.hardGateResult.failedGates).toContain("workflow_coverage");
+    expect(result.decisionRecord.hardGateResult.canRepair).toBe(true);
+    expect(result.decisionRecord.decision).toBe("repair_requested");
+  });
+
+  it("terminally rejects large-workload cost regression", async () => {
+    const service = createCandidateEvaluationService();
+    const contract = createMockWorkflowContract();
+    const candidate = createMockCandidateRevision();
+    const completeCoverage = {
+      complete: true,
+      uncoveredOperationIds: [] as string[],
+      uncoveredOutputNames: [] as string[],
+      operationCoverage: contract.operations.map((op) => ({ operationId: op.id, stepIds: [`step_${op.id}`] })),
+      outputCoverage: contract.outputRequirements.map((r) => ({
+        outputName: r.name,
+        schemaPaths: [`properties.${r.name}`],
+        sourceOperationIds: [r.sourceOperationId],
+      })),
+    };
+    const makeMetrics = (overrides: Partial<ModelUsageMetrics> = {}): ModelUsageMetrics => ({
+      inputTokens: 1000,
+      outputTokens: 500,
+      cacheReadTokens: 200,
+      turns: 2,
+      toolCalls: 3,
+      redundantToolCalls: 0,
+      wallTimeMs: 1200,
+      correct: true,
+      ...overrides,
+    });
+    const mkBenchmark = (
+      workloadSize: WorkloadBenchmarkComparison["workloadSize"],
+      baselineOverrides: Partial<ModelUsageMetrics> = {},
+      candidateOverrides: Partial<ModelUsageMetrics> = {},
+    ): WorkloadBenchmarkComparison => {
+      const baseline = makeMetrics(baselineOverrides);
+      const candidateMetrics = makeMetrics({ ...candidateOverrides, correct: true, redundantToolCalls: 0 });
+      const baselineCostUsd = calculateWeightedModelCost(baseline);
+      const candidateCostUsd = calculateWeightedModelCost(candidateMetrics);
+      return {
+        workloadSize,
+        baseline,
+        candidate: candidateMetrics,
+        baselineCostUsd,
+        candidateCostUsd,
+        costDeltaPercent: ((candidateCostUsd - baselineCostUsd) / baselineCostUsd) * 100,
+        correctnessPassed: candidateMetrics.correct,
+        redundantVerificationCalls: candidateMetrics.redundantToolCalls,
+      };
+    };
+    // Large regression: candidate costs more than baseline
+    const workloadBenchmarks: WorkloadBenchmarkComparison[] = [
+      mkBenchmark("small", { inputTokens: 1000 }, { inputTokens: 800 }),
+      mkBenchmark("medium", { inputTokens: 2000 }, { inputTokens: 1200 }),
+      mkBenchmark("large", { inputTokens: 1000 }, { inputTokens: 3000 }),
+    ];
+    const replayResult = createMockReplayResult({ workloadBenchmarks } as unknown as Record<string, unknown>);
+    const validationResult = createMockValidationResult();
+
+    const result = await service.evaluateCandidate({
+      candidate,
+      validationResult,
+      replayResult,
+      workflowContract: contract,
+      workflowCoverage: completeCoverage,
+      policy: STANDARD_EVALUATION_POLICY_V1,
+    });
+
+    expect(result.decisionRecord.hardGateResult.passed).toBe(false);
+    expect(result.decisionRecord.hardGateResult.failedGates).toContain("workload_cost_non_regression");
+    expect(result.decisionRecord.hardGateResult.canRepair).toBe(false);
+    expect(result.decisionRecord.decision).toBe("rejected");
+  });
+
+  it("permits eligible with complete small/medium/large evidence and leaves legacy without contract eligible", async () => {
+    const service = createCandidateEvaluationService();
+    const contract = createMockWorkflowContract();
+    const candidate = createMockCandidateRevision();
+    const completeCoverage = {
+      complete: true,
+      uncoveredOperationIds: [] as string[],
+      uncoveredOutputNames: [] as string[],
+      operationCoverage: contract.operations.map((op) => ({ operationId: op.id, stepIds: [`step_${op.id}`] })),
+      outputCoverage: contract.outputRequirements.map((r) => ({
+        outputName: r.name,
+        schemaPaths: [`properties.${r.name}`],
+        sourceOperationIds: [r.sourceOperationId],
+      })),
+    };
+    const makeMetrics = (overrides: Partial<ModelUsageMetrics> = {}): ModelUsageMetrics => ({
+      inputTokens: 1000,
+      outputTokens: 500,
+      cacheReadTokens: 200,
+      turns: 2,
+      toolCalls: 3,
+      redundantToolCalls: 0,
+      wallTimeMs: 1200,
+      correct: true,
+      ...overrides,
+    });
+    const mkBenchmark = (
+      workloadSize: WorkloadBenchmarkComparison["workloadSize"],
+      baselineOverrides: Partial<ModelUsageMetrics> = {},
+      candidateOverrides: Partial<ModelUsageMetrics> = {},
+    ): WorkloadBenchmarkComparison => {
+      const baseline = makeMetrics(baselineOverrides);
+      const candidateMetrics = makeMetrics({ ...candidateOverrides, correct: true, redundantToolCalls: 0 });
+      const baselineCostUsd = calculateWeightedModelCost(baseline);
+      const candidateCostUsd = calculateWeightedModelCost(candidateMetrics);
+      return {
+        workloadSize,
+        baseline,
+        candidate: candidateMetrics,
+        baselineCostUsd,
+        candidateCostUsd,
+        costDeltaPercent: ((candidateCostUsd - baselineCostUsd) / baselineCostUsd) * 100,
+        correctnessPassed: candidateMetrics.correct,
+        redundantVerificationCalls: candidateMetrics.redundantToolCalls,
+      };
+    };
+    const workloadBenchmarks: WorkloadBenchmarkComparison[] = [
+      mkBenchmark("small", { inputTokens: 1000 }, { inputTokens: 800 }),
+      mkBenchmark("medium", { inputTokens: 2000 }, { inputTokens: 1200 }),
+      mkBenchmark("large", { inputTokens: 3000 }, { inputTokens: 1500 }),
+    ];
+    const replayResult = createMockReplayResult({ workloadBenchmarks } as unknown as Record<string, unknown>);
+    const validationResult = createMockValidationResult();
+
+    const contractResult = await service.evaluateCandidate({
+      candidate,
+      validationResult,
+      replayResult,
+      workflowContract: contract,
+      workflowCoverage: completeCoverage,
+      policy: STANDARD_EVALUATION_POLICY_V1,
+    });
+
+    expect(contractResult.decisionRecord.hardGateResult.passed).toBe(true);
+    expect(contractResult.decisionRecord.decision).toBe("eligible_for_artifact");
+    expect(contractResult.overallDecision.verdict).toBe("pass");
+
+    // Legacy candidate without workflowContract should remain eligible even without benchmarks (existing publication path)
+    const legacyReplay = createMockReplayResult(); // no benchmarks
+    const legacyResult = await service.evaluateCandidate({
+      candidate,
+      validationResult,
+      replayResult: legacyReplay,
+      policy: STANDARD_EVALUATION_POLICY_V1,
+    });
+    expect(legacyResult.decisionRecord.hardGateResult.passed).toBe(true);
+    expect(legacyResult.decisionRecord.decision).toBe("eligible_for_artifact");
+  });
+
+  it("threads CandidateRevision.plan workflowContract/coverage via candidate fallback when not explicitly passed", async () => {
+    const service = createCandidateEvaluationService();
+    const contract = createMockWorkflowContract();
+    const incompleteCoverage = {
+      complete: false,
+      uncoveredOperationIds: [contract.operations[0].id],
+      uncoveredOutputNames: [],
+      operationCoverage: [],
+      outputCoverage: [],
+    };
+    const candidateWithPlan = createMockCandidateRevision();
+    // Attach to artifacts.plan directly to test fallback threading
+    (candidateWithPlan as unknown as { artifacts: { plan: Record<string, unknown> } }).artifacts.plan = {
+      ...(candidateWithPlan.artifacts.plan as unknown as Record<string, unknown>),
+      workflowContract: contract,
+      workflowCoverage: incompleteCoverage,
+    } as unknown as typeof candidateWithPlan.artifacts.plan;
+    const validationResult = createMockValidationResult();
+    const makeMetrics = (overrides: Partial<ModelUsageMetrics> = {}): ModelUsageMetrics => ({
+      inputTokens: 1000,
+      outputTokens: 500,
+      cacheReadTokens: 200,
+      turns: 2,
+      toolCalls: 3,
+      redundantToolCalls: 0,
+      wallTimeMs: 1200,
+      correct: true,
+      ...overrides,
+    });
+    const mkBenchmark = (
+      workloadSize: WorkloadBenchmarkComparison["workloadSize"],
+      baselineOverrides: Partial<ModelUsageMetrics> = {},
+      candidateOverrides: Partial<ModelUsageMetrics> = {},
+    ): WorkloadBenchmarkComparison => {
+      const baseline = makeMetrics(baselineOverrides);
+      const candidateMetrics = makeMetrics({ ...candidateOverrides, correct: true, redundantToolCalls: 0 });
+      const baselineCostUsd = calculateWeightedModelCost(baseline);
+      const candidateCostUsd = calculateWeightedModelCost(candidateMetrics);
+      return {
+        workloadSize,
+        baseline,
+        candidate: candidateMetrics,
+        baselineCostUsd,
+        candidateCostUsd,
+        costDeltaPercent: ((candidateCostUsd - baselineCostUsd) / baselineCostUsd) * 100,
+        correctnessPassed: candidateMetrics.correct,
+        redundantVerificationCalls: candidateMetrics.redundantToolCalls,
+      };
+    };
+    const benchmarks: WorkloadBenchmarkComparison[] = [
+      mkBenchmark("small", { inputTokens: 1000 }, { inputTokens: 800 }),
+      mkBenchmark("medium", { inputTokens: 2000 }, { inputTokens: 1200 }),
+      mkBenchmark("large", { inputTokens: 3000 }, { inputTokens: 1500 }),
+    ];
+    const replayResult = createMockReplayResult({ workloadBenchmarks: benchmarks } as unknown as Record<string, unknown>);
+
+    const result = await service.evaluateCandidate({
+      candidate: candidateWithPlan,
+      validationResult,
+      replayResult,
+      policy: STANDARD_EVALUATION_POLICY_V1,
+    });
+
+    expect(result.decisionRecord.hardGateResult.failedGates).toContain("workflow_coverage");
+    expect(result.decisionRecord.decision).toBe("repair_requested");
+  });
+
 });

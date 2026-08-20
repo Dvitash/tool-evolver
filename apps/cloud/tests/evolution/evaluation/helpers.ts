@@ -366,6 +366,7 @@ export function createMockReplayResult(
     executedAt: overrides.executedAt ?? "2026-01-01T00:00:00.000Z",
     durationMs: overrides.durationMs ?? 155,
     summary: overrides.summary ?? "Historical replay passed all invariants cleanly.",
+    workloadBenchmarks: overrides.workloadBenchmarks,
   };
 }
 
