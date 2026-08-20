@@ -68,6 +68,26 @@ describe("Candidate Lifecycle - Brokered Tools & Multi-Step Workflows", () => {
     expect(catalogTool).toBeNull();
   });
 
+  it("publishes when repaired candidate state lags the eligible lifecycle", async () => {
+    const env = await createTestLifecycleEnvironment();
+    const candidate = createMockBrokeredCandidate(tenant);
+    const revision = createMockBrokeredRevision(candidate, tenant);
+
+    await env.orchestrator.startLifecycle(tenant, candidate, revision);
+    await env.orchestrator.stepValidate(tenant, candidate.id);
+    await env.orchestrator.stepReplay(tenant, candidate.id);
+    await env.orchestrator.stepEvaluate(tenant, candidate.id);
+
+    await env.candidateRepo.saveCandidate(
+      tenant,
+      { ...candidate, state: "failed" },
+      { activeRevision: revision },
+    );
+
+    const { record } = await env.orchestrator.stepPublish(tenant, candidate.id);
+    expect(record.currentState).toBe("published");
+  });
+
   it("should process a multi-step workflow through full lifecycle and include workflow.json in package", async () => {
     const env = await createTestLifecycleEnvironment();
     const candidate = createMockWorkflowCandidate(tenant);

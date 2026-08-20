@@ -1457,8 +1457,12 @@ export class CandidateLifecycleOrchestrator {
         ...baseManifest,
         digest: hashCanonicalContent(baseManifest),
       };
+      // The lifecycle record is authoritative here: validation, replay, and
+      // evaluation have all passed. Candidate generation state can lag during
+      // bounded repair, so normalize the artifact input to an approved state.
       const candidateForPublish: EvolutionCandidate = {
         ...candidate,
+        state: "approved",
         proposedTool: manifestForPublish,
       };
 
