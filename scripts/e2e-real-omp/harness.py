@@ -133,8 +133,9 @@ def drain(label, timeout_s=180, headers=None):
 
 
 def run_metrics(path):
-    usage_in = usage_out = cache_read = 0
-    first_cache_read = None
+    usage_in = usage_out = 0
+    turn_cache_read_tokens: list[int] = []
+    usage_tokens_incomplete = False
     tools = Counter()
     errors = 0
     turns = 0
@@ -253,13 +254,38 @@ def run_metrics(path):
         elif t == "turn_end":
             turns += 1
         elif t == "message_end":
-            u = (e.get("message", {}) or {}).get("usage") or {}
-            usage_in += u.get("input", 0) or 0
-            usage_out += u.get("output", 0) or 0
-            cr = u.get("cacheRead", 0) or 0
-            cache_read += cr
-            if first_cache_read is None:
-                first_cache_read = cr
+            msg = (e.get("message", {}) or {})
+            role = msg.get("role")
+            u = msg.get("usage") or {}
+            if (u.get("totalTokens") or 0) > 0 and not (u.get("input") or 0) and not (u.get("output") or 0) and not (u.get("cacheRead") or 0):
+                usage_tokens_incomplete = True
+                continue
+            # Token-bearing model turn: assistant role with any token count >0.
+            # Filters out custom/user/toolResult with empty usage and
+            # stall/error assistant turns that report 0 tokens (e.g.,
+            # thinking-loop or 401 model-not-supported). Those must not
+            # contribute to per-turn cache readings or totals.
+            is_token_bearing = bool(
+                (u.get("input") or 0)
+                or (u.get("output") or 0)
+                or (u.get("cacheRead") or 0)
+                or (u.get("totalTokens") or 0)
+            )
+            if role == "assistant" and is_token_bearing:
+                usage_in += int(u.get("input", 0) or 0)
+                usage_out += int(u.get("output", 0) or 0)
+                cr = int(u.get("cacheRead", 0) or 0)
+                turn_cache_read_tokens.append(cr)
+            elif is_token_bearing and (msg.get("provider") or msg.get("model")):
+                usage_in += int(u.get("input", 0) or 0)
+                usage_out += int(u.get("output", 0) or 0)
+                cr = int(u.get("cacheRead", 0) or 0)
+                turn_cache_read_tokens.append(cr)
+    # Derive cache totals from the verified per-turn list. This is the
+    # accurate source: each entry corresponds to one token-bearing model
+    # turn in transcript order (assistant message_end with usage).
+    cache_read = sum(turn_cache_read_tokens)
+    first_cache_read = turn_cache_read_tokens[0] if turn_cache_read_tokens else 0
     # --- post-pass fallback detection ---
     # Scan every transcript: fallback responses can report non-zero usage and
     # must still be excluded from real-model savings calculations.
@@ -325,9 +351,10 @@ def run_metrics(path):
     # call. Instruction-only cells can hallucinate an unmounted xd:// device;
     # retain those separately as attempts/failures.
     evolved_failures = evolved_attempts - evolved_successes
-    first = 0 if first_cache_read is None else first_cache_read
+    first = int(first_cache_read) if first_cache_read is not None else 0
     return {"inputTokens": usage_in, "outputTokens": usage_out,
             "cacheReadTokens": cache_read, "firstCacheReadTokens": first,
+            "turnCacheReadTokens": list(turn_cache_read_tokens),
             "coldCache": first == 0, "turns": turns,
             "toolCalls": dict(tools), "bashCalls": bash,
             "evolvedCalls": evolved_successes,
@@ -339,7 +366,8 @@ def run_metrics(path):
             "inputTokensEstimated": input_estimated,
             "inputTokensIsEstimated": input_is_estimated,
             "fallbackModel": fallback_model,
-            "note": note}
+            "note": note,
+            "usageTokensIncomplete": usage_tokens_incomplete}
 
 
 def omp_argv(prompt, model="te-ocg/muse-spark-1.2-contributor", profile=None, overlay=None):
