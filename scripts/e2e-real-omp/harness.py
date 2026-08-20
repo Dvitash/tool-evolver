@@ -173,14 +173,15 @@ def run_metrics(path):
             "evolvedCalls": evolved, "toolErrors": errors}
 
 
-def omp_argv(prompt, model="te-ocg/muse-spark-1.2-contributor", profile=None):
+def omp_argv(prompt, model="te-ocg/muse-spark-1.2", profile=None, overlay=None):
     """Headless argv with prompt-cache isolation (no --no-cache exists)."""
     argv = ["omp", "-p", "--mode", "json", "--model", model,
             "--approval-mode=yolo", "--no-session", "--no-title"]
     if profile:
         argv.extend(["--profile", profile])
-    if OVERLAY_YML.is_file():
-        argv.extend(["--config", str(OVERLAY_YML)])
+    cfg = overlay or OVERLAY_YML
+    if cfg.is_file():
+        argv.extend(["--config", str(cfg)])
     argv.append(prompt)
     return argv
 

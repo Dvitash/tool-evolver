@@ -50,6 +50,7 @@ XD = f"xd://mcp__{SERVER.replace('-', '_')}_{TOOL}"
 FACTORIAL = [
     ("ctrl", False, False, "prompt5"),
     ("shim", True, False, "prompt5"),
+    ("shim4q", True, False, "prompt4q"),
     ("instr", False, True, "prompt5"),
     ("both", True, True, "prompt5"),
 ]
@@ -160,8 +161,8 @@ def proxy_provider_entry() -> dict:
         "api": "openai-responses",
         "apiKey": key,
         "models": [{
-            "id": "muse-spark-1.2-contributor",
-            "name": "Muse Spark 1.2 Contributor",
+            "id": "muse-spark-1.2",
+            "name": "Muse Spark 1.2",
             "reasoning": True,
             "input": ["text"],
             "contextWindow": 1048576,
@@ -227,15 +228,15 @@ def mean(xs):
 def summarize(rows):
     by = {}
     for r in rows:
-        key = (r["cell"], r["model"], r["prompt"])
+        key = (r["cell"], r["model"], r["prompt"], r.get("xdev", True))
         by.setdefault(key, []).append(r)
-    lines = ["cell | model | prompt | n | adopt | bash_mean | input_mean | firstCache_mean | cold_n | turns_mean"]
+    lines = ["cell | model | prompt | xdev | n | adopt | bash_mean | input_mean | firstCache_mean | cold_n | turns_mean"]
     for key, rs in by.items():
-        cell, model, prompt = key
+        cell, model, prompt, xdev = key
         n = len(rs)
         adopt = sum(1 for r in rs if r["metrics"]["evolvedCalls"] > 0)
         lines.append(
-            f"{cell} | {model} | {prompt} | {n} | {adopt}/{n} | "
+            f"{cell} | {model} | {prompt} | {xdev} | {n} | {adopt}/{n} | "
             f"{mean([r['metrics']['bashCalls'] for r in rs])} | "
             f"{mean([r['metrics']['inputTokens'] for r in rs])} | "
             f"{mean([r['metrics']['firstCacheReadTokens'] for r in rs])} | "
@@ -245,8 +246,9 @@ def summarize(rows):
     return "\n".join(lines)
 
 
-def run_one(cell, shim, instr, prompt_name, model, rep, instructions):
-    run_id = f"{cell}-{model.replace('/', '_')}-r{rep}-{uuid.uuid4().hex[:8]}"
+def run_one(cell, shim, instr, prompt_name, model, rep, instructions, xdev=True):
+    tag = "" if xdev else "-xdevfalse"
+    run_id = f"{cell}{tag}-{model.replace('/', '_')}-r{rep}-{uuid.uuid4().hex[:8]}"
     # omp 17.3.8 ignores profile agent/mcp.json (MCP loads from the config
     # root agent dir only), so isolate per run via PI_CONFIG_DIR (resolved
     # HOME-relative) instead of --profile.
@@ -260,13 +262,21 @@ def run_one(cell, shim, instr, prompt_name, model, rep, instructions):
     OUT.mkdir(parents=True, exist_ok=True)
     out = OUT / f"{run_id}.jsonl"
     err = OUT / f"{run_id}.err"
-    H.log(f"{run_id}: shim={shim} instr={instr} model={model}")
+    H.log(f"{run_id}: shim={shim} instr={instr} xdev={xdev} model={model}")
     t0 = time.time()
     env = dict(os.environ)
     env["PI_CONFIG_DIR"] = cfg_root
+    overlay = None
+    if not xdev:
+        # Ship MCP tools top-level (first-class function schemas) instead of
+        # xd:// on-demand devices.
+        ov = yaml.safe_load(H.OVERLAY_YML.read_text())
+        ov.setdefault("tools", {})["xdev"] = False
+        overlay = Path.home() / cfg_root / "overlay.yml"
+        overlay.write_text(yaml.safe_dump(ov))
     with open(out, "w") as fo, open(err, "w") as fe:
         p = subprocess.run(
-            H.omp_argv(prompt, model=model),
+            H.omp_argv(prompt, model=model, overlay=overlay),
             cwd=str(work), stdout=fo, stderr=fe, timeout=1500, env=env)
     dur = round(time.time() - t0, 1)
     m = H.run_metrics(out)
@@ -274,7 +284,7 @@ def run_one(cell, shim, instr, prompt_name, model, rep, instructions):
     m["exitCode"] = p.returncode
     row = {
         "id": run_id, "cell": cell, "shim": shim, "instructions": instr,
-        "prompt": prompt_name, "model": model, "rep": rep,
+        "xdev": xdev, "prompt": prompt_name, "model": model, "rep": rep,
         "profile": cfg_root, "workdir": str(work), "metrics": m,
     }
     (OUT / f"{run_id}.json").write_text(json.dumps(row, indent=2))
@@ -287,7 +297,7 @@ def run_one(cell, shim, instr, prompt_name, model, rep, instructions):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=3)
-    ap.add_argument("--model", default="te-ocg/muse-spark-1.2-contributor")
+    ap.add_argument("--model", default="te-ocg/muse-spark-1.2")
     ap.add_argument("--replicate-model", default="",
                     help="Second model for the both-cell replication. Empty to skip.")
     ap.add_argument("--skip-hostile", action="store_true")
@@ -295,21 +305,26 @@ def main():
                     help="Comma subset of factorial cell names")
     ap.add_argument("--jobs", type=int, default=12,
                     help="Parallel omp processes. Isolated via --profile + per-run cwd.")
+    ap.add_argument("--xdev", choices=["true", "false"], default="true",
+                    help="tools.xdev: true = MCP tools on-demand xd:// devices "
+                         "(default); false = ship MCP schemas top-level as "
+                         "first-class functions.")
     args = ap.parse_args()
     wanted = {c.strip() for c in args.cells.split(",") if c.strip()}
+    xdev = args.xdev == "true"
     instructions = catalog_instructions()
     jobs = []
     for name, shim, instr, prompt in FACTORIAL:
         if name not in wanted:
             continue
         for rep in range(1, args.n + 1):
-            jobs.append((name, shim, instr, prompt, args.model, rep, instructions))
+            jobs.append((name, shim, instr, prompt, args.model, rep, instructions, xdev))
     if not args.skip_hostile:
         for rep in range(1, args.n + 1):
-            jobs.append(("hostile", True, True, "prompt3", args.model, rep, instructions))
+            jobs.append(("hostile", True, True, "prompt3", args.model, rep, instructions, xdev))
     if args.replicate_model:
         for rep in range(1, args.n + 1):
-            jobs.append(("both", True, True, "prompt4", args.replicate_model, rep, instructions))
+            jobs.append(("both", True, True, "prompt4", args.replicate_model, rep, instructions, xdev))
     H.log(f"dispatch {len(jobs)} runs jobs={args.jobs}")
     rows = []
     workers = max(1, args.jobs)
