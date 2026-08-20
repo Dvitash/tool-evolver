@@ -164,7 +164,14 @@ def run_metrics(path):
             if first_cache_read is None:
                 first_cache_read = cr
     bash = tools.get("bash", 0)
-    evolved = sum(v for k, v in tools.items() if k and "evolved" in k) + tools.get("xd-mcp-invoke", 0)
+    # Adopted evolved-tool invocations, both transport modes:
+    #   xdev:true  -> write {"path": "xd://mcp__tool_evolver_gateway_*"}
+    #   xdev:false -> direct first-class call named mcp__tool_evolver_gateway_*
+    xd_invoke = tools.get("xd-mcp-invoke", 0)
+    direct = sum(v for k, v in tools.items()
+                 if k and k.startswith("mcp__tool_evolver_gateway_"))
+    evolved = (sum(v for k, v in tools.items() if k and "evolved" in k)
+               + xd_invoke + direct)
     first = 0 if first_cache_read is None else first_cache_read
     return {"inputTokens": usage_in, "outputTokens": usage_out,
             "cacheReadTokens": cache_read, "firstCacheReadTokens": first,
