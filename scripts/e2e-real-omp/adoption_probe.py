@@ -150,9 +150,10 @@ def proxy_provider_entry() -> dict:
     returns 401 ``Model muse-spark-1.2 is not supported`` and omp falls
     back to cursor/cursor-grok which reports input:0. This entry therefore
     exposes the contributor model as the default te-ocg model; the vanilla
-    id is retained as a deprecated alias that will trigger the same 401
-    (handled in harness.run_metrics with an estimated input and a note).
-    Prefer ``te-ocg/muse-spark-1.2-contributor`` for real inputTokens.
+    id is NOT exposed here — requesting it 401s and omp would silently
+    fall back to cursor/cursor-grok. Using the bare id fails loudly at
+    config load instead. Prefer ``te-ocg/muse-spark-1.2-contributor``
+    for real inputTokens.
     """
     key = ""
     try:
@@ -170,28 +171,16 @@ def proxy_provider_entry() -> dict:
         "baseUrl": "https://opencode.ai/zen/go/v1",
         "api": "openai-responses",
         "apiKey": key,
-        "models": [
-            {
-                "id": "muse-spark-1.2-contributor",
-                "name": "Muse Spark 1.2 Contributor",
-                "reasoning": True,
-                "input": ["text", "image"],
-                "contextWindow": 1048576,
-                "maxTokens": 131072,
-                "thinking": {"mode": "effort",
-                             "efforts": ["minimal", "low", "medium", "high", "xhigh"]},
-            },
-            {
-                "id": "muse-spark-1.2",
-                "name": "Muse Spark 1.2 (deprecated — use muse-spark-1.2-contributor)",
-                "reasoning": True,
-                "input": ["text"],
-                "contextWindow": 1048576,
-                "maxTokens": 131072,
-                "thinking": {"mode": "effort",
-                             "efforts": ["minimal", "low", "medium", "high", "xhigh"]},
-            },
-        ],
+        "models": [{
+            "id": "muse-spark-1.2-contributor",
+            "name": "Muse Spark 1.2 Contributor",
+            "reasoning": True,
+            "input": ["text", "image"],
+            "contextWindow": 1048576,
+            "maxTokens": 131072,
+            "thinking": {"mode": "effort",
+                         "efforts": ["minimal", "low", "medium", "high", "xhigh"]},
+        }],
     }
 
 
@@ -231,6 +220,19 @@ def prepare_profile(cfg_root: str, shim: bool, instr: bool, instructions: str) -
     append = agent / "APPEND_SYSTEM.md"
     body = instructions if instr else ""
     append.write_text(body)
+    # Pin the default model role in the copied config so omp's retry
+    # fallback retries te-ocg instead of silently substituting
+    # cursor/grok (observed: te-ocg 401 -> retry_fallback_applied ->
+    # cursor-grok-4.6 ran the whole audit, contaminating results).
+    cfg = agent / "config.yml"
+    if cfg.is_file():
+        try:
+            cc = yaml.safe_load(cfg.read_text())
+            roles = cc.setdefault("modelRoles", {})
+            roles["default"] = "te-ocg/muse-spark-1.2-contributor:high"
+            cfg.write_text(yaml.safe_dump(cc))
+        except Exception:
+            pass
     return dest
 
 
