@@ -151,3 +151,198 @@ describe("Structured Inference Service & Provenance", () => {
     expect(result.provenance.promptTemplateVersion).toBe("2.1.0");
   });
 });
+describe("Contract-aware prompt generation and legacy compatibility", () => {
+  it("schema_generation prompt includes every operation and required output when workflowContract provided", async () => {
+    const registry = new PromptRegistry();
+    const template = registry.get("schema_generation", "1.0.0");
+    expect(template).toBeDefined();
+    // contract with 2 ops and 2 outputs
+    const workflowContract = {
+      version: 1 as const,
+      operations: [
+        { id: "op_0", order: 0, name: "search:find", toolClass: "search" as const, commandProfile: "grep -r" },
+        { id: "op_1", order: 1, name: "file_read:read", toolClass: "file_read" as const },
+      ],
+      requiredInputs: [
+        { name: "query", type: "string", description: "search query", required: true },
+        { name: "path", type: "string", description: "path", required: true },
+      ],
+      outputRequirements: [
+        { name: "search_hits", sourceOperationId: "op_0", type: "array", required: true, description: "hits" },
+        { name: "file_content", sourceOperationId: "op_1", type: "string", required: true, description: "content" },
+      ],
+      invariants: [],
+      expensiveOperationIds: [],
+      repeatedOperationIds: [],
+    };
+    const rendered = registry.render(template!, {
+      toolName: "test_tool",
+      description: "Test workflow",
+      workflowEvidence: "evidence",
+      observedVariables: JSON.stringify([{ name: "query", type: "string", description: "query", required: true }]),
+      workflowContract: JSON.stringify(workflowContract),
+      workflowOperations: JSON.stringify(workflowContract.operations),
+      workflowOutputs: JSON.stringify(workflowContract.outputRequirements),
+      workflowInputs: JSON.stringify(workflowContract.requiredInputs),
+    } as any);
+    // Must contain every operation name/id and every output name
+    expect(rendered.userMessage).toContain("op_0");
+    expect(rendered.userMessage).toContain("search:find");
+    expect(rendered.userMessage).toContain("op_1");
+    expect(rendered.userMessage).toContain("file_read:read");
+    expect(rendered.userMessage).toContain("search_hits");
+    expect(rendered.userMessage).toContain("file_content");
+    // Also system instruction must demand coverage
+    expect(template!.systemInstruction).toMatch(/WorkflowContract/);
+    expect(template!.systemInstruction).toMatch(/required/i);
+  });
+
+  it("candidate_planning prompt includes every operation/output and enumerates coverage", async () => {
+    const registry = new PromptRegistry();
+    const template = registry.get("candidate_planning", "1.0.0");
+    expect(template).toBeDefined();
+    const workflowContract = {
+      version: 1 as const,
+      operations: [
+        { id: "op_0", order: 0, name: "file_write:write" },
+        { id: "op_1", order: 1, name: "command:exec" },
+      ],
+      requiredInputs: [{ name: "content", type: "string", description: "content", required: true }],
+      outputRequirements: [
+        { name: "write_status", sourceOperationId: "op_0", type: "boolean", required: true, description: "write" },
+        { name: "exec_output", sourceOperationId: "op_1", type: "string", required: true, description: "exec" },
+      ],
+      invariants: [],
+      expensiveOperationIds: [],
+      repeatedOperationIds: [],
+    };
+    const rendered = registry.render(template!, {
+      opportunityId: "opp-1",
+      classification: JSON.stringify({ title: "Test", pattern: "file_write->command" }),
+      opportunityDetails: "details",
+      evidence: JSON.stringify(["e1"]),
+      currentManifest: "{}",
+      workflowContract: JSON.stringify(workflowContract),
+      workflowOperations: JSON.stringify(workflowContract.operations),
+      workflowOutputs: JSON.stringify(workflowContract.outputRequirements),
+    } as any);
+    expect(rendered.userMessage).toContain("op_0");
+    expect(rendered.userMessage).toContain("file_write:write");
+    expect(rendered.userMessage).toContain("exec_output");
+    expect(rendered.userMessage).toContain("write_status");
+    expect(template!.systemInstruction).toMatch(/coveredOperationIds/);
+    expect(template!.systemInstruction).toMatch(/coverageRationale/);
+  });
+
+  it("legacy prompts without workflowContract remain valid and render without leftover placeholders", async () => {
+    const registry = new PromptRegistry();
+    const schemaTemplate = registry.get("schema_generation", "1.0.0")!;
+    const candidateTemplate = registry.get("candidate_planning", "1.0.0")!;
+    // Legacy render without workflowContract should not throw and not leave {{workflowContract}}
+    const renderedSchema = registry.render(schemaTemplate, {
+      toolName: "legacy_tool",
+      description: "legacy",
+      workflowEvidence: "evidence",
+      observedVariables: "[]",
+    } as any);
+    expect(renderedSchema.userMessage).not.toContain("{{workflowContract}}");
+    expect(renderedSchema.userMessage).toContain("legacy_tool");
+
+    const renderedCandidate = registry.render(candidateTemplate, {
+      opportunityId: "opp-legacy",
+      classification: "{}",
+      opportunityDetails: "details",
+      evidence: "[]",
+      currentManifest: "{}",
+    } as any);
+    expect(renderedCandidate.userMessage).not.toContain("{{workflowContract}}");
+    expect(renderedCandidate.userMessage).toContain("opp-legacy");
+  });
+
+  it("legacy inference output schemas remain valid with new optional contract fields", async () => {
+    const { SchemaGenerationOutputSchema, CandidatePlanningOutputSchema } = await import("../../src/models/prompt-registry.js");
+    const legacySchemaGen = {
+      toolName: "t",
+      description: "d",
+      parameters: [{ name: "p", type: "string" as const, description: "x", required: true }],
+      outputSchema: { type: "object", description: "d", properties: {}, required: [] },
+      // no coveredOutputNames
+    };
+    expect(() => SchemaGenerationOutputSchema.parse(legacySchemaGen)).not.toThrow();
+    const legacyCandidate = {
+      planId: "p1",
+      targetToolName: "t",
+      action: "create" as const,
+      summary: "s",
+      interfaceChanges: [],
+      securityRisks: [],
+      estimatedImpact: "low",
+      // no coverageRationale or coveredOperationIds
+    };
+    expect(() => CandidatePlanningOutputSchema.parse(legacyCandidate)).not.toThrow();
+    const withCoverage = {
+      ...legacyCandidate,
+      coverageRationale: "covers all ops",
+      coveredOperationIds: ["op_0", "op_1"],
+    };
+    expect(() => CandidatePlanningOutputSchema.parse(withCoverage)).not.toThrow();
+    const schemaWithCoverage = {
+      ...legacySchemaGen,
+      coveredOutputNames: ["out1", "out2"],
+    };
+    expect(() => SchemaGenerationOutputSchema.parse(schemaWithCoverage)).not.toThrow();
+    expect(SchemaGenerationOutputSchema.parse(schemaWithCoverage).coveredOutputNames).toEqual(["out1", "out2"]);
+  });
+
+  it("SchemaGenerator includes workflowContract in inference prompt inputs and preserves strict validation", async () => {
+    const registry = new PromptRegistry();
+    const template = registry.get("schema_generation", "1.0.0")!;
+    const workflowContract = {
+      version: 1 as const,
+      operations: [{ id: "op_0", order: 0, name: "tool:compute" }],
+      requiredInputs: [{ name: "inputA", type: "string", description: "A", required: true }],
+      outputRequirements: [{ name: "outputA", sourceOperationId: "op_0", type: "string", required: true, description: "out" }],
+      invariants: [],
+      expensiveOperationIds: [],
+      repeatedOperationIds: [],
+    };
+    let capturedInputs: any = null;
+    const fakeInfer = {
+      infer: async (req: any) => {
+        capturedInputs = req.inputs;
+        return {
+          output: {
+            toolName: req.inputs.toolName,
+            description: req.inputs.description,
+            parameters: [{ name: "inputA", type: "string", description: "inferred", required: true }],
+            outputSchema: {
+              type: "object",
+              description: "Res",
+              properties: { outputA: { type: "string", description: "out" } },
+              required: ["outputA"],
+            },
+          },
+          provenance: { requestId: "r", tenantId: req.tenantId, taskClass: req.taskClass, providerId: "mock", providerName: "Mock", promptTemplateId: req.promptTemplateId, promptTemplateVersion: "1.0.0", promptDigest: "a".repeat(64), inputDigest: "b".repeat(64), schemaDigest: "c".repeat(64), cached: false, repairAttempts: 0, usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 }, latencyMs: 1, createdAt: new Date().toISOString(), finishedAt: new Date().toISOString() },
+        };
+      },
+    } as unknown as import("../../src/models/service.js").InferenceService;
+
+    const { SchemaGenerator } = await import("../../src/evolution/generator/schema-generator.js");
+    const gen = new SchemaGenerator();
+    await gen.deriveSchemasAsync({
+      toolName: "workflow_tool",
+      description: "desc",
+      variableInputs: [{ name: "inputA", type: "string", description: "A", required: true }],
+      workflowContract,
+      inferenceService: fakeInfer as never,
+    });
+    expect(capturedInputs).toBeDefined();
+    expect(capturedInputs.workflowContract).toBeDefined();
+    const parsedContract = JSON.parse(capturedInputs.workflowContract);
+    expect(parsedContract.operations[0].id).toBe("op_0");
+    expect(capturedInputs.workflowOperations).toContain("op_0");
+    expect(capturedInputs.workflowOutputs).toContain("outputA");
+    // Ensure strict validation would fail on missing required fields but passes with optional
+    expect(() => registry.render(template, capturedInputs as any)).not.toThrow();
+  });
+});

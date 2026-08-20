@@ -94,6 +94,8 @@ export const CandidatePlanningOutputSchema = z.object({
     .optional(),
   transformationRules: z.array(z.string()).optional(),
   runtimeRequirements: z.array(z.string()).optional(),
+  coverageRationale: z.string().optional(),
+  coveredOperationIds: z.array(z.string()).optional(),
 });
 export type CandidatePlanningOutput = z.infer<typeof CandidatePlanningOutputSchema>;
 
@@ -124,6 +126,7 @@ export const SchemaGenerationOutputSchema = z.object({
     required: z.array(z.string()).optional(),
   }),
   validationRules: z.array(z.string()).optional(),
+  coveredOutputNames: z.array(z.string()).optional(),
 });
 export type SchemaGenerationOutput = z.infer<typeof SchemaGenerationOutputSchema>;
 
@@ -338,6 +341,7 @@ export const WorkflowPlanningStepSchema = z.object({
   outputs: z.union([z.record(z.unknown()), z.array(z.string())]).optional(),
   outputVar: z.string().optional(),
   dependsOn: z.array(z.string()).default([]),
+  coveredOperationIds: z.array(z.string()).optional(),
   capabilityRequirements: z.record(z.unknown()).optional(),
   timeoutMs: z.number().int().positive().default(30000),
   retryPolicy: z
@@ -551,6 +555,9 @@ export class PromptRegistry {
 
   /**
    * Renders a prompt template with the provided inputs, verifying input schemas and computing digests.
+   * Supports optional workflowContract enumeration: if workflowContract is provided,
+   * ordered operations and required outputs are explicitly enumerated for coverage validation.
+   * Legacy prompts without workflowContract remain valid; unreplaced placeholders are cleared.
    */
   render<TInput = Record<string, unknown>, TOutput = unknown>(
     template: PromptTemplate<TInput, TOutput>,
@@ -561,12 +568,44 @@ export class PromptRegistry {
     }
 
     let userMessage = template.userTemplate;
-    const inputObj = { feedback: "", ...(inputs as Record<string, unknown>) };
+    const inputObj: Record<string, unknown> = { feedback: "", ...(inputs as Record<string, unknown>) };
+
+    // Auto-derive workflow enumerations from workflowContract when present but explicit
+    // workflowOperations/workflowOutputs not supplied by caller (ensures coverage inclusion).
+    const wc = inputObj.workflowContract as unknown;
+    let wcObj: Record<string, unknown> | null = null;
+    if (wc !== undefined && wc !== null) {
+      if (typeof wc === "string") {
+        try { wcObj = JSON.parse(wc as string); } catch { wcObj = null; }
+      } else if (typeof wc === "object") {
+        wcObj = wc as Record<string, unknown>;
+      }
+      if (wcObj) {
+        const ops = (wcObj.operations as Array<Record<string, unknown>>) ?? [];
+        const outs = (wcObj.outputRequirements as Array<Record<string, unknown>>) ?? [];
+        const reqInputs = (wcObj.requiredInputs as Array<Record<string, unknown>>) ?? [];
+        if (!inputObj.workflowOperations) {
+          inputObj.workflowOperations = ops.map((op) => `${op.id}: ${op.name}${op.toolClass ? ` [${op.toolClass}]` : ""}`).join("\n") || JSON.stringify(ops, null, 2);
+        }
+        if (!inputObj.workflowOutputs) {
+          inputObj.workflowOutputs = outs.map((o) => `${o.name} (${o.type}) <- ${o.sourceOperationId}${(o as Record<string, unknown>).required ? " [required]" : ""}`).join("\n") || JSON.stringify(outs, null, 2);
+        }
+        if (!inputObj.workflowInputs) {
+          inputObj.workflowInputs = reqInputs.map((i) => `${i.name}: ${i.type}${(i as Record<string, unknown>).required ? " [required]" : ""}`).join("\n") || JSON.stringify(reqInputs, null, 2);
+        }
+        // Ensure workflowContract itself is stringified if object
+        if (typeof inputObj.workflowContract === "object") {
+          inputObj.workflowContract = JSON.stringify(inputObj.workflowContract, null, 2);
+        }
+      }
+    }
 
     for (const [key, value] of Object.entries(inputObj)) {
       const serialized = typeof value === "object" ? JSON.stringify(value, null, 2) : String(value);
       userMessage = userMessage.replaceAll(`{{${key}}}`, serialized);
     }
+    // Clear any unreplaced optional placeholders for provider compatibility & legacy validity
+    userMessage = userMessage.replaceAll(/{{[^}]+}}/g, "");
 
     const promptDigest = hashCanonical({
       system: template.systemInstruction,
@@ -645,9 +684,9 @@ export class PromptRegistry {
       taskClass: "candidate_planning",
       description: "Plans candidate tool improvements, interfaces, and architecture.",
       systemInstruction:
-        "You are the Tool Evolver Candidate Planning Engine. Plan candidate tool modifications or new tool additions based on detected opportunities. Provide interface specifications, risk evaluations, and impact summaries.",
+        "You are the Tool Evolver Candidate Planning Engine. Plan candidate tool modifications or new tool additions based on detected opportunities. Provide interface specifications, risk evaluations, and impact summaries. You MUST cover the entire WorkflowContract when provided: every ordered operation must be explicitly mapped to a planned interface, step, or output, and you must enumerate full-workflow coverage. Provide per-step coveredOperationIds mapping each planned element to its source operationIds, and a top-level coverageRationale explaining how all contract operations and required outputs are satisfied. If WorkflowContract is present, never omit required inputs/outputs; inference MUST NOT drop contract fields.",
       userTemplate:
-        "Opportunity ID: {{opportunityId}}\nClassification:\n{{classification}}\nOpportunity Details:\n{{opportunityDetails}}\nEvidence:\n{{evidence}}\nCurrent Tool Manifest:\n{{currentManifest}}\nGenerate candidate evolution plan.",
+        "Opportunity ID: {{opportunityId}}\nClassification:\n{{classification}}\nOpportunity Details:\n{{opportunityDetails}}\nEvidence:\n{{evidence}}\nCurrent Tool Manifest:\n{{currentManifest}}\nWorkflow Contract:\n{{workflowContract}}\nOrdered Operations (all must be covered in order, with per-step coveredOperationIds):\n{{workflowOperations}}\nRequired Outputs (all must appear in outputs/coverage):\n{{workflowOutputs}}\nCoverage Rationale Requirement: Explain how every operation and required output is mapped. Generate candidate evolution plan with explicit full-workflow coverage.",
       outputSchema: CandidatePlanningOutputSchema,
       jsonSchema: {
         type: "object",
@@ -678,9 +717,9 @@ export class PromptRegistry {
       taskClass: "candidate_planning",
       description: "Generates input/output parameter schemas and types from workflow evidence.",
       systemInstruction:
-        "You are the Tool Evolver Schema Generation Engine. Analyze the sanitized workflow evidence, observed parameter types, and intent. Synthesize precise MCP-compatible parameter schemas and return types. Output structured JSON matching the specified schema.",
+        "You are the Tool Evolver Schema Generation Engine. Analyze the sanitized workflow evidence, observed parameter types, and intent. Synthesize precise MCP-compatible parameter schemas and return types. You MUST include every requiredInputs entry and every outputRequirements name from the provided WorkflowContract in the generated schemas. Output schemas MUST deterministically union inferred outputs with all required contract output fields so inference cannot overwrite or drop them; on conflict, contract requiredness and sourceOperationId win, preserving a compatible inferred field schema where possible (fallback to {type:'string'} if contract type lacks precision). List coveredOutputNames enumerating every contract output included. Output structured JSON matching the specified schema. Demonstrate full-workflow coverage: ordered operations and required outputs must all be represented.",
       userTemplate:
-        "Tool Name: {{toolName}}\nDescription: {{description}}\nWorkflow Evidence:\n{{workflowEvidence}}\nObserved Variables:\n{{observedVariables}}\nDerive input and output schemas.",
+        "Tool Name: {{toolName}}\nDescription: {{description}}\nWorkflow Evidence:\n{{workflowEvidence}}\nObserved Variables:\n{{observedVariables}}\nWorkflow Contract:\n{{workflowContract}}\nOrdered Operations (all must be represented in steps/outputs):\n{{workflowOperations}}\nRequired Inputs (all must appear in parameters):\n{{workflowInputs}}\nRequired Outputs (all must appear in outputSchema.properties, with sourceOperationId mapping):\n{{workflowOutputs}}\nDerive input and output schemas with deterministic union of inferred schema and all required contract fields; ensure every required input/output is present and inference cannot drop them. Enumerate coveredOutputNames.",
       outputSchema: SchemaGenerationOutputSchema,
       jsonSchema: {
         type: "object",

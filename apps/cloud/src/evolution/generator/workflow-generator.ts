@@ -10,6 +10,7 @@ import type {
   WorkflowStep,
   WorkflowValidationResult,
 } from "./types.js";
+import { buildWorkflowCoverage, workflowCoverageDiagnostics } from "./workflow-coverage.js";
 
 /**
  * Generates reusable workflow step graphs, validation engines, and executable TypeScript orchestrators.
@@ -196,6 +197,19 @@ export class WorkflowGenerator {
       }
     }
 
+    // 5. Workflow contract coverage check (repairable errors, not warnings)
+    if (plan.workflowContract) {
+      try {
+        const coverage = buildWorkflowCoverage(plan.workflowContract, plan.steps, plan.outputSchema);
+        const diagnostics = workflowCoverageDiagnostics(coverage);
+        for (const diag of diagnostics) {
+          errors.push(diag);
+        }
+      } catch {
+        errors.push("Workflow coverage computation failed");
+      }
+    }
+
     return {
       valid: errors.length === 0,
       errors,
@@ -364,6 +378,11 @@ export class WorkflowGenerator {
    * Executes bounded repair loop to fix cycles, undeclared bindings, unsafe compensation,
    * non-idempotent retries, or capability overruns.
    */
+  /**
+   * Executes bounded repair loop to fix cycles, undeclared bindings, unsafe compensation,
+   * non-idempotent retries, capability overruns, and workflow contract coverage.
+   * Coverage diagnostics are repairable errors; recomputed after each repair and required for success.
+   */
   repairWorkflow(
     plan: ToolPlan,
     initialErrors: string[] = [],
@@ -374,8 +393,20 @@ export class WorkflowGenerator {
     const appliedFixes: string[] = [];
     let iterations = 0;
 
+    // Initialize workflowCoverage if contract present
+    if (currentPlan.workflowContract) {
+      try {
+        currentPlan.workflowCoverage = buildWorkflowCoverage(currentPlan.workflowContract, currentPlan.steps, currentPlan.outputSchema);
+      } catch {
+        // ignore
+      }
+    }
+
     let validation = this.validateWorkflow(currentPlan, envelope);
-    let currentErrors = initialErrors.length > 0 ? initialErrors : validation.errors;
+    // Merge initialErrors with validation errors for coverage diagnostics seeding
+    let currentErrors = initialErrors.length > 0 ? [...initialErrors, ...validation.errors.filter(e => !initialErrors.includes(e))] : validation.errors;
+    // Deduplicate
+    currentErrors = [...new Set(currentErrors)];
 
     while (currentErrors.length > 0 && iterations < maxIterations) {
       iterations++;
@@ -476,25 +507,194 @@ export class WorkflowGenerator {
         appliedFixes.push("Minimized capability manifest to satisfy workspace envelope.");
       }
 
-      // Re-generate schemas
-      currentPlan.inputSchema = this.schemaGenerator.deriveInputSchema(currentPlan.variableInputs);
+      // 7. Fix Missing Workflow Coverage: add steps for uncovered operations and schema entries for uncovered outputs
+      if (currentPlan.workflowContract) {
+        let coverage;
+        try {
+          coverage = buildWorkflowCoverage(currentPlan.workflowContract, currentPlan.steps, currentPlan.outputSchema);
+        } catch {
+          coverage = undefined;
+        }
+        if (coverage && !coverage.complete) {
+          // Fix uncovered operations (one per iteration to respect max-iteration bounds)
+          for (const opId of [...coverage.uncoveredOperationIds].sort().slice(0, 1)) {
+            const operation = currentPlan.workflowContract.operations.find((op) => op.id === opId);
+            if (!operation) continue;
+            if (currentPlan.steps.some((s) => s.coveredOperationIds?.includes(opId))) continue;
+            let stepId = `step_${opId}`;
+            let counter = 1;
+            while (currentPlan.steps.some((s) => s.id === stepId)) {
+              stepId = `step_${opId}_${counter++}`;
+            }
+            let toolClass = operation.toolClass ?? "compute";
+            let service: WorkflowStep["service"] = "compute";
+            let action = operation.name;
+            let inputs: Record<string, unknown> = {};
+            if (operation.commandProfile) {
+              service = "cmd";
+              toolClass = operation.toolClass ?? "command";
+              action = "cmd.exec";
+              const parts = operation.commandProfile.trim().split(/\s+/);
+              const cmd = parts[0] ?? "echo";
+              const args = parts.slice(1);
+              inputs = { command: cmd, args };
+            } else if (operation.name.startsWith("cmd:") || operation.name.startsWith("command:")) {
+              service = "cmd";
+              toolClass = "command";
+              action = "cmd.exec";
+              const cmdStr = operation.name.replace(/^cmd:/, "").replace(/^command:/, "").trim();
+              if (cmdStr) {
+                const parts = cmdStr.split(/\s+/);
+                inputs = { command: parts[0], args: parts.slice(1) };
+              } else {
+                inputs = { command: "echo", args: [operation.name] };
+              }
+            } else if (toolClass === "file_read" || operation.name.includes("file_read") || operation.name.includes("read_file")) {
+              service = "fs";
+              action = "fs.readFile";
+              inputs = { path: "${input.path}" };
+              toolClass = "file_read";
+            } else if (toolClass === "file_edit" || operation.name.includes("file_edit") || operation.name.includes("write")) {
+              service = "fs";
+              action = "fs.writeFile";
+              inputs = { path: "${input.destPath}", content: "${input.content}" };
+              toolClass = "file_edit";
+            } else if (toolClass === "vcs" || operation.name.toLowerCase().includes("git")) {
+              service = "cmd";
+              action = "cmd.exec";
+              if (operation.commandProfile) {
+                const parts = operation.commandProfile.trim().split(/\s+/);
+                inputs = { command: parts[0], args: parts.slice(1) };
+              } else {
+                inputs = { command: "git", args: ["status"] };
+              }
+            } else if (toolClass === "test_runner" || operation.name.includes("test")) {
+              service = "cmd";
+              action = "cmd.exec";
+              inputs = { command: "pnpm", args: ["test"] };
+            } else if (toolClass === "build_tool" || operation.name.includes("build")) {
+              service = "cmd";
+              action = "cmd.exec";
+              inputs = { command: "pnpm", args: ["build"] };
+            } else if (toolClass === "search" || operation.name.includes("search")) {
+              service = "fs";
+              action = "fs.readFile";
+              inputs = { path: "${input.query}" };
+            } else {
+              service = "compute";
+              action = operation.name.includes(".") ? operation.name : "compute.transform";
+              inputs = {};
+            }
+            const dependsOn: string[] = [];
+            const opOrder = operation.order;
+            if (opOrder > 0) {
+              const prevOpId = `op_${opOrder - 1}`;
+              const prevStep = currentPlan.steps.find((s) => s.coveredOperationIds?.includes(prevOpId));
+              if (prevStep) {
+                dependsOn.push(prevStep.id);
+              } else if (currentPlan.steps.length > 0) {
+                dependsOn.push(currentPlan.steps[currentPlan.steps.length - 1]!.id);
+              }
+            }
+            const newStep: WorkflowStep = {
+              id: stepId,
+              name: operation.name,
+              description: `Coverage step for ${operation.name}`,
+              toolClass,
+              action,
+              service: service as WorkflowStep["service"],
+              inputs,
+              outputVar: `result_${stepId}`,
+              dependsOn,
+              coveredOperationIds: [opId],
+              timeoutMs: 30000,
+              timeout: 30000,
+              retryPolicy: { maxRetries: 0, backoffMs: 0, idempotent: false },
+              failureBehavior: "abort",
+              onFailure: "abort",
+            };
+            currentPlan.steps.push(newStep);
+            appliedFixes.push(`Added step "${stepId}" covering operation "${opId}" (${operation.name}).`);
+          }
+          // Fix uncovered outputs
+          for (const outputName of [...coverage.uncoveredOutputNames].sort().slice(0, 1)) {
+            const req = currentPlan.workflowContract.outputRequirements.find((r) => r.name === outputName);
+            if (!req) continue;
+            const type = typeof req.type === "string" && req.type.length > 0 ? req.type : "string";
+            const description = typeof req.description === "string" && req.description.length > 0 ? req.description : `Output ${outputName} from ${req.sourceOperationId}`;
+            if (!currentPlan.outputSchema.properties) {
+              (currentPlan.outputSchema as unknown as { properties: Record<string, unknown> }).properties = {};
+            }
+            const props = currentPlan.outputSchema.properties as Record<string, unknown>;
+            const dataPropRaw = (props as Record<string, unknown>).data;
+            const dataProp = dataPropRaw && typeof dataPropRaw === "object" ? (dataPropRaw as Record<string, unknown>) : undefined;
+            let targetProperties: Record<string, Record<string, unknown>>;
+            if (dataProp && typeof dataProp.properties === "object" && dataProp.properties !== null) {
+              targetProperties = dataProp.properties as Record<string, Record<string, unknown>>;
+            } else {
+              targetProperties = props as unknown as Record<string, Record<string, unknown>>;
+            }
+            if (!targetProperties[outputName]) {
+              targetProperties[outputName] = { type, description } as unknown as Record<string, unknown>;
+              appliedFixes.push(`Added missing output "${outputName}" to outputSchema.`);
+            }
+            if (req.required) {
+              if (dataProp && Array.isArray(dataProp.required)) {
+                const arr = dataProp.required as string[];
+                if (!arr.includes(outputName)) arr.push(outputName);
+              } else if (Array.isArray((currentPlan.outputSchema as unknown as { required?: unknown }).required)) {
+                const arr = (currentPlan.outputSchema as unknown as { required: string[] }).required;
+                if (!arr.includes(outputName)) arr.push(outputName);
+              } else if (dataProp && typeof dataProp === "object") {
+                const existing = ((dataProp as unknown as { required?: string[] }).required ?? []) as string[];
+                (dataProp as unknown as { required: string[] }).required = [...existing, outputName];
+              }
+            }
+          }
+        }
+      }
+
+      // Re-generate schemas (contract-aware)
+      currentPlan.inputSchema = this.schemaGenerator.deriveInputSchema(currentPlan.variableInputs, currentPlan.workflowContract);
       currentPlan.outputSchema = this.schemaGenerator.deriveOutputSchema(
         undefined,
         currentPlan.steps,
         "workflow",
+        currentPlan.workflowContract,
       );
 
-      // Re-validate
+      // Recompute workflowCoverage after schema regeneration
+      if (currentPlan.workflowContract) {
+        try {
+          currentPlan.workflowCoverage = buildWorkflowCoverage(currentPlan.workflowContract, currentPlan.steps, currentPlan.outputSchema);
+        } catch {
+          // ignore
+        }
+      }
+
+      // Re-validate (includes coverage)
       validation = this.validateWorkflow(currentPlan, envelope);
       currentErrors = validation.errors;
     }
 
+    // Final coverage check for repaired status
+    let coverageComplete = true;
+    if (currentPlan.workflowContract) {
+      try {
+        const finalCoverage = buildWorkflowCoverage(currentPlan.workflowContract, currentPlan.steps, currentPlan.outputSchema);
+        if (finalCoverage) currentPlan.workflowCoverage = finalCoverage;
+        coverageComplete = finalCoverage ? finalCoverage.complete : false;
+      } catch {
+        coverageComplete = false;
+      }
+    }
+
     return {
       plan: currentPlan,
-      repaired: validation.valid,
+      repaired: validation.valid && coverageComplete,
       iterations,
       appliedFixes,
-      remainingErrors: validation.errors.length > 0 ? validation.errors : undefined,
+      remainingErrors: validation.valid && coverageComplete ? undefined : validation.errors,
     };
   }
 
@@ -575,7 +775,7 @@ export class WorkflowGenerator {
     code += `  description: ${JSON.stringify(plan.description)},\n`;
     code += `  async handler(input: ToolInput, context: ToolContext): Promise<ToolOutput> {\n`;
     code += `    const startTime = Date.now();\n`;
-    code += `    const { fs, net, cmd, secrets, progress, logger } = context;\n`;
+    code += `    const { broker, logger, progress } = context;\n`;
     code += `    const stepResults: Record<string, unknown> = {};\n`;
     code += `    const compensationStack: Array<() => Promise<void>> = [];\n\n`;
 
@@ -610,6 +810,9 @@ export class WorkflowGenerator {
 
       // Call broker action
       code += `            const res = await ${this.compileBrokerCall(step)};\n`;
+      if (step.action === "cmd.exec" || step.action === "exec") {
+        code += `            if (res.exitCode !== 0) throw new Error(String(res.stderr || "Command " + ${JSON.stringify(step.id)} + " failed with exit code " + res.exitCode));\n`;
+      }
       code += `            stepResults[${JSON.stringify(step.id)}] = res;\n`;
       code += `            stepSuccess = true;\n`;
 
@@ -725,11 +928,22 @@ export class WorkflowGenerator {
 
   private compileBrokerCall(step: WorkflowStep, customInputVar = "stepInput"): string {
     const action = step.action;
+    // For command execution, emit literal command/args when available so evidence coverage can be verified deterministically
+    if (action === "cmd.exec" || action === "exec") {
+      const rawCmd = (step.inputs as Record<string, unknown>).command;
+      const rawArgs = (step.inputs as Record<string, unknown>).args;
+      if (typeof rawCmd === "string" && Array.isArray(rawArgs) && rawArgs.every((a) => typeof a === "string")) {
+        return `broker.cmd.exec(${JSON.stringify(rawCmd)}, ${JSON.stringify(rawArgs)})`;
+      }
+      if (typeof rawCmd === "string" && rawArgs === undefined) {
+        return `broker.cmd.exec(${JSON.stringify(rawCmd)}, [])`;
+      }
+    }
     if (action === "fs.readFile" || action === "readFile") {
-      return `fs.readFile(${customInputVar}.path, ${customInputVar}.encoding)`;
+      return `broker.fs.readFile(${customInputVar}.path, ${customInputVar}.encoding)`;
     }
     if (action === "fs.writeFile" || action === "writeFile") {
-      return `fs.writeFile(${customInputVar}.path, ${customInputVar}.content)`;
+      return `broker.fs.writeFile(${customInputVar}.path, ${customInputVar}.content)`;
     }
     if (
       action === "fs.createDirectory" ||
@@ -737,25 +951,25 @@ export class WorkflowGenerator {
       action === "fs.mkdir" ||
       action === "mkdir"
     ) {
-      return `fs.mkdir(${customInputVar}.path, { recursive: ${customInputVar}.recursive ?? true })`;
+      return `broker.fs.createDirectory(${customInputVar}.path, { recursive: ${customInputVar}.recursive ?? true })`;
     }
     if (action === "fs.remove" || action === "remove" || action === "fs.delete") {
-      return `fs.remove(${customInputVar}.path, { recursive: ${customInputVar}.recursive ?? false })`;
+      return `broker.fs.remove(${customInputVar}.path, { recursive: ${customInputVar}.recursive ?? false })`;
     }
     if (action === "fs.copy" || action === "copy") {
-      return `fs.copy(${customInputVar}.source ?? ${customInputVar}.from, ${customInputVar}.destination ?? ${customInputVar}.to)`;
+      return `broker.fs.copy(${customInputVar}.source ?? ${customInputVar}.from, ${customInputVar}.destination ?? ${customInputVar}.to)`;
     }
     if (action === "fs.move" || action === "move") {
-      return `fs.move(${customInputVar}.source ?? ${customInputVar}.from, ${customInputVar}.destination ?? ${customInputVar}.to)`;
+      return `broker.fs.move(${customInputVar}.source ?? ${customInputVar}.from, ${customInputVar}.destination ?? ${customInputVar}.to)`;
     }
     if (action === "net.fetch" || action === "net.request") {
-      return `net.fetch(${customInputVar}.url, ${customInputVar})`;
+      return `broker.net.fetch(${customInputVar}.url, ${customInputVar})`;
     }
     if (action === "cmd.exec" || action === "exec") {
-      return `cmd.exec(${customInputVar}.command, ${customInputVar}.args ?? [])`;
+      return `broker.cmd.exec(${customInputVar}.command, ${customInputVar}.args ?? [])`;
     }
     if (action === "secrets.get" || action === "secret.get") {
-      return `secrets.get(${customInputVar}.name)`;
+      return `broker.secret.getSecretRef(${customInputVar}.name)`;
     }
 
     return `context.brokerHandler(${JSON.stringify(step.service ?? "compute")}, ${JSON.stringify(action)}, ${customInputVar})`;

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { CapabilityEnvelope } from "@tool-evolver/contracts";
-import type { OpportunityDetection } from "../../../src/evolution/opportunity/types.js";
+import type { OpportunityDetection, WorkflowContract } from "../../../src/evolution/opportunity/types.js";
 import type { TenantContext } from "../../../src/tenant.js";
 
 interface LegacyCapabilityOverrides {
@@ -213,4 +213,44 @@ export function createMockEnvelope(overrides: MockEnvelopeOverrides = {}): Capab
     createdAt: overrides.createdAt ?? new Date().toISOString(),
     updatedAt: overrides.updatedAt ?? new Date().toISOString(),
   };
+}
+
+export function createMockWorkflowContract(
+  overrides: Partial<WorkflowContract> = {},
+): WorkflowContract {
+  const baseOperations = overrides.operations ?? [
+    { id: "op_read", order: 0, name: "read files", toolClass: "file_read" as const },
+    { id: "op_edit", order: 1, name: "edit files", toolClass: "file_edit" as const },
+    { id: "op_test", order: 2, name: "run tests", toolClass: "test_runner" as const },
+  ];
+  const baseOutputs = overrides.outputRequirements ?? [
+    { name: "filesFormatted", sourceOperationId: "op_edit", type: "number", required: true, description: "Number of files formatted" },
+    { name: "testPassed", sourceOperationId: "op_test", type: "boolean", required: true, description: "Whether tests passed" },
+  ];
+  return {
+    version: 1,
+    operations: baseOperations,
+    requiredInputs: overrides.requiredInputs ?? [
+      { name: "path", type: "string", description: "Target directory path", required: true },
+      { name: "fix", type: "boolean", description: "Whether to apply fixes", required: false },
+    ],
+    outputRequirements: baseOutputs,
+    invariants: overrides.invariants ?? [],
+    expensiveOperationIds: overrides.expensiveOperationIds ?? [],
+    repeatedOperationIds: overrides.repeatedOperationIds ?? [],
+  };
+}
+
+export function createMockOpportunityWithContract(
+  contractOverrides: Partial<WorkflowContract> = {},
+  opportunityOverrides: Partial<OpportunityDetection> = {},
+): OpportunityDetection {
+  const contract = createMockWorkflowContract(contractOverrides);
+  return createMockOpportunity({
+    ...opportunityOverrides,
+    classification: {
+      ...opportunityOverrides.classification,
+      workflowContract: contract,
+    } as OpportunityDetection["classification"],
+  });
 }

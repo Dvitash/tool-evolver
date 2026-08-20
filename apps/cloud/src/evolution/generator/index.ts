@@ -13,3 +13,4 @@ export * from "./repair-orchestrator.js";
 export * from "./planner.js";
 export * from "./service.js";
 export * from "./repositories/index.js";
+export * from "./workflow-coverage.js";

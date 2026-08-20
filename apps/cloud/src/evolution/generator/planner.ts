@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { CapabilityEnvelope, ToolRuntimeRequirement } from "@tool-evolver/contracts";
+import type { CapabilityEnvelope, ToolOutputSchema, ToolRuntimeRequirement } from "@tool-evolver/contracts";
 import {
   type BrokeredToolPlanningOutput,
   BrokeredToolPlanningOutputSchema,
@@ -8,9 +8,10 @@ import {
 } from "../../models/prompt-registry.js";
 import type { InferenceService } from "../../models/service.js";
 import type { InferenceProvenance } from "../../models/types.js";
-import type { OpportunityDetection, WorkflowCluster } from "../opportunity/types.js";
+import type { OpportunityDetection, WorkflowCluster, WorkflowContract } from "../opportunity/types.js";
 import { CapabilityMapper } from "./capability-mapper.js";
 import { SchemaGenerator } from "./schema-generator.js";
+import { buildWorkflowCoverage } from "./workflow-coverage.js";
 import type {
   CandidatePlanningOptions,
   InvariantInputDefinition,
@@ -59,6 +60,7 @@ export class CandidatePlanner {
     options: CandidatePlanningOptions = {},
   ): Promise<ToolPlan> {
     const classification = opportunity.classification;
+    const contract = classification.workflowContract as WorkflowContract | undefined;
     const taskClass = classification.taskClass.toLowerCase();
     const isWorkflow =
       options.targetType === "workflow" ||
@@ -66,7 +68,8 @@ export class CandidatePlanner {
       taskClass === "multi_step" ||
       taskClass === "multi_step_workflow" ||
       classification.pattern.includes("->") ||
-      classification.pattern.includes("chained");
+      classification.pattern.includes("chained") ||
+      (contract !== undefined && contract.operations.length > 1);
 
     let inferenceOutput: CandidatePlanningOutput | BrokeredToolPlanningOutput | undefined;
     let provenance: InferenceProvenance | undefined;
@@ -74,16 +77,24 @@ export class CandidatePlanner {
     // 1. Inference-backed planning if inference service is supplied
     if (options.inferenceService) {
       try {
+        const inputs: Record<string, unknown> = {
+          opportunityId: opportunity.id,
+          classification: JSON.stringify(classification),
+          evidence: JSON.stringify(opportunity.evidenceEventIds || []),
+          capabilityEnvelope: JSON.stringify(options.envelope || {}),
+        };
+        if (contract) {
+          inputs.workflowContract = JSON.stringify(contract);
+          inputs.operations = JSON.stringify(contract.operations);
+          inputs.outputRequirements = JSON.stringify(contract.outputRequirements);
+          inputs.requiredInputs = JSON.stringify(contract.requiredInputs);
+          inputs.invariants = JSON.stringify(contract.invariants);
+        }
         const infRes = await options.inferenceService.infer<Record<string, unknown>, unknown>({
           promptTemplateId: "candidate_planning",
           tenantId: options.tenantId || "system",
           taskClass: "candidate_planning",
-          inputs: {
-            opportunityId: opportunity.id,
-            classification: JSON.stringify(classification),
-            evidence: JSON.stringify(opportunity.evidenceEventIds || []),
-            capabilityEnvelope: JSON.stringify(options.envelope || {}),
-          },
+          inputs,
         });
 
         if (infRes.output) {
@@ -152,17 +163,46 @@ export class CandidatePlanner {
       }
     }
 
+    // Contract: ensure requiredInputs from workflowContract are represented as variable inputs (if not already)
+    if (contract) {
+      for (const reqIn of contract.requiredInputs) {
+        const sanitized = this.sanitizeIdentifier(reqIn.name);
+        if (!variableInputs.some((v) => v.name === sanitized)) {
+          let t: VariableInputDefinition["type"] = "string";
+          if (reqIn.type === "number" || reqIn.type === "boolean" || reqIn.type === "array" || reqIn.type === "object") {
+            t = reqIn.type;
+          }
+          variableInputs.push({
+            name: sanitized,
+            type: t,
+            description: reqIn.description || `Parameter ${reqIn.name}`,
+            required: reqIn.required,
+            defaultValue: (reqIn as unknown as { default?: unknown }).default,
+          });
+        }
+      }
+    }
+
     // 4. Construct workflow steps
     const targetType: "single_tool" | "workflow" = isWorkflow ? "workflow" : "single_tool";
-    const steps = this.constructSteps(opportunity, targetType, variableInputs, options.envelope);
+    let steps: WorkflowStep[];
+    if (contract) {
+      steps = this.constructContractSteps(contract, variableInputs, options.envelope);
+    } else {
+      steps = this.constructSteps(opportunity, targetType, variableInputs, options.envelope);
+    }
 
     // 5. Derive schemas
-    const inputSchema = this.schemaGenerator.deriveInputSchema(variableInputs);
-    const outputSchema = this.schemaGenerator.deriveOutputSchema(
+    const inputSchema = this.schemaGenerator.deriveInputSchema(variableInputs, contract);
+    let outputSchema = this.schemaGenerator.deriveOutputSchema(
       classification.candidateOutputSchema,
       steps,
       targetType,
+      contract,
     );
+    if (contract) {
+      outputSchema = this.unionContractOutputs(outputSchema, contract);
+    }
 
     // 6. Map required capabilities using CapabilityMapper
     let capabilities = this.capabilityMapper.mapRequiredCapabilities(steps, options.envelope);
@@ -210,7 +250,12 @@ export class CandidatePlanner {
       maxOutputSizeBytes: 1048576,
     };
 
-    return {
+    let workflowCoverage: ToolPlan["workflowCoverage"] | undefined;
+    if (contract) {
+      workflowCoverage = buildWorkflowCoverage(contract, steps, outputSchema);
+    }
+
+    const plan: ToolPlan = {
       id: planId,
       planId,
       opportunityId: opportunity.id,
@@ -237,6 +282,13 @@ export class CandidatePlanner {
       },
       createdAt: opportunity.createdAt || new Date().toISOString(),
     };
+
+    if (contract) {
+      plan.workflowContract = contract;
+      plan.workflowCoverage = workflowCoverage;
+    }
+
+    return plan;
   }
 
   /**
@@ -247,6 +299,7 @@ export class CandidatePlanner {
     options: CandidatePlanningOptions = {},
   ): ToolPlan {
     const classification = opportunity.classification;
+    const contract = classification.workflowContract as WorkflowContract | undefined;
     const taskClass = classification.taskClass.toLowerCase();
     const isMultiStep =
       options.targetType === "workflow" ||
@@ -254,7 +307,8 @@ export class CandidatePlanner {
       taskClass === "multi_step" ||
       taskClass === "multi_step_workflow" ||
       classification.pattern.includes("->") ||
-      classification.pattern.includes("chained");
+      classification.pattern.includes("chained") ||
+      (contract !== undefined && contract.operations.length > 1);
 
     const targetType: "single_tool" | "workflow" = isMultiStep ? "workflow" : "single_tool";
 
@@ -270,14 +324,44 @@ export class CandidatePlanner {
       `Synthesized tool for ${classification.title} (${classification.pattern})`;
 
     const { variableInputs, invariantInputs } = this.extractInputs(opportunity, options.envelope);
-    const steps = this.constructSteps(opportunity, targetType, variableInputs, options.envelope);
 
-    const inputSchema = this.schemaGenerator.deriveInputSchema(variableInputs);
-    const outputSchema = this.schemaGenerator.deriveOutputSchema(
+    // Contract: ensure requiredInputs present
+    if (contract) {
+      for (const reqIn of contract.requiredInputs) {
+        const sanitized = this.sanitizeIdentifier(reqIn.name);
+        if (!variableInputs.some((v) => v.name === sanitized)) {
+          let t: VariableInputDefinition["type"] = "string";
+          if (reqIn.type === "number" || reqIn.type === "boolean" || reqIn.type === "array" || reqIn.type === "object") {
+            t = reqIn.type;
+          }
+          variableInputs.push({
+            name: sanitized,
+            type: t,
+            description: reqIn.description || `Parameter ${reqIn.name}`,
+            required: reqIn.required,
+            defaultValue: (reqIn as unknown as { default?: unknown }).default,
+          });
+        }
+      }
+    }
+
+    let steps: WorkflowStep[];
+    if (contract) {
+      steps = this.constructContractSteps(contract, variableInputs, options.envelope);
+    } else {
+      steps = this.constructSteps(opportunity, targetType, variableInputs, options.envelope);
+    }
+
+    const inputSchema = this.schemaGenerator.deriveInputSchema(variableInputs, contract);
+    let outputSchema = this.schemaGenerator.deriveOutputSchema(
       classification.candidateOutputSchema,
       steps,
       targetType,
+      contract,
     );
+    if (contract) {
+      outputSchema = this.unionContractOutputs(outputSchema, contract);
+    }
 
     let capabilities = this.capabilityMapper.mapRequiredCapabilities(steps, options.envelope);
     if (options.envelope) {
@@ -322,7 +406,12 @@ export class CandidatePlanner {
       maxOutputSizeBytes: 1048576,
     };
 
-    return {
+    let workflowCoverage: ToolPlan["workflowCoverage"] | undefined;
+    if (contract) {
+      workflowCoverage = buildWorkflowCoverage(contract, steps, outputSchema);
+    }
+
+    const plan: ToolPlan = {
       id: planId,
       planId,
       opportunityId: opportunity.id,
@@ -348,6 +437,13 @@ export class CandidatePlanner {
       },
       createdAt: opportunity.createdAt || new Date().toISOString(),
     };
+
+    if (contract) {
+      plan.workflowContract = contract;
+      plan.workflowCoverage = workflowCoverage;
+    }
+
+    return plan;
   }
 
   /**
@@ -832,6 +928,244 @@ export class CandidatePlanner {
     ];
   }
 
+  private constructContractSteps(
+    contract: WorkflowContract,
+    variableInputs: VariableInputDefinition[],
+    envelope?: CapabilityEnvelope,
+  ): WorkflowStep[] {
+    const sortedOps = [...contract.operations].sort((a, b) => a.order - b.order);
+    const steps: WorkflowStep[] = [];
+
+    for (let idx = 0; idx < sortedOps.length; idx++) {
+      const op = sortedOps[idx]!;
+      const stepId = `step_${op.id}`;
+      const previousId = idx > 0 ? `step_${sortedOps[idx - 1]!.id}` : undefined;
+      const dependsOn = previousId ? [previousId] : [];
+
+      const { toolClass, action, service, inputs } = this.mapOperationToStepDetails(op, variableInputs, envelope);
+
+      steps.push({
+        id: stepId,
+        name: op.name,
+        description: `Execute ${op.name} (${op.id})`,
+        toolClass,
+        action,
+        service,
+        inputs,
+        dependsOn,
+        outputVar: `result_${op.id}`,
+        coveredOperationIds: [op.id],
+      });
+    }
+
+    return steps;
+  }
+
+  private mapOperationToStepDetails(
+    op: WorkflowContract["operations"][number],
+    variableInputs: VariableInputDefinition[],
+    envelope?: CapabilityEnvelope,
+  ): { toolClass: string; action: string; service: WorkflowStep["service"]; inputs: Record<string, unknown> } {
+    const inputs: Record<string, unknown> = {};
+
+    // Prefer explicit commandProfile
+    if (op.commandProfile) {
+      const [executable, ...args] = op.commandProfile.trim().split(/\s+/);
+      return {
+        toolClass: op.toolClass || "command",
+        action: "cmd.exec",
+        service: "cmd",
+        inputs: {
+          command: executable,
+          args,
+          commandProfile: op.commandProfile,
+          toolClass: op.toolClass || "command",
+        },
+      };
+    }
+
+    const toolClassFromOp = op.toolClass || "compute";
+    const lowerName = op.name.toLowerCase();
+
+    // File read / edit
+    if (toolClassFromOp === "file_read" || toolClassFromOp === "file_edit" || (toolClassFromOp as string) === "filesystem" || (toolClassFromOp as string) === "fs") {
+      const isWrite = toolClassFromOp === "file_edit" || lowerName.includes("edit") || lowerName.includes("write") || lowerName.includes("file_edit");
+      if (isWrite) {
+        // Prefer variableInputs for path/content
+        const pathVar = variableInputs.find((v) => v.name === "path") ? "${input.path}" : "./data.txt";
+        const contentVar = variableInputs.find((v) => v.name === "content") ? "${input.content}" : "${input.input}";
+        inputs.path = pathVar;
+        inputs.content = contentVar;
+        inputs.toolClass = "filesystem";
+        return { toolClass: "filesystem", action: "fs.writeFile", service: "fs", inputs };
+      } else {
+        const pathVar = variableInputs.find((v) => v.name === "path") ? "${input.path}" : "./data.txt";
+        inputs.path = pathVar;
+        inputs.toolClass = "filesystem";
+        return { toolClass: "filesystem", action: "fs.readFile", service: "fs", inputs };
+      }
+    }
+
+    if (toolClassFromOp === "search") {
+      inputs.query = variableInputs.find((v) => v.name === "query") ? "${input.query}" : "${input.input}";
+      return { toolClass: "search", action: "search.query", service: "compute", inputs };
+    }
+
+    if (toolClassFromOp === "test_runner") {
+      return { toolClass: "test_runner", action: "cmd.exec", service: "cmd", inputs: { command: "pnpm", args: ["test"], toolClass: "test_runner" } };
+    }
+
+    if (toolClassFromOp === "build_tool") {
+      return { toolClass: "build_tool", action: "cmd.exec", service: "cmd", inputs: { command: "pnpm", args: ["build"], toolClass: "build_tool" } };
+    }
+
+    if (toolClassFromOp === "vcs") {
+      // Fallback vcs without profile -> git status
+      return { toolClass: "vcs", action: "cmd.exec", service: "cmd", inputs: { command: "git", args: ["status"], toolClass: "vcs" } };
+    }
+
+    if (toolClassFromOp === "network" || (toolClassFromOp as string) === "http" || (toolClassFromOp as string) === "api") {
+      inputs.url = variableInputs.find((v) => v.name === "url") ? "${input.url}" : "https://api.example.com";
+      inputs.toolClass = "network";
+      return { toolClass: "network", action: "net.fetch", service: "net", inputs };
+    }
+
+    if (toolClassFromOp === "shell_exec" || (toolClassFromOp as string) === "command") {
+      return { toolClass: "command", action: "cmd.exec", service: "cmd", inputs: { command: "echo", args: ["hello"], toolClass: "command" } };
+    }
+
+    // Fallback based on operation name
+    if (lowerName.includes("read") || lowerName.includes("fs.read")) {
+      inputs.path = "${input.path}";
+      return { toolClass: "filesystem", action: "fs.readFile", service: "fs", inputs };
+    }
+    if (lowerName.includes("edit") || lowerName.includes("write") || lowerName.includes("file_edit")) {
+      inputs.path = "${input.path}";
+      inputs.content = "${input.content}";
+      return { toolClass: "filesystem", action: "fs.writeFile", service: "fs", inputs };
+    }
+    if (lowerName.includes("search")) {
+      inputs.query = "${input.query}";
+      return { toolClass: "search", action: "search.query", service: "compute", inputs };
+    }
+    if (lowerName.includes("test")) {
+      return { toolClass: "test_runner", action: "cmd.exec", service: "cmd", inputs: { command: "pnpm", args: ["test"] } };
+    }
+    if (lowerName.includes("build")) {
+      return { toolClass: "build_tool", action: "cmd.exec", service: "cmd", inputs: { command: "pnpm", args: ["build"] } };
+    }
+    if (lowerName.includes("git") || lowerName.includes("command") || lowerName.startsWith("cmd:") || lowerName.startsWith("command:")) {
+      const cmd = op.name.replace(/^(cmd|command|tool):/, "").trim() || "git status";
+      const [exe, ...a] = cmd.split(/\s+/);
+      return { toolClass: "command", action: "cmd.exec", service: "cmd", inputs: { command: exe || "git", args: a, commandProfile: cmd } };
+    }
+    if (lowerName.includes("net") || lowerName.includes("fetch") || lowerName.includes("http")) {
+      inputs.url = "${input.url}";
+      return { toolClass: "network", action: "net.fetch", service: "net", inputs };
+    }
+
+    // Generic compute fallback
+    return { toolClass: toolClassFromOp, action: "compute.transform", service: "compute", inputs: { data: "${input.input}" } };
+  }
+
+  private unionContractOutputs(outputSchema: ToolOutputSchema, contract: WorkflowContract): ToolOutputSchema {
+    const originalProps = (outputSchema.properties as Record<string, Record<string, unknown>> | undefined) ?? {};
+    const baseProps: Record<string, Record<string, unknown>> = { ...originalProps };
+    // Determine data envelope target for strict contract shape {success, data, error}
+    let dataTarget: Record<string, Record<string, unknown>> | undefined;
+    const dataPropRaw = baseProps.data as unknown as Record<string, unknown> | undefined;
+    if (dataPropRaw && typeof dataPropRaw === "object" && dataPropRaw !== null) {
+      const dp = dataPropRaw as Record<string, unknown>;
+      if (dp.properties && typeof dp.properties === "object" && dp.properties !== null) {
+        dataTarget = dp.properties as Record<string, Record<string, unknown>>;
+      } else {
+        dataTarget = {};
+        dp.properties = dataTarget as unknown as Record<string, unknown>;
+        if (!dp.type) dp.type = "object";
+        if (!dp.description) dp.description = "Result data payload";
+      }
+    } else if (originalProps.success && originalProps.error) {
+      // Envelope expected but data missing — create it lazily
+      dataTarget = {};
+      baseProps.data = { type: "object", description: "Result data payload", properties: dataTarget } as unknown as Record<string, unknown>;
+    }
+    for (const req of contract.outputRequirements) {
+      const entry = {
+        type: req.type,
+        description: req.description || `Output ${req.name} from ${req.sourceOperationId}`,
+      };
+      // Top-level union for legacy planner tests (properties[req.name])
+      if (!(req.name in baseProps)) {
+        baseProps[req.name] = { ...entry };
+      } else {
+        const existing = baseProps[req.name] as Record<string, unknown>;
+        if (existing.type !== req.type) {
+          existing.type = req.type;
+        }
+        if (!existing.description && req.description) {
+          existing.description = req.description;
+        }
+      }
+      // Data envelope union — required for strict coverage path `properties.data.properties.<name>`
+      if (dataTarget) {
+        if (!(req.name in dataTarget)) {
+          dataTarget[req.name] = { ...entry };
+        } else {
+          const existingData = dataTarget[req.name] as Record<string, unknown>;
+          if (existingData.type !== req.type) {
+            existingData.type = req.type;
+          }
+          if (!existingData.description && req.description) {
+            existingData.description = req.description;
+          }
+        }
+      } else {
+        // No envelope yet — ensure data envelope exists and place entry there as well
+        if (!baseProps.data) {
+          const newDataProps: Record<string, Record<string, unknown>> = { [req.name]: { ...entry } };
+          baseProps.data = { type: "object", description: "Result data payload", properties: newDataProps } as unknown as Record<string, unknown>;
+          dataTarget = newDataProps;
+        }
+      }
+    }
+    // Also ensure schema passthrough reflects union if present
+    let schemaField: Record<string, unknown> | undefined;
+    if (outputSchema.schema && typeof outputSchema.schema === "object") {
+      schemaField = { ...(outputSchema.schema as Record<string, unknown>) };
+      const schemaProps = schemaField.properties as Record<string, Record<string, unknown>> | undefined;
+      if (schemaProps) {
+        for (const req of contract.outputRequirements) {
+          if (!(req.name in schemaProps)) {
+            schemaProps[req.name] = { type: req.type, description: req.description } as Record<string, unknown>;
+          }
+          const sData = (schemaProps as unknown as Record<string, unknown>).data as Record<string, unknown> | undefined;
+          if (sData && typeof sData === "object") {
+            const sDataRecord = sData as Record<string, unknown>;
+            if (sDataRecord.properties && typeof sDataRecord.properties === "object") {
+              const sDataProps = sDataRecord.properties as Record<string, Record<string, unknown>>;
+              if (!(req.name in sDataProps)) {
+                sDataProps[req.name] = { type: req.type, description: req.description } as Record<string, unknown>;
+              }
+            }
+          }
+        }
+      } else {
+        const newProps: Record<string, Record<string, unknown>> = {};
+        for (const req of contract.outputRequirements) {
+          newProps[req.name] = { type: req.type, description: req.description } as Record<string, unknown>;
+        }
+        schemaField.properties = newProps as unknown as Record<string, unknown>;
+      }
+    }
+    const result: ToolOutputSchema = {
+      ...outputSchema,
+      properties: baseProps,
+    };
+    if (schemaField) {
+      result.schema = schemaField;
+    }
+    return result;
+  }
   private sanitizeIdentifier(name: string): string {
     const cleaned = name
       .toLowerCase()

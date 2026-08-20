@@ -83,6 +83,170 @@ describe("SchemaGenerator", () => {
   });
 });
 
+
+describe("contract-aware schema generation - deterministic merge", () => {
+  it("repairs missing required outputs omitted by model via deterministic merge", async () => {
+    const contract = {
+      version: 1 as const,
+      operations: [
+        { id: "op_0", order: 0, name: "search:find" },
+        { id: "op_1", order: 1, name: "file_read:read" },
+      ],
+      requiredInputs: [
+        { name: "query", type: "string", description: "search query", required: true },
+      ],
+      outputRequirements: [
+        { name: "op0_search_result", sourceOperationId: "op_0", type: "object", required: true, description: "Search output" },
+        { name: "op1_file_content", sourceOperationId: "op_1", type: "string", required: true, description: "File content" },
+        { name: "final_summary", sourceOperationId: "op_1", type: "string", required: true, description: "Summary" },
+      ],
+      invariants: [],
+      expensiveOperationIds: [],
+      repeatedOperationIds: [],
+    };
+    // Model omits final_summary and op1_file_content
+    const inferenceService = {
+      infer: async () => ({
+        output: {
+          toolName: "workflow_tool",
+          description: "test",
+          parameters: [{ name: "query", type: "string", description: "query", required: true }],
+          outputSchema: {
+            type: "object",
+            description: "Result",
+            properties: {
+              op0_search_result: { type: "object", description: "inferred search" },
+              // missing op1_file_content and final_summary
+            },
+            required: ["op0_search_result"],
+          },
+        },
+        provenance: {},
+      }),
+    } as unknown as import("../../../src/models/service.js").InferenceService;
+    const generator = new SchemaGenerator();
+    const result = await generator.deriveSchemasAsync({
+      toolName: "workflow_tool",
+      description: "test",
+      variableInputs: [{ name: "query", type: "string", description: "search query", required: true }],
+      workflowContract: contract,
+      inferenceService: inferenceService as never,
+    });
+    const dataProps = (result.outputSchema.properties?.data as any)?.properties as Record<string, unknown>;
+    expect(dataProps.op0_search_result).toBeDefined();
+    expect(dataProps.op1_file_content).toBeDefined();
+    expect(dataProps.final_summary).toBeDefined();
+    expect((dataProps.op1_file_content as any).type).toBe("string");
+    // Required outputs are represented by property presence, not a `required` array
+    expect((result.outputSchema as any).required).toBeUndefined();
+  });
+
+  it("conflicting inferred fields cannot erase required contract outputs and preserves contract requiredness", async () => {
+    const contract = {
+      version: 1 as const,
+      operations: [{ id: "op_0", order: 0, name: "compute:transform" }],
+      requiredInputs: [],
+      outputRequirements: [
+        { name: "must_have", sourceOperationId: "op_0", type: "string", required: true, description: "Required output" },
+      ],
+      invariants: [],
+      expensiveOperationIds: [],
+      repeatedOperationIds: [],
+    };
+    const inferenceService = {
+      infer: async () => ({
+        output: {
+          toolName: "t",
+          description: "d",
+          parameters: [],
+          outputSchema: {
+            type: "object",
+            description: "Result",
+            properties: {
+              must_have: { type: "number", description: "inferred as number - conflict" },
+              extra_inferred: { type: "string", description: "extra" },
+            },
+            required: [], // model incorrectly omits required
+          },
+        },
+        provenance: {},
+      }),
+    } as unknown as import("../../../src/models/service.js").InferenceService;
+    const generator = new SchemaGenerator();
+    const result = await generator.deriveSchemasAsync({
+      toolName: "t",
+      description: "d",
+      variableInputs: [],
+      workflowContract: contract,
+      inferenceService: inferenceService as never,
+    });
+    const dataProps = (result.outputSchema.properties?.data as any)?.properties as Record<string, unknown>;
+    // Must still have must_have and preserve inferred compatible schema (type number retained conservatively)
+    expect(dataProps.must_have).toBeDefined();
+    // Extra inferred field should remain (union)
+    expect(dataProps.extra_inferred).toBeDefined();
+    // Contract requiredness represented by property presence, conservative type preservation
+    expect((dataProps.must_have as any).type).toBe("number");
+    expect((result.outputSchema as any).required).toBeUndefined();
+  });
+
+  it("includes requiredInputs from contract even when variableInputs missing them", async () => {
+    const contract = {
+      version: 1 as const,
+      operations: [{ id: "op_0", order: 0, name: "file_read:read" }],
+      requiredInputs: [
+        { name: "filePath", type: "string", description: "Target", required: true },
+        { name: "encoding", type: "string", description: "Encoding", required: true },
+      ],
+      outputRequirements: [],
+      invariants: [],
+      expensiveOperationIds: [],
+      repeatedOperationIds: [],
+    };
+    const inferenceService = {
+      infer: async () => ({
+        output: {
+          toolName: "t",
+          description: "d",
+          parameters: [{ name: "filePath", type: "string", description: "inferred", required: true }],
+          outputSchema: { type: "object", properties: {}, required: [] },
+        },
+        provenance: {},
+      }),
+    } as unknown as import("../../../src/models/service.js").InferenceService;
+    const generator = new SchemaGenerator();
+    const result = await generator.deriveSchemasAsync({
+      toolName: "t",
+      description: "d",
+      variableInputs: [{ name: "filePath", type: "string", description: "Target", required: true }],
+      workflowContract: contract,
+      inferenceService: inferenceService as never,
+    });
+    expect(result.inputSchema.properties.filePath).toBeDefined();
+    expect(result.inputSchema.properties.encoding).toBeDefined();
+    expect(result.inputSchema.required).toEqual(expect.arrayContaining(["filePath", "encoding"]));
+  });
+
+  it("fallback without inference still merges contract outputs deterministically", () => {
+    const contract = {
+      version: 1 as const,
+      operations: [{ id: "op_0", order: 0, name: "test:run" }],
+      requiredInputs: [],
+      outputRequirements: [
+        { name: "test_result", sourceOperationId: "op_0", type: "object", required: true, description: "Test outcome" },
+      ],
+      invariants: [],
+      expensiveOperationIds: [],
+      repeatedOperationIds: [],
+    };
+    const generator = new SchemaGenerator();
+    const out = generator.deriveOutputSchema(undefined, undefined, undefined, contract);
+    const data = (out.properties?.data as any);
+    expect(data.properties.test_result).toBeDefined();
+    expect((out as any).required).toBeUndefined();
+  });
+});
+
 describe("structured schema authority intersection", () => {
   it("ignores model-invented inputs that were not observed", async () => {
     const inferenceService = {

@@ -1,3 +1,4 @@
+import type { WorkflowContract } from "../opportunity/types.js";
 import {
   CandidateTriggerReason,
   type CapabilityEnvelope,
@@ -75,6 +76,7 @@ export interface WorkflowStep {
   failureBehavior?: "abort" | "continue" | "compensate" | "fail";
   onFailure?: "abort" | "continue" | "compensate" | "fail";
   condition?: string;
+  coveredOperationIds?: string[];
 }
 /**
  * Single runtime requirement item.
@@ -115,9 +117,24 @@ export interface ToolPlan {
     enabled: boolean;
     autoRollback: boolean;
   };
+  workflowContract?: WorkflowContract;
+  workflowCoverage?: WorkflowCoverage;
   metadata: Record<string, unknown>;
   createdAt: string;
 }
+
+/**
+ * Deterministic coverage of a WorkflowContract by a ToolPlan.
+ * Complete only when every contract operation and required output is represented.
+ */
+export interface WorkflowCoverage {
+  operationCoverage: { operationId: string; stepIds: string[] }[];
+  outputCoverage: { outputName: string; schemaPaths: string[]; sourceOperationIds: string[] }[];
+  uncoveredOperationIds: string[];
+  uncoveredOutputNames: string[];
+  complete: boolean;
+}
+
 
 /**
  * Workflow validation output.
