@@ -230,7 +230,7 @@ def summarize(rows):
     for r in rows:
         key = (r["cell"], r["model"], r["prompt"], r.get("xdev", True))
         by.setdefault(key, []).append(r)
-    lines = ["cell | model | prompt | xdev | n | adopt | bash_mean | input_mean | firstCache_mean | cold_n | turns_mean"]
+    lines = ["cell | model | prompt | xdev | n | adopt | bash_mean | input_mean | firstCache_mean | cold_n | turns_mean | wall_mean | toolTime_mean | evolvedTime_mean"]
     for key, rs in by.items():
         cell, model, prompt, xdev = key
         n = len(rs)
@@ -241,7 +241,10 @@ def summarize(rows):
             f"{mean([r['metrics']['inputTokens'] for r in rs])} | "
             f"{mean([r['metrics']['firstCacheReadTokens'] for r in rs])} | "
             f"{sum(1 for r in rs if r['metrics']['coldCache'])}/{n} | "
-            f"{mean([r['metrics']['turns'] for r in rs])}"
+            f"{mean([r['metrics']['turns'] for r in rs])} | "
+            f"{mean([r['metrics'].get('wallSeconds') for r in rs if r['metrics'].get('wallSeconds') is not None])} | "
+            f"{mean([r['metrics'].get('toolTimeSeconds', 0) for r in rs])} | "
+            f"{mean([r['metrics'].get('evolvedTimeSeconds', 0) for r in rs])}"
         )
     return "\n".join(lines)
 
