@@ -211,13 +211,13 @@ def run_one(cell, shim, instr, prompt_name, model, rep, instructions):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=3)
-    ap.add_argument("--model", default="gemini-3.7-flash")
-    ap.add_argument("--replicate-model", default="gpt-5-mini",
+    ap.add_argument("--model", default="opencode-go/muse-spark-1.2-contributor")
+    ap.add_argument("--replicate-model", default="",
                     help="Second model for the both-cell replication. Empty to skip.")
     ap.add_argument("--skip-hostile", action="store_true")
     ap.add_argument("--cells", default="ctrl,shim,instr,both",
                     help="Comma subset of factorial cell names")
-    ap.add_argument("--jobs", type=int, default=6,
+    ap.add_argument("--jobs", type=int, default=12,
                     help="Parallel omp processes. Isolated via --profile + per-run cwd.")
     args = ap.parse_args()
     wanted = {c.strip() for c in args.cells.split(",") if c.strip()}

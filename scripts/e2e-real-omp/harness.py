@@ -173,7 +173,7 @@ def run_metrics(path):
             "evolvedCalls": evolved, "toolErrors": errors}
 
 
-def omp_argv(prompt, model="gemini-3.7-flash", profile=None):
+def omp_argv(prompt, model="opencode-go/muse-spark-1.2-contributor", profile=None):
     """Headless argv with prompt-cache isolation (no --no-cache exists)."""
     argv = ["omp", "-p", "--mode", "json", "--model", model,
             "--approval-mode=yolo", "--no-session", "--no-title"]
