@@ -3,7 +3,7 @@
 // Loads /tmp/te-omp-runs/e2e/tools/manifest.json; each entry points at a
 // generated tool module (TS) with a default export from defineTool({...}).
 
-import { appendFileSync } from "node:fs";
+import { appendFileSync, realpathSync } from "node:fs";
 const rpcLog = (m) => { try { appendFileSync("/tmp/te-proxy/rpc.log", new Date().toISOString() + " " + JSON.stringify(m && {id:m.id, method:m.method}) + "\n"); } catch {} };
 appendFileSync("/tmp/te-proxy/spawned.log", new Date().toISOString() + " shim spawned\n");
 import { createInterface } from "node:readline";
@@ -16,7 +16,15 @@ const SDK = "file:///home/dvitash/Projects/tool-evolver/packages/runtime/dist/wo
 const { createToolContext } = await import(SDK);
 
 const MANIFEST_PATH = "/tmp/te-omp-runs/e2e/tools/manifest.json";
-const WORKSPACE = "/tmp/te-omp-bench2";
+const WORKSPACE = (() => {
+  const raw = process.env.TE_MCP_WORKSPACE ?? "";
+  const override = raw.trim();
+  if (override) return path.resolve(override);
+  return process.cwd();
+})();
+const WORKSPACE_REAL = (() => {
+  try { return realpathSync(WORKSPACE); } catch { return WORKSPACE; }
+})();
 
 let manifest = { tools: [] };
 try {
@@ -44,6 +52,26 @@ function resolveWithin(p) {
   const abs = path.resolve(WORKSPACE, p ?? ".");
   if (abs !== WORKSPACE && !abs.startsWith(WORKSPACE + path.sep)) {
     throw new Error(`fs denied outside workspace: ${p}`);
+  }
+  let existing = abs;
+  let rest = "";
+  while (true) {
+    try {
+      const real = realpathSync(existing);
+      const targetReal = rest ? path.join(real, rest) : real;
+      const resolved = path.resolve(targetReal);
+      if (resolved !== WORKSPACE_REAL && !resolved.startsWith(WORKSPACE_REAL + path.sep)) {
+        throw new Error(`fs denied outside workspace: ${p}`);
+      }
+      break;
+    } catch (err) {
+      if (err.message && err.message.includes("fs denied outside workspace")) throw err;
+      if (err.code && err.code !== "ENOENT") throw err;
+      const parent = path.dirname(existing);
+      if (parent === existing) break;
+      rest = path.join(path.basename(existing), rest);
+      existing = parent;
+    }
   }
   return abs;
 }
@@ -101,11 +129,30 @@ function brokerHandler(family, action, payload) {
     if (!ALLOWED_CMD.has(exe)) {
       return Promise.reject(new Error(`broker denied: cmd:${action} ${exe}`));
     }
+    let cwd;
+    try {
+      cwd = payload?.cwd ? resolveWithin(payload.cwd) : WORKSPACE;
+    } catch (err) {
+      return Promise.reject(err);
+    }
+    for (const a of payload?.args ?? []) {
+      if (typeof a !== "string") continue;
+      if (a.startsWith("-")) continue;
+      const segments = a.split(/[/\\]/);
+      const hasDotDot = segments.includes("..");
+      const isPathLike = path.isAbsolute(a) || a.includes("/") || a.includes("\\") || a === "." || a === ".." || hasDotDot;
+      if (!isPathLike) continue;
+      try {
+        resolveWithin(a);
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    }
     return new Promise((resolve) => {
       execFile(
         exe,
         payload?.args ?? [],
-        { cwd: payload?.cwd ?? WORKSPACE, maxBuffer: 64 * 1024 * 1024 },
+        { cwd, maxBuffer: 64 * 1024 * 1024 },
         (err, stdout, stderr) => {
           resolve({
             stdout: String(stdout),
@@ -122,10 +169,15 @@ function brokerHandler(family, action, payload) {
 
 async function callTool(name, args) {
   const t = tools.get(name);
-  const input = args && Object.keys(args).length > 0 ? args : { path: WORKSPACE };
+  const rawInput = args && Object.keys(args).length > 0 ? args : { path: WORKSPACE };
+  let safeRoot = WORKSPACE;
+  if (rawInput.path != null) {
+    safeRoot = resolveWithin(String(rawInput.path));
+  }
+  const input = { ...rawInput, path: safeRoot };
   const ctx = createToolContext(input, {
     invocationId: `mcp-${Date.now()}`,
-    workspaceRoot: input.path ?? WORKSPACE,
+    workspaceRoot: safeRoot,
     brokerHandler,
   });
   // Compatibility aliases for generated code written against either cmd API name.
