@@ -14,6 +14,7 @@ Writes artifacts under /tmp/te-omp-runs/e2e/probe/.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import random
@@ -135,6 +136,31 @@ def mcp_payload(shim: bool) -> dict:
     return {
         "$schema": "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json",
         "mcpServers": servers,
+    }
+
+
+def tool_provenance() -> dict | None:
+    if not H.MANIFEST.is_file():
+        return None
+    manifest_bytes = H.MANIFEST.read_bytes()
+    manifest = json.loads(manifest_bytes)
+    entry = next(
+        (item for item in manifest.get("tools", []) if item.get("name") == TOOL),
+        None,
+    )
+    if not entry:
+        return None
+    source_path = Path(entry.get("file", ""))
+    source_digest = (
+        hashlib.sha256(source_path.read_bytes()).hexdigest()
+        if source_path.is_file()
+        else None
+    )
+    return {
+        "candidateId": entry.get("candidateId"),
+        "manifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        "sourceSha256": source_digest,
+        "catalogWorkspaceId": catalog_headers().get("x-workspace-id"),
     }
 
 
@@ -434,7 +460,8 @@ def run_one(cell, shim, instr, prompt_name, model, rep, instructions, xdev=True)
     row = {
         "id": run_id, "cell": cell, "shim": shim, "instructions": instr,
         "xdev": xdev, "prompt": prompt_name, "model": model, "rep": rep,
-        "profile": cfg_root, "workdir": str(work), "metrics": m,
+        "profile": cfg_root, "workdir": str(work),
+        "toolProvenance": tool_provenance(), "metrics": m,
     }
     (OUT / f"{run_id}.json").write_text(json.dumps(row, indent=2))
     H.log(f"{run_id}: exit={p.returncode} dur={dur}s evolved={m['evolvedCalls']} "
