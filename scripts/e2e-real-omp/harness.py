@@ -152,6 +152,8 @@ def run_metrics(path):
     pending = set()
     tool_time = 0.0
     evolved_time = 0.0
+    evolved_attempts = 0
+    evolved_successes = 0
 
     def is_evolved_start(ev):
         tn = ev.get("toolName") or ""
@@ -213,8 +215,15 @@ def run_metrics(path):
                     and str(args.get("path", "")).startswith("xd://mcp__"):
                 tools["xd-mcp-invoke"] += 1
             cid = e.get("toolCallId")
+            evolved_start = is_evolved_start(e)
+            if evolved_start:
+                evolved_attempts += 1
             if cid:
-                starts_by_id[cid] = {"ts": e.get("timestamp"), "is_evolved": is_evolved_start(e), "toolName": e.get("toolName")}
+                starts_by_id[cid] = {
+                    "ts": e.get("timestamp"),
+                    "is_evolved": evolved_start,
+                    "toolName": e.get("toolName"),
+                }
                 starts_order.append(cid)
                 pending.add(cid)
         elif t == "tool_execution_end":
@@ -232,10 +241,12 @@ def run_metrics(path):
                         matched_cid = cand
                         break
             if start_info is not None:
+                if start_info.get("is_evolved") and not e.get("isError"):
+                    evolved_successes += 1
                 dur = duration_seconds(start_info, e)
                 if dur is not None:
                     tool_time += dur
-                    if start_info.get("is_evolved"):
+                    if start_info.get("is_evolved") and not e.get("isError"):
                         evolved_time += dur
                 if matched_cid in pending:
                     pending.remove(matched_cid)
@@ -310,20 +321,18 @@ def run_metrics(path):
                     "(~159k, contributor median) and labeled via "
                     "inputTokensIsEstimated.").format(fallback_model)
     bash = tools.get("bash", 0)
-    # Adopted evolved-tool invocations, both transport modes:
-    #   xdev:true  -> write {"path": "xd://mcp__tool_evolver_gateway_*"}
-    #   xdev:false -> direct first-class call named mcp__tool_evolver_gateway_*
-    xd_invoke = tools.get("xd-mcp-invoke", 0)
-    direct = sum(v for k, v in tools.items()
-                 if k and k.startswith("mcp__tool_evolver_gateway_"))
-    evolved = (sum(v for k, v in tools.items() if k and "evolved" in k)
-               + xd_invoke + direct)
+    # Adoption is a completed evolved-tool invocation, not merely an attempted
+    # call. Instruction-only cells can hallucinate an unmounted xd:// device;
+    # retain those separately as attempts/failures.
+    evolved_failures = evolved_attempts - evolved_successes
     first = 0 if first_cache_read is None else first_cache_read
     return {"inputTokens": usage_in, "outputTokens": usage_out,
             "cacheReadTokens": cache_read, "firstCacheReadTokens": first,
             "coldCache": first == 0, "turns": turns,
             "toolCalls": dict(tools), "bashCalls": bash,
-            "evolvedCalls": evolved, "toolErrors": errors,
+            "evolvedCalls": evolved_successes,
+            "evolvedAttempts": evolved_attempts,
+            "evolvedFailures": evolved_failures, "toolErrors": errors,
             "toolTimeSeconds": round(float(tool_time), 3),
             "evolvedTimeSeconds": round(float(evolved_time), 3),
             "inputTokensRaw": input_raw,
