@@ -3,6 +3,8 @@
  *
  * Orchestrates in-memory CloudService, LocalStateStore, LocalDaemon,
  * LocalMcpGateway, and HarnessAdapters with a deterministic clock and fake inference.
+ * Lifecycle replay flows through HistoricalReplayService with explicit WorkloadBenchmarkComparison
+ * rows (small/medium/large) supplied via HistoricalReplayOptions for hard-gate evaluation.
  */
 
 import { ClaudeHarnessAdapter } from "@tool-evolver/adapter-claude-code";
@@ -11,6 +13,7 @@ import { OmpHarnessAdapter } from "@tool-evolver/adapter-omp";
 import {
   type CloudService,
   FakeModelProvider,
+  HmacBenchmarkEvidenceVerifier,
   type ProviderExecutionRequest,
   type TenantContext,
   createCloudService,
@@ -135,11 +138,18 @@ export class HermeticE2EEnvironment {
     });
     this.seedDefaultModelResponses();
 
-    // 2. Setup Cloud Service in-memory
+    // 2. Setup Cloud Service in-memory with deterministic benchmark attestation verifier (secret never logged)
+    const e2eBenchmarkSecret = "e2e-deterministic-hmac-secret-32-bytes-long-2024!!";
+    const e2eBenchmarkVerifier = new HmacBenchmarkEvidenceVerifier({
+      issuer: "e2e-test-issuer",
+      keyId: "e2e-test-key-1",
+      secret: e2eBenchmarkSecret,
+    });
     this.cloudService = createCloudService({
       config: {
         server: { port: 0 },
       },
+      benchmarkEvidenceVerifier: e2eBenchmarkVerifier,
     });
     await this.cloudService.initialize();
 

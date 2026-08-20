@@ -395,4 +395,269 @@ describe("CandidatePlanner", () => {
     expect(plan.steps[0]!.coveredOperationIds).toEqual(["op_0"]);
     expect(plan.outputSchema.properties?.op0_tool_read_file_result).toBeDefined();
   });
+
+  it("should keep read then git status in order with correct command only on git and no cross-assignment or fallback", () => {
+    const contract: WorkflowContract = {
+      version: 1,
+      operations: [
+        { id: "op_0", order: 0, name: "tool:read_file", toolClass: "file_read" as const, filePath: "src/a.ts", targetPaths: ["src/a.ts"] },
+        { id: "op_1", order: 1, name: "command:git status --porcelain", toolClass: "vcs" as const, commandProfile: "git status --porcelain", args: ["status", "--porcelain"] },
+      ],
+      requiredInputs: [{ name: "targetPaths", type: "array", description: "Target file or directory paths to operate on.", required: true }],
+      outputRequirements: [
+        { name: "op0_tool_read_file_result", sourceOperationId: "op_0", type: "object", required: true },
+        { name: "op1_command_git_status_porcelain_result", sourceOperationId: "op_1", type: "object", required: true },
+      ],
+      invariants: ["ordering: sequential op_0->op_1 must execute in observed order", "order:op_0->op_1"],
+      expensiveOperationIds: [],
+      repeatedOperationIds: [],
+    };
+    const opp = createMockOpportunity({
+      classification: {
+        title: "Read then Git",
+        description: "Read file then check git status",
+        taskClass: "multi_step",
+        pattern: "file_read -> vcs",
+        confidenceScore: 0.95,
+        priority: "high",
+        inferredInputs: [{ name: "targetPaths", type: "array", description: "Target paths" }],
+        workflowContract: contract,
+      },
+    });
+    const plan = planner.plan(opp);
+    expect(plan.steps).toHaveLength(2);
+    // Preserve order and deterministic IDs
+    expect(plan.steps[0]!.id).toBe("step_op_0");
+    expect(plan.steps[1]!.id).toBe("step_op_1");
+    expect(plan.steps[0]!.coveredOperationIds).toEqual(["op_0"]);
+    expect(plan.steps[1]!.coveredOperationIds).toEqual(["op_1"]);
+    expect(plan.steps[0]!.dependsOn).toEqual([]);
+    expect(plan.steps[1]!.dependsOn).toContain("step_op_0");
+    // Read step must NOT have git command (cross-assignment fails test)
+    expect(plan.steps[0]!.inputs.command).toBeUndefined();
+    expect(plan.steps[0]!.inputs.commandProfile).toBeUndefined();
+    expect(plan.steps[0]!.inputs.path ?? (plan.steps[0]!.inputs as Record<string, unknown>).targetPaths).toBeDefined();
+    const readPath = (plan.steps[0]!.inputs.path ?? (plan.steps[0]!.inputs as Record<string, unknown>).targetPaths) as string;
+    expect(String(readPath).toLowerCase()).toContain("targetpaths");
+    expect(String(readPath)).not.toBe("./data.txt");
+    // Git step must have correct command only on git
+    expect(plan.steps[1]!.inputs.command).toBe("git");
+    expect(plan.steps[1]!.inputs.args).toEqual(["status", "--porcelain"]);
+    expect(plan.steps[1]!.inputs.commandProfile).toBe("git status --porcelain");
+    // No fallback paths on either step
+    for (const step of plan.steps) {
+      const pathVal = (step.inputs.path ?? step.inputs.targetPaths ?? "") as string;
+      if (typeof pathVal === "string") {
+        expect(pathVal).not.toBe("./data.txt");
+        expect(pathVal).not.toBe("${input.input}");
+      }
+      // Ensure no step uses fallback content without variable
+      if ("content" in step.inputs) {
+        const contentVal = step.inputs.content as string;
+        expect(contentVal).not.toBe("./data.txt");
+      }
+    }
+    // Coverage complete and deterministic
+    expect(plan.workflowCoverage?.complete).toBe(true);
+    expect(plan.workflowCoverage?.uncoveredOperationIds).toHaveLength(0);
+  });
+
+  it("should consume targetPaths for multi-path file workflows for both scalar and array inputs without fallback", () => {
+    // Array input case
+    const arrayContract: WorkflowContract = {
+      version: 1,
+      operations: [
+        { id: "op_0", order: 0, name: "tool:read_file", toolClass: "file_read" as const, filePath: "src/one.ts", targetPaths: ["src/one.ts", "src/two.ts"] },
+        { id: "op_1", order: 1, name: "file_edit:update", toolClass: "file_edit" as const, filePath: "src/two.ts", targetPaths: ["src/one.ts", "src/two.ts"] },
+      ],
+      requiredInputs: [{ name: "targetPaths", type: "array", description: "Target file or directory paths to operate on.", required: true }],
+      outputRequirements: [
+        { name: "op0_tool_read_file_result", sourceOperationId: "op_0", type: "object", required: true },
+        { name: "op1_file_edit_update_result", sourceOperationId: "op_1", type: "object", required: true },
+      ],
+      invariants: ["ordering: sequential op_0->op_1 must execute in observed order"],
+      expensiveOperationIds: [],
+      repeatedOperationIds: [],
+    };
+    const arrayOpp = createMockOpportunity({
+      classification: {
+        title: "Multi-path Edit",
+        description: "Edit multiple files",
+        taskClass: "multi_step",
+        pattern: "file_read -> file_edit",
+        confidenceScore: 0.9,
+        priority: "high",
+        inferredInputs: [{ name: "targetPaths", type: "array", description: "Target paths" }],
+        workflowContract: arrayContract,
+      },
+    });
+    const arrayPlan = planner.plan(arrayOpp);
+    for (const step of arrayPlan.steps) {
+      const pathVal = (step.inputs.path ?? step.inputs.targetPaths) as string;
+      expect(String(pathVal).toLowerCase()).toContain("targetpaths");
+      expect(String(pathVal)).not.toBe("./data.txt");
+      expect(String(pathVal)).not.toBe("${input.input}");
+    }
+    expect(arrayPlan.workflowCoverage?.complete).toBe(true);
+
+    // Scalar input case (single targetPath as string)
+    const scalarContract: WorkflowContract = {
+      version: 1,
+      operations: [
+        { id: "op_0", order: 0, name: "tool:read_file", toolClass: "file_read" as const, filePath: "src/single.ts", targetPaths: ["src/single.ts"] },
+      ],
+      requiredInputs: [{ name: "targetPaths", type: "string", description: "Target file or directory path to operate on.", required: true }],
+      outputRequirements: [{ name: "op0_tool_read_file_result", sourceOperationId: "op_0", type: "object", required: true }],
+      invariants: ["ordering: sequential op_0->op_0 must execute in observed order"],
+      expensiveOperationIds: [],
+      repeatedOperationIds: [],
+    };
+    const scalarOpp = createMockOpportunity({
+      classification: {
+        title: "Single-path Read",
+        description: "Read single file with scalar targetPaths",
+        taskClass: "file_read",
+        pattern: "file_read",
+        confidenceScore: 0.9,
+        priority: "high",
+        inferredInputs: [{ name: "targetPaths", type: "string", description: "Target path" }],
+        workflowContract: scalarContract,
+      },
+    });
+    const scalarPlan = planner.plan(scalarOpp);
+    expect(scalarPlan.steps).toHaveLength(1);
+    const scalarPath = (scalarPlan.steps[0]!.inputs.path ?? scalarPlan.steps[0]!.inputs.targetPaths) as string;
+    expect(String(scalarPath).toLowerCase()).toContain("targetpaths");
+    expect(String(scalarPath)).not.toBe("./data.txt");
+    expect(scalarPlan.workflowCoverage?.complete).toBe(true);
+  });
+
+  it("should fail on cross-assignment or fallback paths if mis-bound", () => {
+    // This test explicitly asserts that a buggy planner that cross-assigns or uses fallback would fail.
+    // We construct a contract with read + git and verify the plan does NOT exhibit those bugs.
+    const contract: WorkflowContract = {
+      version: 1,
+      operations: [
+        { id: "op_0", order: 0, name: "tool:read_file", toolClass: "file_read" as const, filePath: "src/b.ts" },
+        { id: "op_1", order: 1, name: "command:git diff --stat", toolClass: "vcs" as const, commandProfile: "git diff --stat", args: ["diff", "--stat"] },
+      ],
+      requiredInputs: [{ name: "targetPaths", type: "array", description: "Target paths", required: true }],
+      outputRequirements: [
+        { name: "op0_tool_read_file_result", sourceOperationId: "op_0", type: "object", required: true },
+        { name: "op1_command_git_diff_stat_result", sourceOperationId: "op_1", type: "object", required: true },
+      ],
+      invariants: ["ordering: sequential op_0->op_1"],
+      expensiveOperationIds: [],
+      repeatedOperationIds: [],
+    };
+    const opp = createMockOpportunity({
+      classification: {
+        title: "Read then Diff",
+        description: "Read then diff",
+        taskClass: "multi_step",
+        pattern: "file_read -> vcs",
+        confidenceScore: 0.9,
+        priority: "high",
+        workflowContract: contract,
+      },
+    });
+    const plan = planner.plan(opp);
+    // Cross-assignment check: read must not have command, git must have diff not status
+    expect(plan.steps[0]!.inputs.command).toBeUndefined();
+    expect(plan.steps[0]!.inputs.commandProfile).toBeUndefined();
+    expect(plan.steps[1]!.inputs.command).toBe("git");
+    expect(plan.steps[1]!.inputs.args).toEqual(["diff", "--stat"]);
+    expect(plan.steps[1]!.inputs.commandProfile).toBe("git diff --stat");
+    // Fallback check: no step should use ./data.txt or bare input.input when targetPaths required
+    for (const step of plan.steps) {
+      const inputsStr = JSON.stringify(step.inputs);
+      expect(inputsStr).not.toContain("./data.txt");
+      // If targetPaths is required input, file step must reference it, not missing input.input for path
+      if (step.toolClass === "filesystem") {
+        const pathVal = String(step.inputs.path ?? step.inputs.targetPaths ?? "");
+        expect(String(pathVal).toLowerCase()).toContain("targetpaths");
+        expect(pathVal).not.toBe("${input.input}");
+      }
+    }
+  });
+
+  it("should keep composite command profiles on one operation without displacing later command and no profile loss", () => {
+    const contract = {
+      version: 1,
+      operations: [
+        {
+          id: "op_0",
+          order: 0,
+          name: "command:git",
+          toolClass: "vcs" as const,
+          commandProfiles: ["git status --porcelain", "git diff --stat"],
+          commandProfile: "git status --porcelain",
+          args: ["status", "--porcelain"],
+        },
+        {
+          id: "op_1",
+          order: 1,
+          name: "command:npm test",
+          toolClass: "test_runner" as const,
+          commandProfiles: ["npm test"],
+          commandProfile: "npm test",
+          args: ["test"],
+        },
+      ],
+      requiredInputs: [{ name: "targetRepo", type: "string", description: "repo", required: true }],
+      outputRequirements: [
+        { name: "op0_git_result", sourceOperationId: "op_0", type: "object", required: true },
+        { name: "op1_npm_result", sourceOperationId: "op_1", type: "object", required: true },
+      ],
+      invariants: ["ordering: sequential op_0->op_1", "order:op_0->op_1"],
+      expensiveOperationIds: [],
+      repeatedOperationIds: [],
+    } as unknown as WorkflowContract;
+    const opp = createMockOpportunity({
+      classification: {
+        title: "Composite then npm",
+        description: "Composite git then npm",
+        taskClass: "multi_step",
+        pattern: "command -> command",
+        confidenceScore: 0.9,
+        priority: "high",
+        workflowContract: contract,
+      },
+    });
+    const plan = planner.plan(opp);
+    // Preserve both origins/order and no Displacement: one step per originating operation
+    expect(plan.steps).toHaveLength(2);
+    expect(plan.steps[0]!.id).toBe("step_op_0");
+    expect(plan.steps[1]!.id).toBe("step_op_1");
+    expect(plan.steps[0]!.coveredOperationIds).toEqual(["op_0"]);
+    expect(plan.steps[1]!.coveredOperationIds).toEqual(["op_1"]);
+    expect(plan.steps[0]!.dependsOn).toEqual([]);
+    expect(plan.steps[1]!.dependsOn).toContain("step_op_0");
+
+    // Composite stays on one operation as commandProfiles array, no cross-assignment
+    const op0Inputs = plan.steps[0]!.inputs as Record<string, unknown>;
+    const op1Inputs = plan.steps[1]!.inputs as Record<string, unknown>;
+    expect(op0Inputs.commandProfiles).toBeDefined();
+    expect(op0Inputs.commandProfiles).toEqual(["git status --porcelain", "git diff --stat"]);
+    expect(op0Inputs.commandProfile).toBe("git status --porcelain");
+    expect(op1Inputs.commandProfiles).toEqual(["npm test"]);
+    expect(op1Inputs.commandProfile).toBe("npm test");
+    // No cross-assignment: op0 must not contain npm, op1 must not contain git diff
+    expect((op0Inputs.commandProfiles as string[])).not.toContain("npm test");
+    expect((op1Inputs.commandProfiles as string[])).not.toContain("git diff --stat");
+
+    // No profile loss: all three profiles accounted for
+    const allProfiles = plan.steps.flatMap((s) => {
+      const cps = (s.inputs as Record<string, unknown>).commandProfiles as string[] | undefined;
+      if (cps) return cps;
+      const cp = (s.inputs as Record<string, unknown>).commandProfile as string | undefined;
+      return cp ? [cp] : [];
+    });
+    // Note: step 0 batches both git profiles, step 1 has npm; flatMap will duplicate git profiles if we flatten both steps' arrays.
+    // Instead check per-operation preservation: op0's array has 2, op1's has 1
+    expect(op0Inputs.commandProfiles).toHaveLength(2);
+    expect(op1Inputs.commandProfiles).toHaveLength(1);
+    expect(plan.workflowCoverage).toBeDefined();
+    expect(plan.workflowCoverage!.complete).toBe(true);
+  });
 });

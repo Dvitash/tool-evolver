@@ -79,14 +79,63 @@ export interface ModelTokenPricesPerMillion {
 }
 
 /**
- * Default token pricing used for workload cost comparisons.
+ * Evaluator-owned canonical cost schedule V1.
  * input: 1 USD/MTok, output: 4 USD/MTok, cacheRead: 0.25 USD/MTok
+ * Rows must reference this via scheduleId; arbitrary caller prices are NEVER trusted.
  */
-export const DEFAULT_MODEL_TOKEN_PRICES: ModelTokenPricesPerMillion = {
+export const MODEL_COST_SCHEDULE_V1: Readonly<ModelTokenPricesPerMillion> = {
   input: 1,
   output: 4,
   cacheRead: 0.25,
-};
+} as const;
+
+/** Canonical schedule identifier */
+export const MODEL_COST_SCHEDULE_ID_V1 = "MODEL_COST_SCHEDULE_V1" as const;
+
+/**
+ * Evaluator-owned schedule registry — server-side authority for pricing.
+ * Only scheduleIds present here are valid; unknown IDs are terminally rejected.
+ */
+export const MODEL_COST_SCHEDULES: Readonly<Record<string, Readonly<ModelTokenPricesPerMillion>>> = {
+  [MODEL_COST_SCHEDULE_ID_V1]: MODEL_COST_SCHEDULE_V1,
+} as const;
+
+
+/**
+ * HMAC-SHA256 benchmark attestation binding a benchmark row to its canonical payload.
+ * issuer/keyId identify the signing key; signature is hex HMAC-SHA256 over canonical JSON of the row excluding attestation.
+ * Secret is NEVER logged or exposed.
+ */
+export interface BenchmarkAttestation {
+  issuer: string;
+  keyId: string;
+  algorithm: "hmac-sha256";
+  signature: string;
+}
+
+
+/**
+ * Resolves a scheduleId to its authoritative pricing. Throws on unknown schedule.
+ */
+export function resolveModelCostSchedule(scheduleId: string): ModelTokenPricesPerMillion {
+  const prices = (MODEL_COST_SCHEDULES as Record<string, ModelTokenPricesPerMillion>)[scheduleId];
+  if (!prices) {
+    throw new Error(`Unknown model cost scheduleId '${scheduleId}' — must be one of ${Object.keys(MODEL_COST_SCHEDULES).join(", ")}`);
+  }
+  return prices;
+}
+
+/**
+ * Validates scheduleId is a known evaluator-owned schedule.
+ */
+export function assertValidScheduleId(scheduleId: unknown): void {
+  if (typeof scheduleId !== "string" || !scheduleId.trim()) {
+    throw new Error(`scheduleId must be a non-empty string, got ${String(scheduleId)}`);
+  }
+  if (!(scheduleId in MODEL_COST_SCHEDULES)) {
+    throw new Error(`Unknown scheduleId '${String(scheduleId)}' — must be one of ${Object.keys(MODEL_COST_SCHEDULES).join(", ")}`);
+  }
+}
 
 /**
  * Validates that a ModelUsageMetrics object has finite non-negative numeric fields and boolean correct.
@@ -135,15 +184,18 @@ export function assertValidModelTokenPrices(prices: ModelTokenPricesPerMillion):
 }
 
 /**
- * Computes weighted model cost in USD from usage tokens and per-million pricing.
+ * Computes weighted model cost in USD from usage tokens and authoritative schedule pricing.
  * Formula: (inputTokens * input + outputTokens * output + cacheReadTokens * cacheRead) / 1_000_000
- * Validates finite non-negative metrics and prices.
+ * Resolves scheduleId server-side via MODEL_COST_SCHEDULES; unknown scheduleId throws terminally.
+ * Zero-price forgery impossible — caller cannot supply arbitrary prices.
  */
 export function calculateWeightedModelCost(
   usage: ModelUsageMetrics,
-  prices: ModelTokenPricesPerMillion = DEFAULT_MODEL_TOKEN_PRICES,
+  scheduleId: string = MODEL_COST_SCHEDULE_ID_V1,
 ): number {
   assertValidModelUsageMetrics(usage, "ModelUsageMetrics");
+  assertValidScheduleId(scheduleId);
+  const prices = resolveModelCostSchedule(scheduleId);
   assertValidModelTokenPrices(prices);
   const cost =
     (usage.inputTokens * prices.input +
@@ -157,8 +209,27 @@ export function calculateWeightedModelCost(
 }
 
 /**
+ * Canonical explicit benchmark evidence carrying all immutable identity/binding/pricing fields.
+ * Required alongside workloadSize + baselineModelUsage + trace.modelUsage to derive a scenario benchmark.
+ * No placeholder values are fabricated; absence yields no benchmark.
+ */
+export interface WorkloadBenchmarkEvidence {
+  benchmarkId: string;
+  baselineRunId: string;
+  candidateRunId: string;
+  workloadInputDigest: string;
+  candidateRevisionId: string;
+  artifactDigest: string;
+  modelProvider: string;
+  modelId: string;
+  observedAt: string;
+  scheduleId: string;
+}
+
+/**
  * Comparison of baseline vs candidate model usage and cost for a single workload size.
  * Redundancy is explicit via candidate.redundantToolCalls (redundantVerificationCalls), never inferred from broker ops.
+ * Immutable evidence binding fields prevent row relabeling and cost forgery; all are required.
  */
 export interface WorkloadBenchmarkComparison {
   workloadSize: WorkloadSize;
@@ -169,11 +240,135 @@ export interface WorkloadBenchmarkComparison {
   costDeltaPercent: number;
   correctnessPassed: boolean;
   redundantVerificationCalls: number;
+  benchmarkId: string;
+  baselineRunId: string;
+  candidateRunId: string;
+  workloadInputDigest: string;
+  candidateRevisionId: string;
+  artifactDigest: string;
+  modelProvider: string;
+  modelId: string;
+  observedAt: string;
+  scheduleId: string;
+  attestation?: BenchmarkAttestation;
+}
+
+/**
+ * Helpers for immutable benchmark evidence validation.
+ */
+function isNonEmptyString(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isValidIdentifier(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    value.length >= 1 &&
+    value.length <= 128 &&
+    /^[a-zA-Z0-9_-][a-zA-Z0-9_.:-]{0,127}$/.test(value)
+  );
+}
+
+function isValidSha256Digest(value: unknown): boolean {
+  return typeof value === "string" && /^(sha256:)?[a-f0-9]{64}$/i.test(value);
+}
+
+function isValidIsoTimestamp(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2}(:\d{2})?)$/.test(value)) return false;
+  const d = new Date(value);
+  return !Number.isNaN(d.getTime());
+}
+
+function isValidHexSignature(value: unknown): boolean {
+  return typeof value === "string" && /^[a-f0-9]{64}$/i.test(value);
+}
+
+function isValidBenchmarkAttestationFormat(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const a = value as Record<string, unknown>;
+  return (
+    typeof a.issuer === "string" &&
+    (a.issuer as string).trim().length > 0 &&
+    typeof a.keyId === "string" &&
+    (a.keyId as string).trim().length > 0 &&
+    a.algorithm === "hmac-sha256" &&
+    isValidHexSignature(a.signature)
+  );
+}
+
+/**
+ * Validates a BenchmarkAttestation has correct formats and required fields.
+ */
+export function assertValidBenchmarkAttestation(
+  att: BenchmarkAttestation,
+  label = "BenchmarkAttestation",
+): void {
+  if (!att || typeof att !== "object") {
+    throw new Error(`${label} must be an object`);
+  }
+  if (!isNonEmptyString((att as unknown as Record<string, unknown>).issuer)) {
+    throw new Error(`${label}.issuer must be a nonempty string, got ${String((att as unknown as Record<string, unknown>).issuer)}`);
+  }
+  if (!isNonEmptyString((att as unknown as Record<string, unknown>).keyId)) {
+    throw new Error(`${label}.keyId must be a nonempty string, got ${String((att as unknown as Record<string, unknown>).keyId)}`);
+  }
+  if ((att as unknown as Record<string, unknown>).algorithm !== "hmac-sha256") {
+    throw new Error(`${label}.algorithm must be 'hmac-sha256', got ${String((att as unknown as Record<string, unknown>).algorithm)}`);
+  }
+  if (!isValidHexSignature((att as unknown as Record<string, unknown>).signature)) {
+    throw new Error(`${label}.signature must be a 64-char hex HMAC-SHA256, got ${String((att as unknown as Record<string, unknown>).signature)}`);
+  }
+}
+
+
+/**
+ * Validates a WorkloadBenchmarkEvidence has correct formats and required fields.
+ */
+export function assertValidWorkloadBenchmarkEvidence(
+  ev: WorkloadBenchmarkEvidence,
+  label = "WorkloadBenchmarkEvidence",
+): void {
+  if (!ev || typeof ev !== "object") {
+    throw new Error(`${label} must be an object`);
+  }
+  if (!isValidIdentifier(ev.benchmarkId)) {
+    throw new Error(`${label}.benchmarkId must be a valid identifier (nonempty, a-zA-Z0-9_-. :), got ${String(ev.benchmarkId)}`);
+  }
+  if (!isValidIdentifier(ev.baselineRunId)) {
+    throw new Error(`${label}.baselineRunId must be a valid identifier, got ${String(ev.baselineRunId)}`);
+  }
+  if (!isValidIdentifier(ev.candidateRunId)) {
+    throw new Error(`${label}.candidateRunId must be a valid identifier, got ${String(ev.candidateRunId)}`);
+  }
+  if (!isValidSha256Digest(ev.workloadInputDigest)) {
+    throw new Error(`${label}.workloadInputDigest must be a valid SHA-256 digest (64 hex or sha256: hex), got ${String(ev.workloadInputDigest)}`);
+  }
+  if (!isValidIdentifier(ev.candidateRevisionId)) {
+    throw new Error(`${label}.candidateRevisionId must be a valid identifier, got ${String(ev.candidateRevisionId)}`);
+  }
+  if (!isValidSha256Digest(ev.artifactDigest)) {
+    throw new Error(`${label}.artifactDigest must be a valid SHA-256 digest, got ${String(ev.artifactDigest)}`);
+  }
+  if (!isNonEmptyString(ev.modelProvider)) {
+    throw new Error(`${label}.modelProvider must be a nonempty string, got ${String(ev.modelProvider)}`);
+  }
+  if (!isNonEmptyString(ev.modelId)) {
+    throw new Error(`${label}.modelId must be a nonempty string, got ${String(ev.modelId)}`);
+  }
+  if (!isValidIsoTimestamp(ev.observedAt)) {
+    throw new Error(`${label}.observedAt must be a valid ISO 8601 timestamp, got ${String(ev.observedAt)}`);
+  }
+  assertValidScheduleId(ev.scheduleId);
+  if ((ev as unknown as Record<string, unknown>).attestation !== undefined) {
+    assertValidBenchmarkAttestation((ev as unknown as Record<string, unknown>).attestation as BenchmarkAttestation, `${label}.attestation`);
+  }
 }
 
 /**
  * Validates a WorkloadBenchmarkComparison has finite metrics, correct workloadSize, and deterministic ordering expectations.
- * Throws on invalid.
+ * Throws on invalid. Recomputes weighted costs server-side from raw usage and authoritative scheduleId; rejects caller costs/deltas that mismatch.
+ * Validates ISO observedAt, nonempty identities/digests/model fields, and binding formats. All evidence fields are required.
  */
 export function assertValidWorkloadBenchmarkComparison(comp: WorkloadBenchmarkComparison): void {
   if (!comp || typeof comp !== "object") {
@@ -184,46 +379,51 @@ export function assertValidWorkloadBenchmarkComparison(comp: WorkloadBenchmarkCo
       `WorkloadBenchmarkComparison.workloadSize must be one of ${WORKLOAD_SIZE_ORDER.join(",")}, got ${String(comp.workloadSize)}`,
     );
   }
+  if (!isValidIdentifier((comp as unknown as Record<string, unknown>).benchmarkId)) {
+    throw new Error(`WorkloadBenchmarkComparison.benchmarkId must be a valid identifier (nonempty, a-zA-Z0-9_-. :), got ${String((comp as unknown as Record<string, unknown>).benchmarkId)}`);
+  }
+  if (!isValidIdentifier((comp as unknown as Record<string, unknown>).baselineRunId)) {
+    throw new Error(`WorkloadBenchmarkComparison.baselineRunId must be a valid identifier, got ${String((comp as unknown as Record<string, unknown>).baselineRunId)}`);
+  }
+  if (!isValidIdentifier((comp as unknown as Record<string, unknown>).candidateRunId)) {
+    throw new Error(`WorkloadBenchmarkComparison.candidateRunId must be a valid identifier, got ${String((comp as unknown as Record<string, unknown>).candidateRunId)}`);
+  }
+  if (!isValidSha256Digest((comp as unknown as Record<string, unknown>).workloadInputDigest)) {
+    throw new Error(`WorkloadBenchmarkComparison.workloadInputDigest must be a valid SHA-256 digest (64 hex or sha256: hex), got ${String((comp as unknown as Record<string, unknown>).workloadInputDigest)}`);
+  }
+  if (!isValidIdentifier((comp as unknown as Record<string, unknown>).candidateRevisionId)) {
+    throw new Error(`WorkloadBenchmarkComparison.candidateRevisionId must be a valid identifier, got ${String((comp as unknown as Record<string, unknown>).candidateRevisionId)}`);
+  }
+  if (!isValidSha256Digest((comp as unknown as Record<string, unknown>).artifactDigest)) {
+    throw new Error(`WorkloadBenchmarkComparison.artifactDigest must be a valid SHA-256 digest, got ${String((comp as unknown as Record<string, unknown>).artifactDigest)}`);
+  }
+  if (!isNonEmptyString((comp as unknown as Record<string, unknown>).modelProvider)) {
+    throw new Error(`WorkloadBenchmarkComparison.modelProvider must be a nonempty string, got ${String((comp as unknown as Record<string, unknown>).modelProvider)}`);
+  }
+  if (!isNonEmptyString((comp as unknown as Record<string, unknown>).modelId)) {
+    throw new Error(`WorkloadBenchmarkComparison.modelId must be a nonempty string, got ${String((comp as unknown as Record<string, unknown>).modelId)}`);
+  }
+  if (!isValidIsoTimestamp((comp as unknown as Record<string, unknown>).observedAt)) {
+    throw new Error(`WorkloadBenchmarkComparison.observedAt must be a valid ISO 8601 timestamp, got ${String((comp as unknown as Record<string, unknown>).observedAt)}`);
+  }
+  assertValidScheduleId(comp.scheduleId);
+  if ((comp as unknown as Record<string, unknown>).attestation !== undefined) {
+    assertValidBenchmarkAttestation((comp as unknown as Record<string, unknown>).attestation as BenchmarkAttestation, "WorkloadBenchmarkComparison.attestation");
+  }
   assertValidModelUsageMetrics(comp.baseline, "WorkloadBenchmarkComparison.baseline");
   assertValidModelUsageMetrics(comp.candidate, "WorkloadBenchmarkComparison.candidate");
-  if (!Number.isFinite(comp.baselineCostUsd) || comp.baselineCostUsd < 0) {
-    throw new Error(`baselineCostUsd must be finite non-negative, got ${comp.baselineCostUsd}`);
-  }
-  if (!Number.isFinite(comp.candidateCostUsd) || comp.candidateCostUsd < 0) {
-    throw new Error(`candidateCostUsd must be finite non-negative, got ${comp.candidateCostUsd}`);
-  }
-  if (!Number.isFinite(comp.costDeltaPercent)) {
-    throw new Error(`costDeltaPercent must be finite, got ${comp.costDeltaPercent}`);
-  }
-  if (typeof comp.correctnessPassed !== "boolean") {
-    throw new Error(`correctnessPassed must be boolean, got ${String(comp.correctnessPassed)}`);
-  }
-  if (!Number.isInteger(comp.redundantVerificationCalls) || comp.redundantVerificationCalls < 0 || !Number.isFinite(comp.redundantVerificationCalls)) {
-    throw new Error(`redundantVerificationCalls must be integer finite non-negative, got ${comp.redundantVerificationCalls}`);
-  }
-  // Deterministic redundancy: must equal candidate.redundantToolCalls (explicit from usage, not guessed)
-  if (comp.redundantVerificationCalls !== comp.candidate.redundantToolCalls) {
-    throw new Error(
-      `redundantVerificationCalls must equal candidate.redundantToolCalls (${comp.candidate.redundantToolCalls}), got ${comp.redundantVerificationCalls}`,
-    );
-  }
-  // correctnessPassed must reflect candidate.correct
-  if (comp.correctnessPassed !== comp.candidate.correct) {
-    throw new Error(
-      `correctnessPassed must equal candidate.correct (${comp.candidate.correct}), got ${comp.correctnessPassed}`,
-    );
-  }
-  // Validate costs match weighted calculation with default pricing unless custom pricing was used (allow small epsilon)
-  // We enforce default pricing consistency; if costs were computed with custom prices, caller should ensure correctness.
-  const expectedBaseline = calculateWeightedModelCost(comp.baseline, DEFAULT_MODEL_TOKEN_PRICES);
-  const expectedCandidate = calculateWeightedModelCost(comp.candidate, DEFAULT_MODEL_TOKEN_PRICES);
+  const expectedBaseline = calculateWeightedModelCost(comp.baseline, comp.scheduleId);
+  const expectedCandidate = calculateWeightedModelCost(comp.candidate, comp.scheduleId);
   const epsilon = 1e-9;
   if (Math.abs(comp.baselineCostUsd - expectedBaseline) > epsilon) {
-    // Allow if caller used custom pricing – skip strict check if not matching default but still finite
-    // Only throw if wildly off? We keep permissive: don't throw, just ensure finite.
+    throw new Error(
+      `baselineCostUsd must equal weighted cost from baseline usage and scheduleId (${expectedBaseline}), got ${comp.baselineCostUsd}`,
+    );
   }
   if (Math.abs(comp.candidateCostUsd - expectedCandidate) > epsilon) {
-    // permissive as above
+    throw new Error(
+      `candidateCostUsd must equal weighted cost from candidate usage and scheduleId (${expectedCandidate}), got ${comp.candidateCostUsd}`,
+    );
   }
   const expectedDelta =
     comp.baselineCostUsd === 0 ? 0 : ((comp.candidateCostUsd - comp.baselineCostUsd) / comp.baselineCostUsd) * 100;
@@ -339,14 +539,20 @@ export interface ReplayScenario {
   metadata?: Record<string, unknown>;
   /**
    * Workload size bucket for this scenario's agent benchmark.
-   * When present alongside baselineModelUsage, enables per-workload cost comparison.
+   * When present alongside baselineModelUsage and benchmarkEvidence, enables per-workload cost comparison.
    */
   workloadSize?: WorkloadSize;
   /**
    * Baseline (historical) agent model usage for this workload size.
-   * Paired with trace.modelUsage to compute WorkloadBenchmarkComparison.
+   * Paired with trace.modelUsage and benchmarkEvidence to compute WorkloadBenchmarkComparison.
    */
   baselineModelUsage?: ModelUsageMetrics;
+  /**
+   * Canonical explicit benchmark evidence carrying all immutable identity/binding/pricing fields.
+   * Required alongside workloadSize and baselineModelUsage to derive a scenario benchmark; otherwise no benchmark is produced.
+   * No placeholder fabrication.
+   */
+  benchmarkEvidence?: WorkloadBenchmarkEvidence;
 }
 
 /**
@@ -382,7 +588,7 @@ export interface ReplayExecutionTrace {
   };
   /**
    * Candidate agent model usage for this trace's workload.
-   * Paired with scenario.baselineModelUsage to compute WorkloadBenchmarkComparison.
+   * Paired with scenario.baselineModelUsage and scenario.benchmarkEvidence to compute WorkloadBenchmarkComparison.
    * Redundancy must be explicit via redundantToolCalls, not inferred from operations.
    */
   modelUsage?: ModelUsageMetrics;
@@ -458,7 +664,7 @@ export interface ReplayScenarioExecutionResult {
   durationMs: number;
   seed: string | number;
   /**
-   * Optional per-scenario workload benchmark when both baseline and candidate model usage are present.
+   * Optional per-scenario workload benchmark when both baseline and candidate model usage and explicit evidence are present.
    */
   workloadBenchmark?: WorkloadBenchmarkComparison;
 }
@@ -503,7 +709,7 @@ export interface HistoricalReplayOptions {
   /**
    * Externally measured prepublication agent benchmarks per workload size.
    * When provided, these are validated, deterministically sorted, and merged into HistoricalReplayResult.workloadBenchmarks.
-   * Missing when no external probes were performed.
+   * Missing when no external probes were performed. Each row must be fully bound with immutable evidence.
    */
   workloadBenchmarks?: WorkloadBenchmarkComparison[];
 }

@@ -1,3 +1,4 @@
+import type { CandidateRevision } from "../generator/types.js";
 import { type CapabilityManifest, CapabilityManifestSchema } from "@tool-evolver/contracts";
 import type { DatabasePool } from "../../db/client.js";
 import { EvidenceRepository } from "../../storage/repositories/evidence-repository.js";
@@ -5,6 +6,7 @@ import type { TenantContext } from "../../tenant.js";
 import { HistoricalReplayRunner } from "./runner.js";
 import { ReplayScenarioBuilder } from "./scenario-builder.js";
 import type {
+  BenchmarkAttestation,
   CandidateTarget,
   EvidenceSource,
   HistoricalReplayOptions,
@@ -15,7 +17,7 @@ import type {
   WorkloadBenchmarkComparison,
   WorkloadSize,
 } from "./types.js";
-import { WORKLOAD_SIZE_ORDER } from "./types.js";
+import { WORKLOAD_SIZE_ORDER, calculateWeightedModelCost } from "./types.js";
 
 /**
  * Options for replaying a candidate against historical evidence.
@@ -104,6 +106,46 @@ function validateModelUsageMetrics(metrics: unknown, path: string): ModelUsageMe
   return m as unknown as ModelUsageMetrics;
 }
 
+function validateWorkloadBenchmarkEvidenceForService(
+  raw: unknown,
+  path: string,
+): import("./types.js").WorkloadBenchmarkEvidence {
+  if (typeof raw !== "object" || raw === null) {
+    throw new Error(`${path} must be an object`);
+  }
+  const ev = raw as Record<string, unknown>;
+  const required = [
+    "benchmarkId",
+    "baselineRunId",
+    "candidateRunId",
+    "workloadInputDigest",
+    "candidateRevisionId",
+    "artifactDigest",
+    "modelProvider",
+    "modelId",
+    "observedAt",
+    "scheduleId",
+  ] as const;
+  for (const k of required) {
+    if (!(k in ev)) {
+      throw new Error(`${path}.${k} is required`);
+    }
+  }
+  return {
+    benchmarkId: ev.benchmarkId as string,
+    baselineRunId: ev.baselineRunId as string,
+    candidateRunId: ev.candidateRunId as string,
+    workloadInputDigest: ev.workloadInputDigest as string,
+    candidateRevisionId: ev.candidateRevisionId as string,
+    artifactDigest: ev.artifactDigest as string,
+    modelProvider: ev.modelProvider as string,
+    modelId: ev.modelId as string,
+    observedAt: ev.observedAt as string,
+    scheduleId: ev.scheduleId as string,
+    ...(ev.attestation !== undefined ? { attestation: ev.attestation as BenchmarkAttestation } : {}),
+  };
+}
+
 function validateWorkloadBenchmarkComparison(value: unknown, index: number): WorkloadBenchmarkComparison {
   const path = `workloadBenchmarks[${index}]`;
   if (typeof value !== "object" || value === null) {
@@ -154,7 +196,8 @@ function validateWorkloadBenchmarkComparison(value: unknown, index: number): Wor
   if (!isFiniteNonNegative(r.redundantVerificationCalls) || !Number.isInteger(r.redundantVerificationCalls as number)) {
     throw new Error(`${path}.redundantVerificationCalls must be a finite non-negative integer`);
   }
-  return {
+  const evidence = validateWorkloadBenchmarkEvidenceForService(r, path);
+  const constructed: WorkloadBenchmarkComparison = {
     workloadSize: r.workloadSize as WorkloadSize,
     baseline,
     candidate,
@@ -163,7 +206,30 @@ function validateWorkloadBenchmarkComparison(value: unknown, index: number): Wor
     costDeltaPercent: r.costDeltaPercent as number,
     correctnessPassed: r.correctnessPassed as boolean,
     redundantVerificationCalls: r.redundantVerificationCalls as number,
+    benchmarkId: evidence.benchmarkId,
+    baselineRunId: evidence.baselineRunId,
+    candidateRunId: evidence.candidateRunId,
+    workloadInputDigest: evidence.workloadInputDigest,
+    candidateRevisionId: evidence.candidateRevisionId,
+    artifactDigest: evidence.artifactDigest,
+    modelProvider: evidence.modelProvider,
+    modelId: evidence.modelId,
+    observedAt: evidence.observedAt,
+    scheduleId: evidence.scheduleId,
+    ...(r.attestation !== undefined ? { attestation: r.attestation as BenchmarkAttestation } : {}),
   };
+  // Reuse validation from types to ensure cost recomputation etc., but we can also just return; typecheck will pass
+  // Minimal cost check: ensure costs match weighted calculation
+  const expectedBaseline = calculateWeightedModelCost(baseline, evidence.scheduleId);
+  const expectedCandidate = calculateWeightedModelCost(candidate, evidence.scheduleId);
+  const epsilon = 1e-9;
+  if (Math.abs((constructed.baselineCostUsd) - expectedBaseline) > epsilon) {
+    throw new Error(`${path}.baselineCostUsd must equal weighted cost ${expectedBaseline}`);
+  }
+  if (Math.abs((constructed.candidateCostUsd) - expectedCandidate) > epsilon) {
+    throw new Error(`${path}.candidateCostUsd must equal weighted cost ${expectedCandidate}`);
+  }
+  return constructed;
 }
 
 function validateAndSortWorkloadBenchmarks(benchmarks: unknown): WorkloadBenchmarkComparison[] {
@@ -187,17 +253,49 @@ function normalizeLegacyPath(path: string): string {
   return normalized || "/";
 }
 
+function unwrapCandidateRevision(candidate: CandidateTarget): CandidateTarget {
+  if (candidate && typeof candidate === "object" && "artifacts" in candidate) {
+    const maybeArtifacts = (candidate as unknown as Record<string, unknown>).artifacts;
+    if (maybeArtifacts && typeof maybeArtifacts === "object") {
+      const art = maybeArtifacts as Record<string, unknown>;
+      const out: Record<string, unknown> = { ...(candidate as unknown as Record<string, unknown>) };
+      const candidateRec = candidate as unknown as Record<string, unknown>;
+      if ((!("sourceCode" in candidate) || typeof candidateRec.sourceCode !== "string") && typeof art.sourceCode === "string") {
+        out.sourceCode = art.sourceCode;
+      }
+      const hasManifest = "manifest" in candidate;
+      const hasProposed = "proposedTool" in candidate;
+      if (!hasManifest && !hasProposed && art.manifest) {
+        out.manifest = art.manifest;
+      } else if (!hasManifest && art.manifest && !out.manifest) {
+        out.manifest = art.manifest;
+      }
+      if (!("requiredCapabilities" in candidate) && art.capabilities) {
+        out.requiredCapabilities = art.capabilities;
+      }
+      if (!("workflowDefinition" in candidate) && art.workflowDefinition) {
+        out.workflowDefinition = art.workflowDefinition;
+      }
+      if (!("plan" in candidate) && art.plan) {
+        out.plan = art.plan;
+      }
+      return out as unknown as CandidateTarget;
+    }
+  }
+  return candidate;
+}
 /**
  * Replays may receive persisted candidates created before capability manifests became
  * fully materialized. Normalize those legacy/partial manifests conservatively before
  * deriving replay authorization. Missing sections never imply permission.
  */
 function normalizeCandidateCapabilities(candidate: CandidateTarget): CandidateTarget {
-  if (!("requiredCapabilities" in candidate) || !candidate.requiredCapabilities) {
-    return candidate;
+  const unwrapped = unwrapCandidateRevision(candidate);
+  if (!("requiredCapabilities" in unwrapped) || !unwrapped.requiredCapabilities) {
+    return unwrapped;
   }
 
-  const raw = candidate.requiredCapabilities as unknown as LooseCapabilityManifest;
+  const raw = unwrapped.requiredCapabilities as unknown as LooseCapabilityManifest;
   const normalized = CapabilityManifestSchema.parse({
     manifestId: raw.manifestId,
     fs: {
@@ -238,9 +336,8 @@ function normalizeCandidateCapabilities(candidate: CandidateTarget): CandidateTa
       maxOutputSizeBytes: raw.limits?.maxOutputSizeBytes ?? 1_048_576,
     },
   });
-
   return {
-    ...candidate,
+    ...unwrapped,
     requiredCapabilities: normalized,
   } as CandidateTarget;
 }

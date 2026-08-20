@@ -2,9 +2,21 @@ import type { ToolOutputSchema } from "@tool-evolver/contracts";
 import type { WorkflowContract } from "../opportunity/types.js";
 import type { WorkflowCoverage, WorkflowStep } from "./types.js";
 
+function stepDeclaresOutput(step: WorkflowStep, outputName: string): boolean {
+  if (!step.outputs) return false;
+  if (Array.isArray(step.outputs)) {
+    return (step.outputs as string[]).includes(outputName);
+  }
+  if (typeof step.outputs === "object") {
+    return Object.prototype.hasOwnProperty.call(step.outputs as Record<string, unknown>, outputName);
+  }
+  return false;
+}
+
 /**
  * Build deterministic coverage of a WorkflowContract by a set of WorkflowSteps and an outputSchema.
- * Coverage is complete only when every contract operation and every required output is represented.
+ * Coverage is complete only when every contract operation and every required output is represented
+ * by both a schema path and an explicit step that covers its source operation and declares the output.
  * Returns undefined when contract is undefined (legacy opportunity).
  */
 export function buildWorkflowCoverage(
@@ -34,19 +46,32 @@ export function buildWorkflowCoverage(
 
   const outputCoverage: WorkflowCoverage["outputCoverage"] = sortedRequirements.map((req) => {
     const schemaPaths = findSchemaPaths(req.name, outputSchema);
+    const stepIds = steps
+      .filter(
+        (step) =>
+          Array.isArray(step.coveredOperationIds) &&
+          step.coveredOperationIds.includes(req.sourceOperationId) &&
+          stepDeclaresOutput(step, req.name),
+      )
+      .map((step) => step.id)
+      .sort();
     return {
       outputName: req.name,
       schemaPaths,
       sourceOperationIds: [req.sourceOperationId],
+      stepIds,
     };
   });
 
   const uncoveredOutputNames = outputCoverage
     .filter((entry) => {
-      if (entry.schemaPaths.length !== 0) return false;
       const req = contract.outputRequirements.find((r) => r.name === entry.outputName);
-      // Only required outputs count toward incompleteness
-      return req ? req.required : true;
+      const isRequired = req ? req.required : true;
+      if (!isRequired) return false;
+      // Required output must have both a schema path and a covering step that declares it
+      if (entry.schemaPaths.length === 0) return true;
+      if (entry.stepIds.length === 0) return true;
+      return false;
     })
     .map((entry) => entry.outputName);
 
@@ -75,7 +100,15 @@ export function workflowCoverageDiagnostics(coverage: WorkflowCoverage | undefin
     diagnostics.push(`Missing operation coverage: ${opId} (no step covers this operation)`);
   }
   for (const outName of sortedUncoveredOutputs) {
-    diagnostics.push(`Missing output coverage: ${outName} (required output not in outputSchema)`);
+    // Find the entry to give more precise reason if schema exists but step missing
+    const entry = coverage.outputCoverage.find((e) => e.outputName === outName);
+    if (entry && entry.schemaPaths.length > 0 && entry.stepIds.length === 0) {
+      diagnostics.push(`Missing output coverage: ${outName} (no step declares this output for its source operation)`);
+    } else if (entry && entry.schemaPaths.length === 0 && entry.stepIds.length > 0) {
+      diagnostics.push(`Missing output coverage: ${outName} (required output not in outputSchema)`);
+    } else {
+      diagnostics.push(`Missing output coverage: ${outName} (required output not in outputSchema or not declared by covering step)`);
+    }
   }
   if (!coverage.complete && diagnostics.length === 0) {
     diagnostics.push("Coverage incomplete: unknown missing mappings");
@@ -143,9 +176,6 @@ function findSchemaPaths(
       }
     }
   }
-
-  // Also support schema being a plain Record with outputName at top-level (rare)
-  // No additional handling needed.
 
   return paths;
 }

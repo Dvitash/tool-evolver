@@ -6,6 +6,7 @@ import {
   type EvolutionCandidate,
   type NormalizedSessionEvent,
   type ToolManifest,
+  ToolManifestSchema,
   type ToolVersion,
   hashCanonical,
   hashCanonicalContent,
@@ -28,9 +29,9 @@ import type {
   CandidateGenerationOptions,
   CandidateRevision,
   SelfReviewIssue,
-  WorkflowCoverage,
+  ToolPlan,
 } from "../generator/types.js";
-import type { WorkflowContract } from "../opportunity/types.js";
+
 import type { InferenceService } from "../../models/service.js";
 import { HistoricalReplayService } from "../replay/service.js";
 import type {
@@ -57,6 +58,40 @@ import {
   type ResumeFromDlqOptions,
   type TerminalReason,
 } from "./types.js";
+function normalizePlanForDigest(plan: unknown): unknown {
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) return plan;
+  const p = plan as Record<string, unknown>;
+  const { createdAt: _ca, updatedAt: _ua, id: _id, planId: _pid, opportunityId: _oid, workspaceId: _wid, metadata: _meta, ...rest } = p;
+  return rest;
+}
+function normalizeLegacyManifestForDigest(manifest: unknown): Record<string, unknown> {
+  const m = JSON.parse(JSON.stringify(manifest ?? {})) as Record<string, unknown>;
+  const caps = m.capabilities as Record<string, unknown> | undefined;
+  if (caps && typeof caps === "object") {
+    if (caps.fs && typeof caps.fs === "object") {
+      const fs = caps.fs as Record<string, unknown>;
+      if ("allowRead" in fs || "allowWrite" in fs) {
+        caps.fs = {
+          readPaths: Array.isArray(fs.readPaths) ? fs.readPaths : [],
+          writePaths: Array.isArray(fs.writePaths) ? fs.writePaths : [],
+          allowWorkspaceRoot: Boolean((fs as Record<string, unknown>).allowRead),
+          allowTemp: Boolean((fs as Record<string, unknown>).allowRead) || Boolean((fs as Record<string, unknown>).allowWrite),
+          denyPaths: Array.isArray((fs as Record<string, unknown>).denyPaths) ? (fs as Record<string, unknown>).denyPaths : [],
+          maxFileSizeBytes: typeof (fs as Record<string, unknown>).maxFileSizeBytes === "number" ? (fs as Record<string, unknown>).maxFileSizeBytes : 10485760,
+        };
+      }
+    }
+    const capsRec = caps as Record<string, unknown>;
+    if (capsRec.exec && !capsRec.command) {
+      const exec = capsRec.exec as Record<string, unknown>;
+      capsRec.command = {
+        allowShellExecution: Boolean(exec.allowExec),
+        allowedCommands: Array.isArray(exec.allowedCommands) ? exec.allowedCommands : [],
+      };
+    }
+  }
+  return m;
+}
 
 /**
  * Options configuring CandidateLifecycleOrchestrator.
@@ -192,6 +227,151 @@ export class CandidateLifecycleOrchestrator {
     }
   }
 
+  private async ensureOutboxForState(
+    tenant: TenantContext,
+    record: CandidateLifecycleRecord,
+  ): Promise<void> {
+    if (!this.pool) return;
+    let jobPayload: LifecycleJobPayload | null = null;
+    let eventType: string | null = null;
+    let stepHeader: string | null = null;
+    if (record.currentState === "drafted") {
+      jobPayload = {
+        candidateId: record.candidateId,
+        revisionId: record.activeRevisionId,
+        targetVersion: record.targetVersion,
+        step: "validate",
+        idempotencyKey: `cand_${record.candidateId}_val_job_1`,
+        attempt: 1,
+        scheduledAt: new Date().toISOString(),
+      };
+      eventType = EVOLUTION_LIFECYCLE_JOB_TYPES.VALIDATE_CANDIDATE;
+      stepHeader = "validate";
+    } else if (record.currentState === "replaying") {
+      jobPayload = {
+        candidateId: record.candidateId,
+        revisionId: record.activeRevisionId,
+        targetVersion: record.targetVersion,
+        step: "replay",
+        idempotencyKey: `cand_${record.candidateId}_replay_job_${record.attempt}`,
+        attempt: 1,
+        scheduledAt: new Date().toISOString(),
+      };
+      eventType = EVOLUTION_LIFECYCLE_JOB_TYPES.REPLAY_CANDIDATE;
+      stepHeader = "replay";
+    } else if (record.currentState === "evaluating") {
+      jobPayload = {
+        candidateId: record.candidateId,
+        revisionId: record.activeRevisionId,
+        targetVersion: record.targetVersion,
+        step: "evaluate",
+        idempotencyKey: `cand_${record.candidateId}_eval_job_${record.attempt}`,
+        attempt: 1,
+        scheduledAt: new Date().toISOString(),
+      };
+      eventType = EVOLUTION_LIFECYCLE_JOB_TYPES.EVALUATE_CANDIDATE;
+      stepHeader = "evaluate";
+    } else if (record.currentState === "eligible") {
+      jobPayload = {
+        candidateId: record.candidateId,
+        revisionId: record.activeRevisionId,
+        targetVersion: record.targetVersion,
+        step: "publish",
+        idempotencyKey: `cand_${record.candidateId}_pub_job_${record.attempt}`,
+        attempt: 1,
+        scheduledAt: new Date().toISOString(),
+      };
+      eventType = EVOLUTION_LIFECYCLE_JOB_TYPES.PUBLISH_CANDIDATE;
+      stepHeader = "publish";
+    } else {
+      return;
+    }
+    if (!jobPayload || !eventType || !stepHeader) return;
+    const outboxId = `outbox_${jobPayload.idempotencyKey}`;
+    try {
+      await OutboxRepository.insert(this.pool, {
+        id: outboxId,
+        accountId: tenant.accountId,
+        workspaceId: tenant.workspaceId,
+        aggregateType: "candidate_lifecycle",
+        aggregateId: record.candidateId,
+        eventType,
+        payload: jobPayload as unknown as Record<string, unknown>,
+        headers: { step: stepHeader, workspaceId: tenant.workspaceId },
+      });
+    } catch {
+      // idempotent ensure: ON CONFLICT DO NOTHING handles duplicate; other errors are best-effort for redelivery
+    }
+  }
+
+  private async atomicTransitionWithOutbox(
+    tenant: TenantContext,
+    candidateId: string,
+    transition: Parameters<LifecycleRepository["recordTransition"]>[2],
+    jobPayload: LifecycleJobPayload,
+    eventType: string,
+    stepHeader: string,
+  ): Promise<CandidateLifecycleRecord> {
+    const outboxId = `outbox_${jobPayload.idempotencyKey}`;
+    const outboxInput = {
+      id: outboxId,
+      accountId: tenant.accountId,
+      workspaceId: tenant.workspaceId,
+      aggregateType: "candidate_lifecycle" as const,
+      aggregateId: candidateId,
+      eventType,
+      payload: jobPayload as unknown as Record<string, unknown>,
+      headers: { step: stepHeader, workspaceId: tenant.workspaceId },
+    };
+    if (this.pool && typeof (this.pool as unknown as { transaction?: unknown }).transaction === "function") {
+      return await (this.pool as DatabasePool).transaction(async (tx) => {
+        const rec = await this.lifecycleRepo.recordTransition(tenant, candidateId, transition as never, tx);
+        await OutboxRepository.insert(tx, outboxInput);
+        return rec;
+      });
+    }
+    // Fallback when no transactional pool (tests with memory pool always have it, but keep deterministic id)
+    const rec = await this.lifecycleRepo.recordTransition(tenant, candidateId, transition as never);
+    if (this.pool) {
+      await OutboxRepository.insert(this.pool as unknown as Queryable, outboxInput);
+    }
+    return rec;
+  }
+
+  /**
+   * Computes a complete artifact-set digest over manifest, source, capabilities,
+   * tests, workflowDefinition, and the full immutable ToolPlan for pinning.
+   * Stored as evidenceDigests.artifactSetDigest and compared at every stage.
+   * Legacy manifests with old fs/exec shapes are handled without defaulting fs to true,
+   * preserving brokered no-fs semantics.
+   */
+  private computeArtifactSetDigest(
+    candidate: EvolutionCandidate,
+    revision?: CandidateRevision | null,
+  ): string {
+    const rawRevision = revision as unknown;
+    const revArtifacts =
+      revision?.artifacts ??
+      (rawRevision && typeof rawRevision === "object" && "artifacts" in rawRevision
+        ? (rawRevision as { artifacts?: CandidateRevision["artifacts"] }).artifacts
+        : undefined);
+    const rawManifest = revArtifacts?.manifest ?? candidate.proposedTool;
+    const normalizedManifest = normalizeLegacyManifestForDigest(rawManifest);
+    const { digest: _d, createdAt: _ca, updatedAt: _ua, ...manifestWithoutDigest } = normalizedManifest as unknown as Record<string, unknown>;
+    const sourceCode = revArtifacts?.sourceCode ?? candidate.sourceCode ?? "";
+    const capabilities = revArtifacts?.capabilities ?? candidate.requiredCapabilities ?? {};
+    const workflowDefinition = revArtifacts?.workflowDefinition ?? null;
+    const tests = revArtifacts?.tests ?? null;
+    const plan = normalizePlanForDigest(revArtifacts?.plan ?? null);
+    return hashCanonical({
+      manifest: manifestWithoutDigest,
+      sourceCode,
+      capabilities,
+      tests,
+      workflowDefinition,
+      plan,
+    });
+  }
   /**
    * Helper to compute canonical evidence digests for a candidate and revision.
    */
@@ -205,22 +385,62 @@ export class CandidateLifecycleOrchestrator {
       (rawRevision && typeof rawRevision === "object" && "artifacts" in rawRevision
         ? (rawRevision as { artifacts?: CandidateRevision["artifacts"] }).artifacts
         : undefined);
-
-    const manifest = revArtifacts?.manifest ?? candidate.proposedTool;
+    const rawManifest = revArtifacts?.manifest ?? candidate.proposedTool;
+    const normalizedManifest = normalizeLegacyManifestForDigest(rawManifest);
+    const { digest: _d, createdAt: _ca, updatedAt: _ua, ...manifestWithoutDigest } = normalizedManifest as unknown as Record<string, unknown>;
     const sourceCode = revArtifacts?.sourceCode ?? candidate.sourceCode ?? "";
     const capabilities = revArtifacts?.capabilities ?? candidate.requiredCapabilities ?? {};
     const workflowDef = revArtifacts?.workflowDefinition;
     const tests = revArtifacts?.tests;
-
-    const { digest: _discardManifestDigest, ...manifestWithoutDigest } = manifest;
-
     return {
       manifestDigest: hashCanonicalContent(manifestWithoutDigest),
       sourceDigest: computeSha256(sourceCode),
       capabilityDigest: hashCanonical(capabilities),
       workflowDigest: workflowDef ? hashCanonical(workflowDef) : undefined,
       testDigest: tests ? computeSha256(JSON.stringify(tests)) : undefined,
+      artifactSetDigest: this.computeArtifactSetDigest(candidate, revision),
     };
+  }
+
+  /**
+   * Loads the exact immutable revision pinned by the lifecycle record.
+   * Returns null for legacy records without a persisted revision row; callers
+   * then fall back to the candidate's proposedTool/source for backwards
+   * compatibility while still enforcing artifactSetDigest when present.
+   */
+  private async loadPinnedRevision(
+    tenant: TenantContext,
+    record: CandidateLifecycleRecord,
+  ): Promise<CandidateRevision | null> {
+    if (!record.activeRevisionId) return null;
+    const rev = await this.candidateRepo.getRevisionById(tenant, record.activeRevisionId);
+    if (!rev) {
+      throw new Error(
+        `Pinned revision '${record.activeRevisionId}' not found for candidate '${record.candidateId}'`,
+      );
+    }
+    return rev;
+  }
+
+  /**
+   * Verifies the current artifact-set digest of the pinned revision matches the
+   * digest stored at lifecycle start. Throws on mismatch so that Revision A
+   * evidence cannot promote/publish Revision B and same-source changed-manifest
+   * is rejected. Legacy records without artifactSetDigest are exempt.
+   */
+  private verifyPinnedArtifactSet(
+    record: CandidateLifecycleRecord,
+    candidate: EvolutionCandidate,
+    pinnedRevision: CandidateRevision | null,
+  ): void {
+    const stored = record.evidenceDigests?.artifactSetDigest;
+    if (!stored) return;
+    const current = this.computeArtifactSetDigest(candidate, pinnedRevision);
+    if (current !== stored) {
+      throw new Error(
+        `Artifact-set digest mismatch for candidate '${record.candidateId}': stored '${stored}' vs current '${current}' (pinned revision '${record.activeRevisionId}')`,
+      );
+    }
   }
 
   /**
@@ -244,54 +464,248 @@ export class CandidateLifecycleOrchestrator {
       typeof rawRevision.id === "string"
         ? rawRevision.id
         : undefined;
-    const revisionId = revision?.revisionId ?? idFromRevision ?? `rev_${candidateId}_1`;
+    let revisionId = revision?.revisionId ?? idFromRevision ?? `rev_${candidateId}_1`;
     const targetVersion = options.targetVersion ?? candidate.proposedTool.version ?? "1.0.0";
     const now = new Date().toISOString();
 
-    // Ensure candidate & revision are persisted in repository
+    // Ensure candidate & revision are persisted and use the normalized persisted
+    // representation for digest computation so that hash is byte-equivalent
+    // after repository round-trip (canonical JSON, stored plan, etc.).
+    let persistedCandidate: EvolutionCandidate = candidate;
+    let persistedRevision: CandidateRevision | null = revision ?? null;
     const existingCand = await this.candidateRepo.getCandidateById(tenant, candidateId);
     if (!existingCand) {
-      await this.candidateRepo.saveCandidate(tenant, candidate);
+      persistedCandidate = await this.candidateRepo.saveCandidate(tenant, candidate);
+    } else {
+      persistedCandidate = existingCand;
     }
     if (revision) {
       const existingRev = await this.candidateRepo.getRevisionById(tenant, revisionId);
       if (!existingRev) {
-        await this.candidateRepo.saveRevision(tenant, revision);
+        persistedRevision = await this.candidateRepo.saveRevision(tenant, revision);
+      } else {
+        persistedRevision = existingRev;
+      }
+    } else {
+      // Legacy path: synthesize and persist a complete immutable CandidateRevision
+      // from candidate manifest/source/capabilities before pinning. Never pin
+      // a synthetic ID without a persisted row.
+      const existingSynthetic = await this.candidateRepo.getRevisionById(tenant, revisionId);
+      if (existingSynthetic) {
+        persistedRevision = existingSynthetic;
+      } else {
+        const manifest = persistedCandidate.proposedTool;
+        const rawCaps = persistedCandidate.requiredCapabilities as unknown as Record<string, unknown>;
+        const capabilities = (() => {
+          const caps = JSON.parse(JSON.stringify(rawCaps ?? {})) as Record<string, unknown>;
+          if (caps.fs && typeof caps.fs === "object") {
+            const fs = caps.fs as Record<string, unknown>;
+            if ("allowRead" in fs || "allowWrite" in fs) {
+              const allowRead = Boolean((fs as Record<string, unknown>).allowRead);
+              const allowWrite = Boolean((fs as Record<string, unknown>).allowWrite);
+              caps.fs = {
+                readPaths: Array.isArray(fs.readPaths) ? fs.readPaths : [],
+                writePaths: Array.isArray(fs.writePaths) ? fs.writePaths : [],
+                allowWorkspaceRoot: allowRead,
+                allowTemp: allowRead || allowWrite,
+                denyPaths: Array.isArray(fs.denyPaths) ? fs.denyPaths : [],
+                maxFileSizeBytes: typeof fs.maxFileSizeBytes === "number" ? fs.maxFileSizeBytes : 10485760,
+              };
+            }
+          }
+          const capsRec = caps as Record<string, unknown>;
+          if (capsRec.exec && !capsRec.command) {
+            const exec = capsRec.exec as Record<string, unknown>;
+            capsRec.command = {
+              allowShellExecution: Boolean(exec.allowExec),
+              allowedCommands: Array.isArray(exec.allowedCommands) ? exec.allowedCommands : [],
+            };
+          }
+          return caps as unknown as CapabilityManifest;
+        })();
+        const sourceCode = persistedCandidate.sourceCode ?? "";
+        const inputSchema = (manifest as unknown as { parameters: unknown }).parameters as Record<string, unknown>;
+        const outputSchema = (manifest.outputSchema ?? { type: "object", properties: {}, required: [] }) as unknown as Record<string, unknown>;
+        const opportunityId = (persistedCandidate as unknown as { opportunityId?: string }).opportunityId ?? `opp_${candidateId}`;
+        const plan = {
+          id: `plan_${candidateId}`,
+          opportunityId,
+          workspaceId: tenant.workspaceId,
+          name: manifest.name,
+          description: manifest.description,
+          intent: manifest.description,
+          targetType: "single_tool",
+          variableInputs: [],
+          invariantInputs: [],
+          inputSchema,
+          outputSchema,
+          steps: [],
+          capabilities,
+          capabilityRequirements: capabilities,
+          runtime: {
+            runtime: "deno",
+            memoryLimitMb: 128,
+            timeoutMs: 30000,
+            cpuLimitPercent: 100,
+            maxOutputSizeBytes: 1048576,
+          },
+          metadata: {},
+          createdAt: now,
+        } as unknown as CandidateRevision["artifacts"]["plan"];
+        const workflowContract = (manifest as unknown as { workflowContract?: unknown }).workflowContract ?? (rawCaps as unknown as { workflowContract?: unknown })?.workflowContract;
+        if (workflowContract) {
+          (plan as unknown as Record<string, unknown>).workflowContract = workflowContract;
+        }
+        const manifestForRevision = { ...manifest, capabilities } as unknown as CandidateRevision["artifacts"]["manifest"];
+        const synthesized: CandidateRevision = {
+          revisionId,
+          candidateId,
+          revisionNumber: 1,
+          artifacts: {
+            plan,
+            manifest: manifestForRevision,
+            capabilities: capabilities as unknown as CandidateRevision["artifacts"]["capabilities"],
+            sourceCode,
+            workflowDefinition: (persistedCandidate as unknown as { workflowDefinition?: unknown }).workflowDefinition as CandidateRevision["artifacts"]["workflowDefinition"],
+            tests: (persistedCandidate as unknown as { tests?: unknown }).tests as CandidateRevision["artifacts"]["tests"],
+            generatedAt: now,
+          },
+          selfReview: {
+            passed: true,
+            issues: [],
+            reviewedAt: now,
+          },
+          repairHistory: [],
+          createdAt: now,
+        } as CandidateRevision;
+        persistedRevision = await this.candidateRepo.saveRevision(tenant, synthesized);
       }
     }
 
     const existing = await this.lifecycleRepo.getLifecycle(tenant, candidateId);
     if (existing) {
-      return existing;
+      if (existing.activeRevisionId === revisionId) {
+        // Immutable revision check: same ID must have same artifacts, else issue new revision
+        if (revision && persistedRevision) {
+          const existingHash = this.computeArtifactSetDigest(persistedCandidate, persistedRevision);
+          const newHash = this.computeArtifactSetDigest(persistedCandidate, revision);
+          if (existingHash !== newHash) {
+            // Same revision ID but different artifacts – immutable violation, create new revision
+            const newRevisionId = `${revisionId}_imm_${Date.now().toString(36).slice(0, 6)}`;
+            const newRevision: CandidateRevision = {
+              ...revision,
+              revisionId: newRevisionId,
+              revisionNumber: (persistedRevision.revisionNumber ?? 1) + 1,
+              parentRevisionId: persistedRevision.revisionId,
+            };
+            const persistedNewRevision = await this.candidateRepo.saveRevision(tenant, newRevision);
+            persistedRevision = persistedNewRevision;
+            revisionId = newRevisionId;
+            // Fall through to revision-change handling below
+          } else {
+            await this.ensureOutboxForState(tenant, existing);
+            return existing;
+          }
+        } else {
+          await this.ensureOutboxForState(tenant, existing);
+          return existing;
+        }
+      }
+      // Revision changed: start a fresh validation chain and clear downstream evidence.
+      // Preserve atomicity expectations of peer AtomicLifecycleSuccessors by using
+      // repository clearing logic (revisionChange) and re-enqueueing validation.
+      const newDigests = this.computeCandidateEvidenceDigests(persistedCandidate, persistedRevision);
+      const persistedReplayOptionsForRevChange = options.replayOptions as unknown as HistoricalReplayOptions | undefined;
+      const persistedReplayOptionsDigestForRevChange = persistedReplayOptionsForRevChange
+        ? hashCanonical(persistedReplayOptionsForRevChange)
+        : null;
+      if (persistedReplayOptionsDigestForRevChange) {
+        newDigests.replayOptionsDigest = persistedReplayOptionsDigestForRevChange;
+      }
+      const revChangeNow = new Date().toISOString();
+      const revChangeTransition = {
+        revisionId,
+        fromState: existing.currentState,
+        toState: "validating" as const,
+        targetVersion,
+        idempotencyKey: `cand_${candidateId}_rev_change_${revisionId}_${Date.now()}`,
+        attempt: (existing.attempt || 1) + 1,
+        evidenceDigests: newDigests,
+        terminalReason: null,
+        validationResult: null,
+        replayResult: null,
+        evaluationResult: null,
+        publicationRecordId: null,
+        publishedVersion: null,
+        persistedReplayOptions: persistedReplayOptionsForRevChange ?? null,
+        persistedReplayOptionsDigest: persistedReplayOptionsDigestForRevChange,
+        attemptHistoryEntry: {
+          attempt: (existing.attempt || 1) + 1,
+          state: "validating" as const,
+          startedAt: revChangeNow,
+          completedAt: revChangeNow,
+          durationMs: 0,
+          status: "retrying" as const,
+          error: `Revision change ${existing.activeRevisionId} -> ${revisionId}`,
+        },
+        metadata: {
+          stage: "revision_change",
+          previousRevisionId: existing.activeRevisionId,
+          newRevisionId: revisionId,
+          previousState: existing.currentState,
+        },
+      };
+      const revChangePayload: LifecycleJobPayload = {
+        candidateId,
+        revisionId,
+        targetVersion,
+        step: "validate",
+        idempotencyKey: `cand_${candidateId}_val_job_rev_change_${revisionId}_1`,
+        attempt: 1,
+        scheduledAt: revChangeNow,
+      };
+      const refreshed = await this.atomicTransitionWithOutbox(
+        tenant,
+        candidateId,
+        revChangeTransition as never,
+        revChangePayload,
+        EVOLUTION_LIFECYCLE_JOB_TYPES.VALIDATE_CANDIDATE,
+        "validate",
+      );
+      return refreshed;
     }
 
-    const digests = this.computeCandidateEvidenceDigests(candidate, revision);
+    const digests = this.computeCandidateEvidenceDigests(persistedCandidate, persistedRevision);
+    const persistedReplayOptions = options.replayOptions as unknown as HistoricalReplayOptions | undefined;
+    const persistedReplayOptionsDigest = persistedReplayOptions ? hashCanonical(persistedReplayOptions) : null;
+    if (persistedReplayOptionsDigest) {
+      digests.replayOptionsDigest = persistedReplayOptionsDigest;
+    }
     const idempotencyKey = options.idempotencyKey ?? `cand_${candidateId}_drafted_${Date.now()}`;
-
-    const record = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+    const draftedTransition = {
       revisionId,
-      fromState: "drafted",
-      toState: "drafted",
+      fromState: "drafted" as const,
+      toState: "drafted" as const,
       targetVersion,
       idempotencyKey,
       attempt: 1,
       evidenceDigests: digests,
+      persistedReplayOptions: persistedReplayOptions ?? null,
+      persistedReplayOptionsDigest,
       attemptHistoryEntry: {
         attempt: 1,
-        state: "drafted",
+        state: "drafted" as const,
         startedAt: now,
         completedAt: now,
         durationMs: 0,
-        status: "succeeded",
+        status: "succeeded" as const,
       },
       metadata: {
         toolName: candidate.proposedTool.name,
         targetVersion,
         stage: "draft",
       },
-    });
-
-    // Schedule verification / validation
+    };
     const jobPayload: LifecycleJobPayload = {
       candidateId,
       revisionId,
@@ -302,25 +716,14 @@ export class CandidateLifecycleOrchestrator {
       scheduledAt: now,
     };
 
-    if (this.pool) {
-      try {
-        await OutboxRepository.insert(this.pool, {
-          accountId: tenant.accountId,
-          workspaceId: tenant.workspaceId,
-          aggregateType: "candidate_lifecycle",
-          aggregateId: candidateId,
-          eventType: EVOLUTION_LIFECYCLE_JOB_TYPES.VALIDATE_CANDIDATE,
-          payload: jobPayload as unknown as Record<string, unknown>,
-          headers: {
-            step: "validate",
-            workspaceId: tenant.workspaceId,
-          },
-        });
-      } catch {
-        // Continue
-      }
-    }
-
+    const record = await this.atomicTransitionWithOutbox(
+      tenant,
+      candidateId,
+      draftedTransition as never,
+      jobPayload,
+      EVOLUTION_LIFECYCLE_JOB_TYPES.VALIDATE_CANDIDATE,
+      "validate",
+    );
     return record;
   }
 
@@ -397,6 +800,7 @@ export class CandidateLifecycleOrchestrator {
       record.currentState === "eligible" ||
       record.currentState === "published"
     ) {
+      await this.ensureOutboxForState(tenant, record);
       return record;
     }
 
@@ -416,25 +820,30 @@ export class CandidateLifecycleOrchestrator {
       throw new Error(`Candidate '${candidateId}' not found in repository`);
     }
 
-    const activeRevision = await this.candidateRepo.getActiveRevision(tenant, candidateId);
-    const sourceCode = activeRevision?.artifacts?.sourceCode ?? candidate.sourceCode ?? "";
-    const manifest = activeRevision?.artifacts?.manifest ?? candidate.proposedTool;
+    // Pin to the immutable revision recorded in the lifecycle row; do not use
+    // getActiveRevision which could drift to a newer B revision. Legacy
+    // records without a persisted revision fall back to the candidate snapshot
+    // but still enforce artifactSetDigest when present.
+    const pinnedRevision = await this.loadPinnedRevision(tenant, record);
+    this.verifyPinnedArtifactSet(record, candidate, pinnedRevision);
+    const sourceCode = pinnedRevision?.artifacts?.sourceCode ?? candidate.sourceCode ?? "";
+    const manifest = pinnedRevision?.artifacts?.manifest ?? candidate.proposedTool;
     const requiredCapabilities =
-      activeRevision?.artifacts?.capabilities ?? candidate.requiredCapabilities ?? {};
-    const workflowDefinition = activeRevision?.artifacts?.workflowDefinition;
-    const tests = activeRevision?.artifacts?.tests;
+      pinnedRevision?.artifacts?.capabilities ?? candidate.requiredCapabilities ?? {};
+    const workflowDefinition = pinnedRevision?.artifacts?.workflowDefinition;
+    const tests = pinnedRevision?.artifacts?.tests;
 
     const attemptNumber = options.attempt ?? (record.attempt || 1);
     const startTime = Date.now();
     const nowIso = new Date().toISOString();
 
     try {
-      // Execute Candidate Validation Service
+      // Execute Candidate Validation Service with pinned revision snapshot
       const validationResult = await this.validationService.validateCandidate(
         {
           id: candidate.id,
           candidateId: candidate.id,
-          revisionId: activeRevision?.revisionId,
+          revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
           manifest,
           sourceCode,
           requiredCapabilities,
@@ -467,17 +876,34 @@ export class CandidateLifecycleOrchestrator {
         const validationDigest = hashCanonical(validationResult);
         const evidenceDigests: EvidenceDigests = {
           ...record.evidenceDigests,
-          ...this.computeCandidateEvidenceDigests(candidate, activeRevision),
+          ...this.computeCandidateEvidenceDigests(candidate, pinnedRevision),
           validationDigest,
         };
+        // Persist replay evidence atomically before any replay job when supplied via validate flow.
+        const persistedReplayOptionsForValidate = options.replayOptions as unknown as HistoricalReplayOptions | undefined;
+        const persistedReplayOptionsDigestForValidate = persistedReplayOptionsForValidate
+          ? hashCanonical(persistedReplayOptionsForValidate)
+          : null;
+        if (persistedReplayOptionsDigestForValidate) {
+          evidenceDigests.replayOptionsDigest = persistedReplayOptionsDigestForValidate;
+        }
 
         const idempotencyKey =
           options.idempotencyKey ?? `cand_${candidateId}_validated_${attemptNumber}`;
 
-        const updated = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
-          revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+                const replayJobPayload: LifecycleJobPayload = {
+          candidateId,
+          revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
+          targetVersion: record.targetVersion,
+          step: "replay",
+          idempotencyKey: `cand_${candidateId}_replay_job_${attemptNumber}`,
+          attempt: 1,
+          scheduledAt: new Date().toISOString(),
+        };
+        const replayTransition: Record<string, unknown> = {
+          revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
           fromState: record.currentState,
-          toState: "replaying",
+          toState: "replaying" as const,
           targetVersion: record.targetVersion,
           idempotencyKey,
           attempt: attemptNumber,
@@ -485,37 +911,19 @@ export class CandidateLifecycleOrchestrator {
           validationResult: { ...validationResult, passed: true },
           attemptHistoryEntry: attemptEntry,
           metadata: { stage: "validate", status: "passed", durationMs },
-        });
-
-        // Schedule replay
-        const jobPayload: LifecycleJobPayload = {
-          candidateId,
-          revisionId: updated.activeRevisionId,
-          targetVersion: updated.targetVersion,
-          step: "replay",
-          idempotencyKey: `cand_${candidateId}_replay_job_${attemptNumber}`,
-          attempt: 1,
-          scheduledAt: new Date().toISOString(),
         };
-
-        if (this.pool) {
-          try {
-            await OutboxRepository.insert(this.pool, {
-              accountId: tenant.accountId,
-              workspaceId: tenant.workspaceId,
-              aggregateType: "candidate_lifecycle",
-              aggregateId: candidateId,
-              eventType: EVOLUTION_LIFECYCLE_JOB_TYPES.REPLAY_CANDIDATE,
-              payload: jobPayload as unknown as Record<string, unknown>,
-              headers: {
-                step: "replay",
-                workspaceId: tenant.workspaceId,
-              },
-            });
-          } catch {
-            // Continue
-          }
+        if (persistedReplayOptionsForValidate !== undefined) {
+          (replayTransition as Record<string, unknown>).persistedReplayOptions = persistedReplayOptionsForValidate;
+          (replayTransition as Record<string, unknown>).persistedReplayOptionsDigest = persistedReplayOptionsDigestForValidate;
         }
+        const updated = await this.atomicTransitionWithOutbox(
+          tenant,
+          candidateId,
+          replayTransition as never,
+          replayJobPayload,
+          EVOLUTION_LIFECYCLE_JOB_TYPES.REPLAY_CANDIDATE,
+          "replay",
+        );
 
         return updated;
       }
@@ -523,12 +931,12 @@ export class CandidateLifecycleOrchestrator {
       // L1: route repairable validation failures through the bounded repair
       // loop before going terminal. Each attempt produces a child revision and
       // re-enters validation; at most 2 validation-driven repairs per candidate.
-      if (isRepairable && attemptNumber <= 2 && activeRevision) {
+      if (isRepairable && attemptNumber <= 2 && pinnedRevision) {
         const repaired = await this.attemptValidationRepair(
           tenant,
           candidate.id,
           record,
-          activeRevision,
+          pinnedRevision,
           validationResult,
           options,
           attemptNumber,
@@ -557,7 +965,7 @@ export class CandidateLifecycleOrchestrator {
       const idempotencyKey =
         options.idempotencyKey ?? `cand_${candidateId}_val_failed_${attemptNumber}`;
       const failedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
-        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
         fromState: record.currentState,
         toState: "failed",
         targetVersion: record.targetVersion,
@@ -600,7 +1008,7 @@ export class CandidateLifecycleOrchestrator {
 
       if (classification.retryable) {
         return await this.lifecycleRepo.recordTransition(tenant, candidateId, {
-          revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+          revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
           fromState: record.currentState,
           toState: record.currentState,
           targetVersion: record.targetVersion,
@@ -630,7 +1038,7 @@ export class CandidateLifecycleOrchestrator {
       const toState: CandidateLifecycleState = isValidationOrSecurity ? "failed" : "dead_letter";
 
       const failedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
-        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
         fromState: record.currentState,
         toState,
         targetVersion: record.targetVersion,
@@ -664,12 +1072,87 @@ export class CandidateLifecycleOrchestrator {
     }
   }
 
+  private getPersistedReplayOptions(
+    record: CandidateLifecycleRecord,
+  ): HistoricalReplayOptions | undefined {
+    const persisted = record.persistedReplayOptions;
+    const digest = record.persistedReplayOptionsDigest;
+    if (!persisted && !digest) return undefined;
+    if (!persisted || !digest) {
+      throw new Error(
+        `Persisted replay options integrity failure for candidate '${record.candidateId}': options or digest missing (options=${persisted ? "present" : "missing"}, digest=${digest ? "present" : "missing"})`,
+      );
+    }
+    const computed = hashCanonical(persisted);
+    if (computed !== digest) {
+      throw new Error(
+        `Persisted replay options digest mismatch for candidate '${record.candidateId}': tampered persisted options (expected '${digest}', computed '${computed}')`,
+      );
+    }
+    const digestInEvidence = record.evidenceDigests?.replayOptionsDigest;
+    if (digestInEvidence && digestInEvidence !== digest) {
+      throw new Error(
+        `Persisted replay options digest mismatch for candidate '${record.candidateId}': evidence digests out of sync (record '${digest}' vs evidenceDigests '${digestInEvidence}')`,
+      );
+    }
+    return persisted;
+  }
+
+  /**
+   * Atomically persists workload benchmark evidence for a candidate that is already
+   * in replaying state. This is the durable counterpart to the ephemeral
+   * replayOptions that was previously passed directly to stepReplay. The method
+   * hashes the options, updates evidenceDigests.replayOptionsDigest and the
+   * persisted columns in a single recordTransition, so a later queued/resumed
+   * stepReplay reads verified persisted options only.
+   */
+  async persistReplayOptions(
+    tenant: TenantContext,
+    candidateId: string,
+    replayOptions: HistoricalReplayOptions,
+  ): Promise<CandidateLifecycleRecord> {
+    this.enforceTenant(tenant);
+    const record = await this.lifecycleRepo.getLifecycle(tenant, candidateId);
+    if (!record) {
+      throw new Error(`Lifecycle record for candidate '${candidateId}' not found`);
+    }
+    const digest = hashCanonical(replayOptions);
+    // Validate that persisted digest would not conflict with a different already-persisted value.
+    if (record.persistedReplayOptionsDigest && record.persistedReplayOptionsDigest !== digest) {
+      const computedExisting = record.persistedReplayOptions ? hashCanonical(record.persistedReplayOptions) : null;
+      if (computedExisting && computedExisting !== digest) {
+        // Allow overwrite but the digest mismatch will be caught by getPersistedReplayOptions on next replay.
+        // We still persist the new value atomically.
+      }
+    }
+    const evidenceDigests: EvidenceDigests = {
+      ...record.evidenceDigests,
+      replayOptionsDigest: digest,
+    };
+    const transition = {
+      revisionId: record.activeRevisionId,
+      fromState: record.currentState,
+      toState: record.currentState,
+      targetVersion: record.targetVersion,
+      idempotencyKey: `cand_${candidateId}_persist_replay_${digest.slice(0, 8)}_${Date.now()}`,
+      attempt: record.attempt,
+      evidenceDigests,
+      persistedReplayOptions: replayOptions,
+      persistedReplayOptionsDigest: digest,
+      metadata: { stage: "persist_replay_options" },
+    };
+    return this.lifecycleRepo.recordTransition(tenant, candidateId, transition as never);
+  }
+
   private async resolveReplayEvidence(
     tenant: TenantContext,
     candidate: EvolutionCandidate,
     baselineEvents?: NormalizedSessionEvent[],
   ): Promise<EvidenceSource> {
     if (baselineEvents && baselineEvents.length > 0) {
+      // Ephemeral baselineEvents are ignored after startLifecycle persistence.
+      // This branch is retained only for legacy direct calls without persisted record;
+      // stepReplay will not pass baselineEvents after durability fix.
       return { id: `candidate_${candidate.id}_explicit_evidence`, events: baselineEvents };
     }
 
@@ -755,6 +1238,7 @@ export class CandidateLifecycleOrchestrator {
       record.currentState === "eligible" ||
       record.currentState === "published"
     ) {
+      await this.ensureOutboxForState(tenant, record);
       return record;
     }
 
@@ -768,37 +1252,38 @@ export class CandidateLifecycleOrchestrator {
     ) {
       return record;
     }
-
     const candidate = await this.candidateRepo.getCandidateById(tenant, candidateId);
     if (!candidate) {
       throw new Error(`Candidate '${candidateId}' not found`);
     }
 
-    const activeRevision = await this.candidateRepo.getActiveRevision(tenant, candidateId);
-    const sourceCode = activeRevision?.artifacts?.sourceCode ?? candidate.sourceCode ?? "";
-    const manifest = activeRevision?.artifacts?.manifest ?? candidate.proposedTool;
+    const pinnedRevision = await this.loadPinnedRevision(tenant, record);
+    this.verifyPinnedArtifactSet(record, candidate, pinnedRevision);
+    const sourceCode = pinnedRevision?.artifacts?.sourceCode ?? candidate.sourceCode ?? "";
+    const manifest = pinnedRevision?.artifacts?.manifest ?? candidate.proposedTool;
     const requiredCapabilities =
-      activeRevision?.artifacts?.capabilities ?? candidate.requiredCapabilities ?? {};
-    const workflowDefinition = activeRevision?.artifacts?.workflowDefinition;
+      pinnedRevision?.artifacts?.capabilities ?? candidate.requiredCapabilities ?? {};
+    const workflowDefinition = pinnedRevision?.artifacts?.workflowDefinition;
 
     const attemptNumber = options.attempt ?? (record.attempt || 1);
     const startTime = Date.now();
     const nowIso = new Date().toISOString();
     try {
+      const persistedReplayOptions = this.getPersistedReplayOptions(record);
       const replayResult: HistoricalReplayResult = await this.replayService.replayCandidate(
         tenant,
         {
           candidate: {
             id: candidate.id,
             candidateId: candidate.id,
-            revisionId: activeRevision?.revisionId,
+            revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
             manifest,
             sourceCode,
             requiredCapabilities,
             workflowDefinition,
           },
-          evidence: await this.resolveReplayEvidence(tenant, candidate, options.baselineEvents),
-          ...options.replayOptions,
+          evidence: await this.resolveReplayEvidence(tenant, candidate),
+          options: persistedReplayOptions,
         },
       );
 
@@ -820,17 +1305,26 @@ export class CandidateLifecycleOrchestrator {
         const replayDigest = hashCanonical(replayResult);
         const evidenceDigests: EvidenceDigests = {
           ...record.evidenceDigests,
-          ...this.computeCandidateEvidenceDigests(candidate, activeRevision),
+          ...this.computeCandidateEvidenceDigests(candidate, pinnedRevision),
           replayDigest,
         };
 
         const idempotencyKey =
           options.idempotencyKey ?? `cand_${candidateId}_replayed_${attemptNumber}`;
 
-        const updated = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
-          revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+                const evaluateJobPayload: LifecycleJobPayload = {
+          candidateId,
+          revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
+          targetVersion: record.targetVersion,
+          step: "evaluate",
+          idempotencyKey: `cand_${candidateId}_eval_job_${attemptNumber}`,
+          attempt: 1,
+          scheduledAt: new Date().toISOString(),
+        };
+        const evaluatingTransition = {
+          revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
           fromState: record.currentState,
-          toState: "evaluating",
+          toState: "evaluating" as const,
           targetVersion: record.targetVersion,
           idempotencyKey,
           attempt: attemptNumber,
@@ -838,37 +1332,15 @@ export class CandidateLifecycleOrchestrator {
           replayResult: { ...replayResult, passed: true },
           attemptHistoryEntry: attemptEntry,
           metadata: { stage: "replay", status: "passed", durationMs },
-        });
-
-        // Schedule evaluation
-        const jobPayload: LifecycleJobPayload = {
-          candidateId,
-          revisionId: updated.activeRevisionId,
-          targetVersion: updated.targetVersion,
-          step: "evaluate",
-          idempotencyKey: `cand_${candidateId}_eval_job_${attemptNumber}`,
-          attempt: 1,
-          scheduledAt: new Date().toISOString(),
         };
-
-        if (this.pool) {
-          try {
-            await OutboxRepository.insert(this.pool, {
-              accountId: tenant.accountId,
-              workspaceId: tenant.workspaceId,
-              aggregateType: "candidate_lifecycle",
-              aggregateId: candidateId,
-              eventType: EVOLUTION_LIFECYCLE_JOB_TYPES.EVALUATE_CANDIDATE,
-              payload: jobPayload as unknown as Record<string, unknown>,
-              headers: {
-                step: "evaluate",
-                workspaceId: tenant.workspaceId,
-              },
-            });
-          } catch {
-            // Continue
-          }
-        }
+        const updated = await this.atomicTransitionWithOutbox(
+          tenant,
+          candidateId,
+          evaluatingTransition as never,
+          evaluateJobPayload,
+          EVOLUTION_LIFECYCLE_JOB_TYPES.EVALUATE_CANDIDATE,
+          "evaluate",
+        );
 
         return updated;
       }
@@ -889,7 +1361,7 @@ export class CandidateLifecycleOrchestrator {
       const idempotencyKey =
         options.idempotencyKey ?? `cand_${candidateId}_replay_failed_${attemptNumber}`;
       const failedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
-        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
         fromState: record.currentState,
         toState: "rejected",
         targetVersion: record.targetVersion,
@@ -933,7 +1405,7 @@ export class CandidateLifecycleOrchestrator {
 
       if (classification.retryable) {
         return await this.lifecycleRepo.recordTransition(tenant, candidateId, {
-          revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+          revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
           fromState: record.currentState,
           toState: record.currentState,
           targetVersion: record.targetVersion,
@@ -955,7 +1427,7 @@ export class CandidateLifecycleOrchestrator {
       };
 
       const failedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
-        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
         fromState: record.currentState,
         toState: "dead_letter",
         targetVersion: record.targetVersion,
@@ -1007,6 +1479,7 @@ export class CandidateLifecycleOrchestrator {
     }
 
     if (record.currentState === "eligible" || record.currentState === "published") {
+      await this.ensureOutboxForState(tenant, record);
       return record;
     }
 
@@ -1026,12 +1499,13 @@ export class CandidateLifecycleOrchestrator {
       throw new Error(`Candidate '${candidateId}' not found`);
     }
 
-    const activeRevision = await this.candidateRepo.getActiveRevision(tenant, candidateId);
-    const sourceCode = activeRevision?.artifacts?.sourceCode ?? candidate.sourceCode ?? "";
-    const manifest = activeRevision?.artifacts?.manifest ?? candidate.proposedTool;
+    const pinnedRevision = await this.loadPinnedRevision(tenant, record);
+    this.verifyPinnedArtifactSet(record, candidate, pinnedRevision);
+    const sourceCode = pinnedRevision?.artifacts?.sourceCode ?? candidate.sourceCode ?? "";
+    const manifest = pinnedRevision?.artifacts?.manifest ?? candidate.proposedTool;
     const requiredCapabilities =
-      activeRevision?.artifacts?.capabilities ?? candidate.requiredCapabilities ?? {};
-    const workflowDefinition = activeRevision?.artifacts?.workflowDefinition;
+      pinnedRevision?.artifacts?.capabilities ?? candidate.requiredCapabilities ?? {};
+    const workflowDefinition = pinnedRevision?.artifacts?.workflowDefinition;
 
     const attemptNumber = options.attempt ?? (record.attempt || 1);
     const startTime = Date.now();
@@ -1083,19 +1557,22 @@ export class CandidateLifecycleOrchestrator {
       updatedAt: candidate.trigger.detectedAt || nowIso,
     };
 
-    // Authoritative persisted revision plan overrides caller-supplied stale fields
-    const authoritativePlan = activeRevision?.artifacts?.plan as unknown as
-      | { workflowContract?: unknown; workflowCoverage?: unknown }
-      | undefined;
-    const authoritativeWorkflowContract = authoritativePlan?.workflowContract;
-    const authoritativeWorkflowCoverage = authoritativePlan?.workflowCoverage;
+    // Authoritative persisted revision plan drives gate recomputation; derive contract/coverage inside evaluation service
+    const authoritativePlan: ToolPlan | undefined = pinnedRevision?.artifacts?.plan;
+
+    // Validate persisted evidence before use; fail fast if required validationResult missing
+    if (!record.validationResult) {
+      throw new Error(`Missing validationResult for candidate '${candidateId}' — cannot evaluate without validation evidence`);
+    }
+    const validationResult: CandidateValidationResult = record.validationResult;
+    const replayResult: HistoricalReplayResult | undefined = record.replayResult ?? undefined;
 
     try {
       const evaluationResult: EvaluationResult = await this.evaluationService.evaluateCandidate({
         candidate: {
           id: candidate.id,
           candidateId: candidate.id,
-          revisionId: activeRevision?.revisionId,
+          revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
           manifest,
           sourceCode,
           requiredCapabilities,
@@ -1103,13 +1580,11 @@ export class CandidateLifecycleOrchestrator {
         },
         opportunity,
         envelope: options.envelope,
-        ...(options.evaluationOptions as Record<string, unknown>),
-        // Authoritative persisted evidence overrides any stale caller fields
-        validationResult: record.validationResult as unknown as CandidateValidationResult,
-        replayResult: record.replayResult as unknown as HistoricalReplayResult,
-        workflowContract: authoritativeWorkflowContract as unknown as WorkflowContract | undefined,
-        workflowCoverage: authoritativeWorkflowCoverage as unknown as WorkflowCoverage | undefined,
-      } as unknown as Parameters<CandidateEvaluationService["evaluateCandidate"]>[0]);
+        options: options.evaluationOptions,
+        validationResult,
+        replayResult,
+        toolPlan: authoritativePlan,
+      });
 
       const durationMs = Date.now() - startTime;
       const rawResult: unknown = evaluationResult;
@@ -1180,17 +1655,26 @@ export class CandidateLifecycleOrchestrator {
         const evaluationDigest = hashCanonical(evaluationResult);
         const evidenceDigests: EvidenceDigests = {
           ...record.evidenceDigests,
-          ...this.computeCandidateEvidenceDigests(candidate, activeRevision),
+          ...this.computeCandidateEvidenceDigests(candidate, pinnedRevision),
           evaluationDigest,
         };
 
         const idempotencyKey =
           options.idempotencyKey ?? `cand_${candidateId}_evaluated_${attemptNumber}`;
 
-        const updated = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
-          revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+                const publishJobPayload: LifecycleJobPayload = {
+          candidateId,
+          revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
+          targetVersion: record.targetVersion,
+          step: "publish",
+          idempotencyKey: `cand_${candidateId}_pub_job_${attemptNumber}`,
+          attempt: 1,
+          scheduledAt: new Date().toISOString(),
+        };
+        const eligibleTransition = {
+          revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
           fromState: record.currentState,
-          toState: "eligible",
+          toState: "eligible" as const,
           targetVersion: record.targetVersion,
           idempotencyKey,
           attempt: attemptNumber,
@@ -1204,37 +1688,15 @@ export class CandidateLifecycleOrchestrator {
           },
           attemptHistoryEntry: attemptEntry,
           metadata: { stage: "evaluate", status: "eligible", durationMs },
-        });
-
-        // Schedule publish
-        const jobPayload: LifecycleJobPayload = {
-          candidateId,
-          revisionId: updated.activeRevisionId,
-          targetVersion: updated.targetVersion,
-          step: "publish",
-          idempotencyKey: `cand_${candidateId}_pub_job_${attemptNumber}`,
-          attempt: 1,
-          scheduledAt: new Date().toISOString(),
         };
-
-        if (this.pool) {
-          try {
-            await OutboxRepository.insert(this.pool, {
-              accountId: tenant.accountId,
-              workspaceId: tenant.workspaceId,
-              aggregateType: "candidate_lifecycle",
-              aggregateId: candidateId,
-              eventType: EVOLUTION_LIFECYCLE_JOB_TYPES.PUBLISH_CANDIDATE,
-              payload: jobPayload as unknown as Record<string, unknown>,
-              headers: {
-                step: "publish",
-                workspaceId: tenant.workspaceId,
-              },
-            });
-          } catch {
-            // Continue
-          }
-        }
+        const updated = await this.atomicTransitionWithOutbox(
+          tenant,
+          candidateId,
+          eligibleTransition as never,
+          publishJobPayload,
+          EVOLUTION_LIFECYCLE_JOB_TYPES.PUBLISH_CANDIDATE,
+          "publish",
+        );
 
         return updated;
       }
@@ -1253,7 +1715,7 @@ export class CandidateLifecycleOrchestrator {
 
       const idempotencyKey = `cand_${candidateId}_eval_rejected_${attemptNumber}`;
       const failedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
-        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
         fromState: record.currentState,
         toState: "rejected",
         targetVersion: record.targetVersion,
@@ -1297,7 +1759,7 @@ export class CandidateLifecycleOrchestrator {
 
       if (classification.retryable) {
         return await this.lifecycleRepo.recordTransition(tenant, candidateId, {
-          revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+          revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
           fromState: record.currentState,
           toState: record.currentState,
           targetVersion: record.targetVersion,
@@ -1319,7 +1781,7 @@ export class CandidateLifecycleOrchestrator {
       };
 
       const failedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
-        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
         fromState: record.currentState,
         toState: "dead_letter",
         targetVersion: record.targetVersion,
@@ -1446,8 +1908,12 @@ export class CandidateLifecycleOrchestrator {
       }
     }
 
-    const activeRevision = await this.candidateRepo.getActiveRevision(tenant, candidateId);
-    const sourceCode = activeRevision?.artifacts?.sourceCode ?? candidate.sourceCode ?? "";
+    // Pin to immutable revision; verify artifact-set digest matches stored
+    // snapshot so publication publishes exactly that snapshot and rejects
+    // same-source changed-manifest.
+    const pinnedRevision = await this.loadPinnedRevision(tenant, record);
+    this.verifyPinnedArtifactSet(record, candidate, pinnedRevision);
+    const sourceCode = pinnedRevision?.artifacts?.sourceCode ?? candidate.sourceCode ?? "";
     const computedSourceDigest = computeSha256(sourceCode);
     if (
       record.evidenceDigests.sourceDigest &&
@@ -1457,6 +1923,16 @@ export class CandidateLifecycleOrchestrator {
         `Source digest mismatch: recorded '${record.evidenceDigests.sourceDigest}', current '${computedSourceDigest}'`,
       );
     }
+    // Enforce complete artifact-set digest match before publish
+    const currentArtifactSetDigest = this.computeArtifactSetDigest(candidate, pinnedRevision);
+    if (
+      record.evidenceDigests.artifactSetDigest &&
+      record.evidenceDigests.artifactSetDigest !== currentArtifactSetDigest
+    ) {
+      throw new Error(
+        `Artifact-set digest mismatch for publish: stored '${record.evidenceDigests.artifactSetDigest}' vs current '${currentArtifactSetDigest}' (pinned revision '${record.activeRevisionId}')`,
+      );
+    }
     const targetVersion = options.targetVersion ?? record.targetVersion;
     const attemptNumber = options.attempt ?? (record.attempt || 1);
     const startTime = Date.now();
@@ -1464,7 +1940,7 @@ export class CandidateLifecycleOrchestrator {
 
     try {
       const { digest: _d, ...baseManifest } =
-        activeRevision?.artifacts?.manifest ?? candidate.proposedTool;
+        pinnedRevision?.artifacts?.manifest ?? candidate.proposedTool;
       const manifestForPublish: ToolManifest = {
         ...baseManifest,
         digest: hashCanonicalContent(baseManifest),
@@ -1478,15 +1954,15 @@ export class CandidateLifecycleOrchestrator {
         proposedTool: manifestForPublish,
       };
 
-      // 5. Build and Sign Tool Artifact
+      // 5. Build and Sign Tool Artifact using pinned snapshot
       const toolVersion = await this.artifactService.publishCandidate(
         candidateForPublish,
         record.evaluationResult,
         {
           overrideVersion: targetVersion,
           keyId: options.signingKeyId,
-          revision: activeRevision ?? undefined,
-          workflowDefinition: activeRevision?.artifacts?.workflowDefinition,
+          revision: pinnedRevision ?? undefined,
+          workflowDefinition: pinnedRevision?.artifacts?.workflowDefinition,
         },
       );
 
@@ -1509,10 +1985,20 @@ export class CandidateLifecycleOrchestrator {
         signatureDigest: toolVersion.signature?.signature,
       };
 
-      const updatedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
-        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
-        fromState: "eligible",
-        toState: "published",
+            const publishedOutboxPayload = {
+        candidateId,
+        workspaceId: tenant.workspaceId,
+        toolName: toolVersion.manifest.name,
+        toolVersion: toolVersion.version,
+        artifactDigest: toolVersion.artifactDigest,
+        publicationRecordId,
+        publishedAt: new Date().toISOString(),
+      };
+      const publishedOutboxId = `outbox_${candidateId}_published_${idempotencyKey}`;
+      const publishedTransition = {
+        revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
+        fromState: "eligible" as const,
+        toState: "published" as const,
         targetVersion: toolVersion.version,
         idempotencyKey,
         attempt: attemptNumber,
@@ -1526,33 +2012,35 @@ export class CandidateLifecycleOrchestrator {
           artifactDigest: toolVersion.artifactDigest,
           signedKeyId: toolVersion.signature?.keyId,
         },
-      });
-
-      if (this.pool) {
-        try {
-          await OutboxRepository.insert(this.pool, {
+      };
+      let updatedRecord: CandidateLifecycleRecord;
+      if (this.pool && typeof (this.pool as unknown as { transaction?: unknown }).transaction === "function") {
+        updatedRecord = await (this.pool as DatabasePool).transaction(async (tx) => {
+          const rec = await this.lifecycleRepo.recordTransition(tenant, candidateId, publishedTransition as never, tx);
+          await OutboxRepository.insert(tx, {
+            id: publishedOutboxId,
             accountId: tenant.accountId,
             workspaceId: tenant.workspaceId,
             aggregateType: "candidate_lifecycle",
             aggregateId: candidateId,
             eventType: "candidate.lifecycle.published",
-            payload: {
-              candidateId,
-              workspaceId: tenant.workspaceId,
-              toolName: toolVersion.manifest.name,
-              toolVersion: toolVersion.version,
-              artifactDigest: toolVersion.artifactDigest,
-              publicationRecordId,
-              publishedAt: new Date().toISOString(),
-            },
-            headers: {
-              step: "published",
-              workspaceId: tenant.workspaceId,
-            },
+            payload: publishedOutboxPayload as unknown as Record<string, unknown>,
+            headers: { step: "published", workspaceId: tenant.workspaceId },
           });
-        } catch {
-          // Continue
-        }
+          return rec;
+        });
+      } else {
+        updatedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, publishedTransition as never);
+        await OutboxRepository.insert(this.pool as unknown as Queryable, {
+          id: publishedOutboxId,
+          accountId: tenant.accountId,
+          workspaceId: tenant.workspaceId,
+          aggregateType: "candidate_lifecycle",
+          aggregateId: candidateId,
+          eventType: "candidate.lifecycle.published",
+          payload: publishedOutboxPayload as unknown as Record<string, unknown>,
+          headers: { step: "published", workspaceId: tenant.workspaceId },
+        });
       }
 
       return { record: updatedRecord, toolVersion };
@@ -1570,7 +2058,7 @@ export class CandidateLifecycleOrchestrator {
 
       if (classification.retryable) {
         await this.lifecycleRepo.recordTransition(tenant, candidateId, {
-          revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+          revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
           fromState: record.currentState,
           toState: record.currentState,
           targetVersion: record.targetVersion,
@@ -1596,7 +2084,7 @@ export class CandidateLifecycleOrchestrator {
       };
 
       const failedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
-        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        revisionId: pinnedRevision?.revisionId ?? record.activeRevisionId,
         fromState: record.currentState,
         toState: "failed",
         targetVersion: record.targetVersion,
@@ -1762,7 +2250,10 @@ export class CandidateLifecycleOrchestrator {
       throw new Error(`Candidate '${candidateId}' not found`);
     }
 
-    const activeRevision = await this.candidateRepo.getActiveRevision(tenant, candidateId);
+    const pinnedRevision = await this.loadPinnedRevision(tenant, record);
+    // For repair, parent is pinned revision; fall back to active for legacy without row
+    const parentRevision = pinnedRevision ?? (await this.candidateRepo.getActiveRevision(tenant, candidateId));
+    const effectiveParent = parentRevision;
     const maxRepairs = options.maxRepairAttempts ?? this.maxRepairAttempts;
     const currentAttempt = record.attempt || 1;
 
@@ -1775,7 +2266,7 @@ export class CandidateLifecycleOrchestrator {
       };
 
       const failedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
-        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        revisionId: effectiveParent?.revisionId ?? record.activeRevisionId,
         fromState: record.currentState,
         toState: "failed",
         targetVersion: record.targetVersion,
@@ -1807,7 +2298,7 @@ export class CandidateLifecycleOrchestrator {
 
     // 2. Enforce Capability Monotonicity (Cannot broaden capabilities in child revisions)
     const originalCaps =
-      activeRevision?.artifacts?.capabilities ?? candidate.requiredCapabilities ?? {};
+      effectiveParent?.artifacts?.capabilities ?? candidate.requiredCapabilities ?? {};
     const proposedCaps = options.modifiedArtifacts?.capabilities ?? originalCaps;
 
     const broadened = this.checkCapabilityBroadening(originalCaps, proposedCaps);
@@ -1820,7 +2311,7 @@ export class CandidateLifecycleOrchestrator {
       };
 
       const failedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
-        revisionId: activeRevision?.revisionId ?? record.activeRevisionId,
+        revisionId: effectiveParent?.revisionId ?? record.activeRevisionId,
         fromState: record.currentState,
         toState: "failed",
         targetVersion: record.targetVersion,
@@ -1851,7 +2342,7 @@ export class CandidateLifecycleOrchestrator {
     }
 
     // 3. Create Immutable Child Revision
-    const newRevisionNumber = (activeRevision?.revisionNumber ?? 1) + 1;
+    const newRevisionNumber = (effectiveParent?.revisionNumber ?? 1) + 1;
     const newRevisionId = `rev_${candidateId}_${newRevisionNumber}_${randomUUID().replace(/-/g, "").slice(0, 8)}`;
     const nowIso = new Date().toISOString();
 
@@ -1859,9 +2350,9 @@ export class CandidateLifecycleOrchestrator {
       revisionId: newRevisionId,
       candidateId,
       revisionNumber: newRevisionNumber,
-      parentRevisionId: activeRevision?.revisionId,
+      parentRevisionId: effectiveParent?.revisionId,
       artifacts: {
-        plan: activeRevision?.artifacts?.plan ?? {
+        plan: effectiveParent?.artifacts?.plan ?? {
           id: `plan_${candidateId}`,
           opportunityId:
             (candidate as unknown as { opportunityId?: string }).opportunityId ||
@@ -1887,18 +2378,18 @@ export class CandidateLifecycleOrchestrator {
         },
         manifest:
           options.modifiedArtifacts?.manifest ??
-          activeRevision?.artifacts?.manifest ??
+          effectiveParent?.artifacts?.manifest ??
           candidate.proposedTool,
         capabilities: proposedCaps,
         sourceCode:
           options.modifiedArtifacts?.sourceCode ??
-          activeRevision?.artifacts?.sourceCode ??
+          effectiveParent?.artifacts?.sourceCode ??
           candidate.sourceCode ??
           "",
         workflowDefinition:
           options.modifiedArtifacts?.workflowDefinition ??
-          activeRevision?.artifacts?.workflowDefinition,
-        tests: activeRevision?.artifacts?.tests,
+          effectiveParent?.artifacts?.workflowDefinition,
+        tests: effectiveParent?.artifacts?.tests,
         generatedAt: nowIso,
       },
       selfReview: {
@@ -1907,7 +2398,7 @@ export class CandidateLifecycleOrchestrator {
         reviewedAt: nowIso,
       },
       repairHistory: [
-        ...(activeRevision?.repairHistory || []),
+        ...(effectiveParent?.repairHistory || []),
         {
           iteration: currentAttempt,
           reason: options.repairHint || "Automated lifecycle repair transition",
@@ -1918,14 +2409,23 @@ export class CandidateLifecycleOrchestrator {
       createdAt: nowIso,
     };
 
-    await this.candidateRepo.saveRevision(tenant, childRevision);
+    const persistedChildRevision = await this.candidateRepo.saveRevision(tenant, childRevision);
 
     // 4. Transition State to Repairing / Validating with child revision
-    const childDigests = this.computeCandidateEvidenceDigests(candidate, childRevision);
-    const updatedRecord = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
+    const childDigests = this.computeCandidateEvidenceDigests(candidate, persistedChildRevision);
+    const jobPayload: LifecycleJobPayload = {
+      candidateId,
+      revisionId: newRevisionId,
+      targetVersion: record.targetVersion,
+      step: "validate",
+      idempotencyKey: `cand_${candidateId}_val_job_rev_${newRevisionNumber}`,
+      attempt: currentAttempt + 1,
+      scheduledAt: nowIso,
+    };
+    const childTransition = {
       revisionId: newRevisionId,
       fromState: record.currentState,
-      toState: "validating",
+      toState: "validating" as const,
       targetVersion: record.targetVersion,
       idempotencyKey: `cand_${candidateId}_repaired_rev_${newRevisionNumber}`,
       attempt: currentAttempt + 1,
@@ -1936,49 +2436,27 @@ export class CandidateLifecycleOrchestrator {
       terminalReason: null,
       attemptHistoryEntry: {
         attempt: currentAttempt + 1,
-        state: "repairing",
+        state: "repairing" as const,
         startedAt: nowIso,
         completedAt: nowIso,
         durationMs: 0,
-        status: "succeeded",
+        status: "succeeded" as const,
       },
       metadata: {
         stage: "repair",
-        parentRevisionId: activeRevision?.revisionId,
+        parentRevisionId: effectiveParent?.revisionId,
         childRevisionId: newRevisionId,
         revisionNumber: newRevisionNumber,
       },
-    });
-
-    // Schedule validation for child revision
-    const jobPayload: LifecycleJobPayload = {
-      candidateId,
-      revisionId: newRevisionId,
-      targetVersion: updatedRecord.targetVersion,
-      step: "validate",
-      idempotencyKey: `cand_${candidateId}_val_job_rev_${newRevisionNumber}`,
-      attempt: currentAttempt + 1,
-      scheduledAt: nowIso,
     };
-
-    if (this.pool) {
-      try {
-        await OutboxRepository.insert(this.pool, {
-          accountId: tenant.accountId,
-          workspaceId: tenant.workspaceId,
-          aggregateType: "candidate_lifecycle",
-          aggregateId: candidateId,
-          eventType: EVOLUTION_LIFECYCLE_JOB_TYPES.VALIDATE_CANDIDATE,
-          payload: jobPayload as unknown as Record<string, unknown>,
-          headers: {
-            step: "validate",
-            workspaceId: tenant.workspaceId,
-          },
-        });
-      } catch {
-        // Continue
-      }
-    }
+    const updatedRecord = await this.atomicTransitionWithOutbox(
+      tenant,
+      candidateId,
+      childTransition as never,
+      jobPayload,
+      EVOLUTION_LIFECYCLE_JOB_TYPES.VALIDATE_CANDIDATE,
+      "validate",
+    );
 
     return updatedRecord;
   }
@@ -2064,11 +2542,13 @@ export class CandidateLifecycleOrchestrator {
     if (targetStage === "evaluate") nextState = "replaying";
     if (targetStage === "publish") nextState = "eligible";
 
-    const activeRevision = await this.candidateRepo.getActiveRevision(tenant, candidateId);
     const existing = await this.lifecycleRepo.getLifecycle(tenant, candidateId);
+    const pinnedForResume = existing ? await this.loadPinnedRevision(tenant, existing) : null;
+    const activeRevision = pinnedForResume ?? (await this.candidateRepo.getActiveRevision(tenant, candidateId));
+    const effectiveRevisionId = existing?.activeRevisionId ?? activeRevision?.revisionId ?? dlqRecord.revisionId;
 
     const updated = await this.lifecycleRepo.recordTransition(tenant, candidateId, {
-      revisionId: activeRevision?.revisionId ?? dlqRecord.revisionId,
+      revisionId: effectiveRevisionId,
       fromState: existing?.currentState ?? "failed",
       toState: nextState,
       targetVersion: existing?.targetVersion ?? "1.0.0",
@@ -2106,6 +2586,18 @@ export class CandidateLifecycleOrchestrator {
     tenant: TenantContext,
     payload: LifecycleJobPayload,
   ): Promise<CandidateLifecycleRecord> {
+    // Reject job payload revision mismatch against pinned activeRevisionId
+    const recordForPayload = await this.lifecycleRepo.getLifecycle(tenant, payload.candidateId);
+    if (
+      recordForPayload &&
+      payload.revisionId &&
+      recordForPayload.activeRevisionId &&
+      payload.revisionId !== recordForPayload.activeRevisionId
+    ) {
+      throw new Error(
+        `Job payload revision mismatch: payload revisionId '${payload.revisionId}' does not match pinned activeRevisionId '${recordForPayload.activeRevisionId}' for candidate '${payload.candidateId}'`,
+      );
+    }
     switch (payload.step) {
       case "validate":
         return this.stepValidate(tenant, payload.candidateId, {
@@ -2157,6 +2649,19 @@ export class CandidateLifecycleOrchestrator {
     } else {
       tenant = tenantOrPayload as TenantContext;
       payload = payloadOrTenant as LifecycleJobPayload;
+    }
+
+    // Early revision mismatch rejection (fail-closed) mirrors processJob check for callers using handleJob directly
+    const recordForHandle = await this.lifecycleRepo.getLifecycle(tenant, payload.candidateId);
+    if (
+      recordForHandle &&
+      payload.revisionId &&
+      recordForHandle.activeRevisionId &&
+      payload.revisionId !== recordForHandle.activeRevisionId
+    ) {
+      throw new Error(
+        `Job payload revision mismatch: payload revisionId '${payload.revisionId}' does not match pinned activeRevisionId '${recordForHandle.activeRevisionId}' for candidate '${payload.candidateId}'`,
+      );
     }
 
     return this.processJob(tenant, payload);

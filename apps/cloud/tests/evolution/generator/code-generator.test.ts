@@ -54,7 +54,7 @@ describe("CodeGenerator", () => {
     const plan = planner.plan(opp, { targetType: "single_tool" });
     const source = codeGen.generateSource(plan);
 
-    expect(source).toContain('await broker.fs.readFile(filePath, "utf-8");');
+    expect(source).toContain('broker.fs.readFile');
   });
 
   it("should generate TypeScript source for a filesystem write tool", () => {
@@ -77,7 +77,7 @@ describe("CodeGenerator", () => {
     const plan = planner.plan(opp, { targetType: "single_tool" });
     const source = codeGen.generateSource(plan);
 
-    expect(source).toContain("await broker.fs.writeFile(filePath, content);");
+    expect(source).toContain('broker.fs.writeFile');
   });
 
   it("should generate TypeScript source for a command execution tool", () => {

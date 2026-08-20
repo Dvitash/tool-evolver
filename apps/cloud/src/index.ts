@@ -43,6 +43,10 @@ import {
   CandidateRepository,
   createCandidateGenerationService,
 } from "./evolution/generator/index.js";
+import {
+  type BenchmarkEvidenceVerifier,
+  HmacBenchmarkEvidenceVerifier,
+} from "./evolution/replay/benchmark-attestation.js";
 import { CandidateLifecycleOrchestrator } from "./evolution/lifecycle/index.js";
 import {
   type OpportunityDetectionService,
@@ -51,6 +55,7 @@ import {
 import {
   type CandidateTarget,
   type EvidenceSource,
+  type HistoricalReplayOptions,
   type HistoricalReplayService,
   createHistoricalReplayService,
 } from "./evolution/replay/index.js";
@@ -184,6 +189,7 @@ export class CloudService {
 
   readonly historicalReplayService: HistoricalReplayService;
   readonly candidateEvaluationService: CandidateEvaluationService;
+  readonly benchmarkEvidenceVerifier?: BenchmarkEvidenceVerifier;
   readonly artifactRegistryService: ToolArtifactRegistryService;
   readonly catalogService: CloudCatalogService;
   readonly mcpServer: CloudMcpServer;
@@ -196,7 +202,7 @@ export class CloudService {
   readonly analyticsService: AnalyticsService;
   private isInitialized = false;
 
-  constructor(options: { config?: Partial<RawCloudConfig> } = {}) {
+  constructor(options: { config?: Partial<RawCloudConfig>; benchmarkEvidenceVerifier?: BenchmarkEvidenceVerifier } = {}) {
     this.config = loadConfig(options.config);
     this.dbPool = createDatabasePool(this.config.database);
     this.objectStore = createObjectStore(this.config.storage);
@@ -340,7 +346,14 @@ export class CloudService {
       outboxPublisher: this.outboxPublisher,
       catalogService: this.catalogService,
     });
-    this.candidateEvaluationService = createCandidateEvaluationService();
+    this.benchmarkEvidenceVerifier =
+      options.benchmarkEvidenceVerifier ??
+      (this.config.benchmarkAttestation
+        ? new HmacBenchmarkEvidenceVerifier(this.config.benchmarkAttestation)
+        : undefined);
+    this.candidateEvaluationService = createCandidateEvaluationService({
+      benchmarkEvidenceVerifier: this.benchmarkEvidenceVerifier,
+    });
     this.candidateLifecycleOrchestrator = new CandidateLifecycleOrchestrator(this.dbPool, {
       validationService: this.candidateValidationService,
       replayService: this.historicalReplayService,
@@ -656,9 +669,18 @@ export class CloudService {
             sendJson(res, 400, { error: "candidateId is required" }, headers);
             return true;
           }
+          const workloadBenchmarks = parsedObj.workloadBenchmarks as unknown[] | undefined;
+          const replayOptionsRaw = parsedObj.replayOptions as Record<string, unknown> | undefined;
+          let replayOptions: Record<string, unknown> | undefined;
+          if (replayOptionsRaw) {
+            replayOptions = replayOptionsRaw;
+          } else if (workloadBenchmarks) {
+            replayOptions = { workloadBenchmarks };
+          }
           const lifecycle = await this.candidateLifecycleOrchestrator.stepValidate(
             tenant,
             candidateId,
+            replayOptions ? { replayOptions: replayOptions as unknown as Record<string, unknown> } : {},
           );
           sendJson(res, 200, { lifecycle }, headers);
           return true;
@@ -672,10 +694,28 @@ export class CloudService {
             sendJson(res, 400, { error: "candidateId is required" }, headers);
             return true;
           }
-          const lifecycle = await this.candidateLifecycleOrchestrator.stepReplay(
-            tenant,
-            candidateId,
-          );
+          const workloadBenchmarks = parsedObj.workloadBenchmarks as unknown[] | undefined;
+          const replayOptionsRaw = parsedObj.replayOptions as Record<string, unknown> | undefined;
+          let replayOptions: Record<string, unknown> | undefined;
+          if (replayOptionsRaw) {
+            replayOptions = replayOptionsRaw;
+          } else if (workloadBenchmarks) {
+            replayOptions = { workloadBenchmarks };
+          }
+          if (replayOptions) {
+            const existing = await this.candidateLifecycleOrchestrator.lifecycleRepo.getLifecycle(
+              tenant,
+              candidateId,
+            );
+            if (existing && existing.currentState === "replaying") {
+              await this.candidateLifecycleOrchestrator.persistReplayOptions(
+                tenant,
+                candidateId,
+                replayOptions as unknown as HistoricalReplayOptions,
+              );
+            }
+          }
+          const lifecycle = await this.candidateLifecycleOrchestrator.stepReplay(tenant, candidateId);
           sendJson(res, 200, { lifecycle }, headers);
           return true;
         }
@@ -710,11 +750,16 @@ export class CloudService {
             return true;
           }
           const revision = await this.candidateRepo.getActiveRevision(tenant, candidateId);
+          const workloadBenchmarks = parsedObj.workloadBenchmarks as unknown[] | undefined;
+          const driveOptions = workloadBenchmarks
+            ? { replayOptions: { workloadBenchmarks } as unknown as Record<string, unknown> }
+            : {};
           const { record, toolVersion } =
             await this.candidateLifecycleOrchestrator.driveToCompletion(
               tenant,
               candidate,
               revision,
+              driveOptions as unknown as Record<string, unknown>,
             );
           const rollout = await this.rolloutController.createRolloutForPublishedVersion(tenant, {
             toolId: toolVersion.toolId,
@@ -838,7 +883,7 @@ export class CloudService {
  * Factory function creating a CloudService instance.
  */
 export function createCloudService(
-  options: { config?: Partial<RawCloudConfig> } = {},
+  options: { config?: Partial<RawCloudConfig>; benchmarkEvidenceVerifier?: BenchmarkEvidenceVerifier } = {},
 ): CloudService {
   return new CloudService(options);
 }

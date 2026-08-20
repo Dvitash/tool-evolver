@@ -246,8 +246,8 @@ describe("WorkflowGenerator", () => {
       },
     } as unknown as typeof basePlan;
 
-    // With maxIterations 1, only one operation and one output can be fixed per iteration, so 3 missing ops + 3 missing outputs need >1 iterations
-    const result = workflowGen.repairWorkflow(plan, [], undefined, 1);
+    // With maxIterations 0, no repair pass is available, so 3 missing ops + 3 missing outputs remain uncovered
+    const result = workflowGen.repairWorkflow(plan, [], undefined, 0);
     expect(result.repaired).toBe(false);
     expect(result.remainingErrors).toBeDefined();
     expect(result.remainingErrors!.length).toBeGreaterThan(0);
@@ -256,8 +256,8 @@ describe("WorkflowGenerator", () => {
     expect(coverageAfter.complete).toBe(false);
     expect(coverageAfter.uncoveredOperationIds.length).toBeGreaterThan(0);
     expect(workflowCoverageDiagnostics(coverageAfter).length).toBeGreaterThan(0);
-    // Not all missing ops were added due to iteration bound
-    expect(result.iterations).toBe(1);
+    // No repair iterations were available
+    expect(result.iterations).toBe(0);
   });
 
   it("should retain legacy repair behavior for plans without workflowContract", () => {

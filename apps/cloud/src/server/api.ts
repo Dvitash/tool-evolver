@@ -16,6 +16,10 @@ import {
   handleAuthRoutes,
 } from "../auth/index.js";
 import { type CloudConfig, assertSecureCloudConfig, loadConfig } from "../config.js";
+import {
+  type BenchmarkEvidenceVerifier,
+  HmacBenchmarkEvidenceVerifier,
+} from "../evolution/replay/benchmark-attestation.js";
 import { type DatabasePool, createDatabasePool } from "../db/client.js";
 import { OutboxPublisher, OutboxRepository } from "../db/outbox.js";
 import {
@@ -62,6 +66,7 @@ export interface HealthStatus {
  */
 export interface CloudServerOptions {
   config?: CloudConfig;
+  benchmarkEvidenceVerifier?: BenchmarkEvidenceVerifier;
   dbPool?: DatabasePool;
   objectStore?: ObjectStore;
   queue?: DurableQueue;
@@ -103,11 +108,17 @@ export class CloudServer {
   private mcpServer: CloudMcpServer;
   private analyticsService: AnalyticsService;
   private customRouteHandler?: CloudServerOptions["customRouteHandler"];
+  private readonly benchmarkEvidenceVerifier?: CloudServerOptions["benchmarkEvidenceVerifier"];
   private startTime: number;
 
   constructor(options: CloudServerOptions = {}) {
     this.config = options.config ?? loadConfig();
     assertSecureCloudConfig(this.config);
+    this.benchmarkEvidenceVerifier =
+      options.benchmarkEvidenceVerifier ??
+      (this.config.benchmarkAttestation
+        ? new HmacBenchmarkEvidenceVerifier(this.config.benchmarkAttestation)
+        : undefined);
     this.dbPool = options.dbPool ?? createDatabasePool(this.config.database);
     this.objectStore = options.objectStore ?? createObjectStore(this.config.storage);
     this.queue = options.queue ?? createDurableQueue(this.config.queue, this.dbPool);

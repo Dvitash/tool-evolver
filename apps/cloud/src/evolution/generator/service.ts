@@ -107,6 +107,81 @@ export class CandidateGenerationService {
     const version = options.version ?? "1.0.0";
     const timestamp = new Date().toISOString();
 
+    // --- Idempotency boundary: resolve deterministic candidate/revision identity BEFORE model/generation ---
+    const workflowContractForId = opportunity.classification?.workflowContract;
+    const candidateId = `cand-${hashCanonical({
+      workspaceId: tenant.workspaceId,
+      opportunityId: opportunity.id,
+      structuralHash: opportunity.structuralHash,
+      ...(workflowContractForId ? { workflowContract: workflowContractForId } : {}),
+    }).slice(0, 16)}`;
+
+    const isIdenticalDelivery = (persisted: EvolutionCandidate, opp: OpportunityDetection): boolean => {
+      const persistedEvidence = [...(persisted.trigger.evidenceEventIds ?? [])].sort();
+      const incomingEvidence = [...(opp.evidenceEventIds ?? [])].sort();
+      if (persistedEvidence.length !== incomingEvidence.length) return false;
+      for (let i = 0; i < persistedEvidence.length; i++) {
+        if (persistedEvidence[i] !== incomingEvidence[i]) return false;
+      }
+      if (persisted.trigger.sessionOccurrences !== opp.occurrenceCount) return false;
+      if (persisted.trigger.patternFrequency !== opp.occurrenceCount) return false;
+      if (persisted.trigger.reason !== opp.triggerReason) return false;
+      return true;
+    };
+
+    // Check in-memory store first (fast path for same-process redelivery)
+    const memEntry = this.candidateStore.get(candidateId);
+    if (memEntry && memEntry.tenant.workspaceId === tenant.workspaceId) {
+      const persistedCandidate = memEntry.candidate;
+      if (isIdenticalDelivery(persistedCandidate, opportunity)) {
+        const memRevisions = this.revisionStore.get(candidateId);
+        if (memRevisions && memRevisions.length > 0) {
+          const activeRevision = memRevisions[memRevisions.length - 1];
+          return {
+            candidate: persistedCandidate,
+            revisions: memRevisions,
+            activeRevision,
+            status: persistedCandidate.state === "synthesized" ? "synthesized" : "needs_repair",
+            iterations: memRevisions.length,
+            errors: activeRevision.selfReview.passed
+              ? undefined
+              : activeRevision.selfReview.issues.map((i: { message: string }) => i.message),
+          };
+        }
+      }
+    }
+
+    // Check persistent store (cross-process / queue redelivery)
+    if (this.candidateRepo) {
+      try {
+        const existingCandidate = await this.candidateRepo.getCandidateById(tenant, candidateId);
+        if (existingCandidate && isIdenticalDelivery(existingCandidate, opportunity)) {
+          const existingRevisions = await this.candidateRepo.listRevisions(tenant, candidateId);
+          if (existingRevisions.length > 0) {
+            const activeRevision = existingRevisions[existingRevisions.length - 1];
+            // Warm in-memory cache for future fast path
+            if (!this.candidateStore.has(candidateId)) {
+              this.candidateStore.set(candidateId, { candidate: existingCandidate, tenant });
+              this.revisionStore.set(candidateId, existingRevisions);
+            }
+            return {
+              candidate: existingCandidate,
+              revisions: existingRevisions,
+              activeRevision,
+              status: existingCandidate.state === "synthesized" ? "synthesized" : "needs_repair",
+              iterations: existingRevisions.length,
+              errors: activeRevision.selfReview.passed
+                ? undefined
+                : activeRevision.selfReview.issues.map((i: { message: string }) => i.message),
+            };
+          }
+        }
+      } catch (e) {
+        if (e instanceof Error && e.message.includes("Tenant")) throw e;
+        // otherwise proceed to generation
+      }
+    }
+
     // 1. Structured Candidate Planning with Inference
     const plan: ToolPlan = await this.planner.planAsync(opportunity, {
       envelope: options.envelope,
@@ -250,18 +325,7 @@ export class CandidateGenerationService {
       initialArtifacts.plan.workflowCoverage = plan.workflowCoverage;
     }
 
-    // 5. Compute deterministic Candidate ID based on opportunity identity, tenant, and workflow coverage hash
-    const candidateId = `cand-${hashCanonical({
-      workspaceId: tenant.workspaceId,
-      opportunityId: opportunity.id,
-      structuralHash: opportunity.structuralHash,
-      ...(workflowContract
-        ? {
-            workflowContract,
-            workflowCoverage: plan.workflowCoverage,
-          }
-        : {}),
-    }).slice(0, 16)}`;
+    // 5. Candidate ID already resolved deterministically before generation (idempotency boundary)
 
     // 6. Perform Self-Review and Automated Repair Loop via RepairOrchestrator
     const repairOptions: CandidateGenerationOptions & {
@@ -311,7 +375,7 @@ export class CandidateGenerationService {
         }
         // Rebuild source for workflow vs single-tool
         try {
-          if (rev.artifacts.plan.targetType === "workflow") {
+          if (rev.artifacts.plan.targetType === "workflow" || rev.artifacts.plan.workflowContract) {
             rev.artifacts.sourceCode = this.workflowGenerator.generateWorkflowSource(rev.artifacts.plan);
           } else {
             rev.artifacts.sourceCode = this.codeGenerator.generateSource(rev.artifacts.plan);
@@ -355,7 +419,7 @@ export class CandidateGenerationService {
       }
       // Rebuild active source/manifest as well (already handled in loop but ensure)
       try {
-        if (repairResult.activeRevision.artifacts.plan.targetType === "workflow") {
+        if (repairResult.activeRevision.artifacts.plan.targetType === "workflow" || repairResult.activeRevision.artifacts.plan.workflowContract) {
           repairResult.activeRevision.artifacts.sourceCode = this.workflowGenerator.generateWorkflowSource(repairResult.activeRevision.artifacts.plan);
         } else {
           repairResult.activeRevision.artifacts.sourceCode = this.codeGenerator.generateSource(repairResult.activeRevision.artifacts.plan);
@@ -400,6 +464,39 @@ export class CandidateGenerationService {
       // Update success to reflect rebuilt verdict + coverage completeness (do not force)
       const finalComplete = (repairResult.activeRevision.artifacts.plan.workflowCoverage as WorkflowCoverage | undefined)?.complete ?? false;
       (repairResult as unknown as { success: boolean }).success = augmented.passed && finalComplete;
+    }
+
+    // 6b. Ensure revision IDs are deterministic and artifact-aware: different artifacts must create new revision ID
+    // This guarantees immutability: identical delivery reuses same revision ID (handled above), genuinely changed artifacts get new ID
+    {
+      const artifactAwareRevisions = [];
+      let previousRevisionId: string | undefined = undefined;
+      for (let idx = 0; idx < repairResult.revisions.length; idx++) {
+        const rev = repairResult.revisions[idx];
+        const artifactHash = hashCanonical({
+          manifest: rev.artifacts.manifest,
+          sourceCode: rev.artifacts.sourceCode,
+          capabilities: rev.artifacts.capabilities,
+          inputSchema: rev.artifacts.plan.inputSchema,
+          outputSchema: rev.artifacts.plan.outputSchema,
+          planSteps: rev.artifacts.plan.steps,
+          workflowContract: rev.artifacts.plan.workflowContract,
+          workflowCoverage: rev.artifacts.plan.workflowCoverage,
+        });
+        const newRevisionId = `rev_${hashCanonical({ candidateId, revisionNumber: rev.revisionNumber, artifactHash }).slice(0, 16)}`;
+        const updatedRev = {
+          ...rev,
+          revisionId: newRevisionId,
+          candidateId,
+          parentRevisionId: previousRevisionId,
+        } as typeof rev;
+        // Preserve artifacts identity but ensure candidateId consistency
+        updatedRev.artifacts = rev.artifacts;
+        artifactAwareRevisions.push(updatedRev);
+        previousRevisionId = newRevisionId;
+      }
+      repairResult.revisions = artifactAwareRevisions as typeof repairResult.revisions;
+      repairResult.activeRevision = artifactAwareRevisions[artifactAwareRevisions.length - 1] as typeof repairResult.activeRevision;
     }
 
     const activeRevision = repairResult.activeRevision;

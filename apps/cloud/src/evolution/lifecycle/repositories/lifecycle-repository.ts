@@ -63,6 +63,8 @@ export class LifecycleRepository {
       publishedVersion?: string | null;
       attemptHistoryEntry?: CandidateLifecycleRecord["attemptHistory"][number];
       metadata?: Record<string, unknown>;
+      persistedReplayOptions?: CandidateLifecycleRecord["persistedReplayOptions"];
+      persistedReplayOptionsDigest?: CandidateLifecycleRecord["persistedReplayOptionsDigest"];
     },
     db?: Queryable,
   ): Promise<CandidateLifecycleRecord> {
@@ -72,11 +74,22 @@ export class LifecycleRepository {
     const cacheKey = this.getCacheKey(tenant, candidateId);
     const existing = await this.getLifecycle(tenant, candidateId, db);
     const now = new Date().toISOString();
+    const isRevisionChange = !!existing && transition.revisionId !== existing.activeRevisionId;
 
-    const mergedDigests: EvidenceDigests = {
-      ...(existing?.evidenceDigests || {}),
-      ...(transition.evidenceDigests || {}),
-    };
+    let mergedDigests: EvidenceDigests;
+    if (isRevisionChange) {
+      // Revision changed: start a fresh validation chain and clear downstream
+      // stage digests (validation/replay/evaluation/artifact). Artifact-set
+      // digests for the new revision are taken solely from the transition.
+      mergedDigests = {
+        ...(transition.evidenceDigests || {}),
+      };
+    } else {
+      mergedDigests = {
+        ...(existing?.evidenceDigests || {}),
+        ...(transition.evidenceDigests || {}),
+      };
+    }
 
     const attemptHistory = [...(existing?.attemptHistory || [])];
     if (transition.attemptHistoryEntry) {
@@ -89,7 +102,86 @@ export class LifecycleRepository {
       ? (redactDiagnostics(
           transition.terminalReason as unknown as Record<string, unknown>,
         ) as unknown as TerminalReason)
-      : null;
+      : isRevisionChange
+        ? null
+        : null;
+    // When revision changes, terminal reason is cleared unless explicitly
+    // provided by the new transition (e.g., repair sets it to null).
+    const effectiveTerminalReason =
+      transition.terminalReason !== undefined
+        ? sanitizedTerminalReason
+        : isRevisionChange
+          ? null
+          : (existing?.terminalReason as TerminalReason | null | undefined) ?? null;
+
+    const effectiveValidationResult = isRevisionChange
+      ? transition.validationResult !== undefined
+        ? transition.validationResult
+        : null
+      : transition.validationResult !== undefined
+        ? transition.validationResult
+        : existing?.validationResult;
+    const effectiveReplayResult = isRevisionChange
+      ? transition.replayResult !== undefined
+        ? transition.replayResult
+        : null
+      : transition.replayResult !== undefined
+        ? transition.replayResult
+        : existing?.replayResult;
+    const effectiveEvaluationResult = isRevisionChange
+      ? transition.evaluationResult !== undefined
+        ? transition.evaluationResult
+        : null
+      : transition.evaluationResult !== undefined
+        ? transition.evaluationResult
+        : existing?.evaluationResult;
+    const effectivePublicationRecordId = isRevisionChange
+      ? transition.publicationRecordId !== undefined
+        ? transition.publicationRecordId
+        : null
+      : transition.publicationRecordId !== undefined
+        ? transition.publicationRecordId
+        : existing?.publicationRecordId;
+    const effectivePublishedVersion = isRevisionChange
+      ? transition.publishedVersion !== undefined
+        ? transition.publishedVersion
+        : null
+      : transition.publishedVersion !== undefined
+        ? transition.publishedVersion
+        : existing?.publishedVersion;
+
+    // Sync replayOptionsDigest in evidenceDigests with persisted digest for status exposure
+    // This is done after effective digest is computed to ensure consistency.
+    if (isRevisionChange) {
+      // On revision change, replayOptionsDigest is managed via transition.evidenceDigests above; downstream will be cleared
+    }
+
+    const effectivePersistedReplayOptions = isRevisionChange
+      ? transition.persistedReplayOptions !== undefined
+        ? transition.persistedReplayOptions
+        : null
+      : transition.persistedReplayOptions !== undefined
+        ? transition.persistedReplayOptions
+        : existing?.persistedReplayOptions;
+
+    const effectivePersistedReplayOptionsDigest = isRevisionChange
+      ? transition.persistedReplayOptionsDigest !== undefined
+        ? transition.persistedReplayOptionsDigest
+        : null
+      : transition.persistedReplayOptionsDigest !== undefined
+        ? transition.persistedReplayOptionsDigest
+        : existing?.persistedReplayOptionsDigest;
+
+    // Keep EvidenceDigests.replayOptionsDigest in sync with persisted digest for observability
+    if (effectivePersistedReplayOptionsDigest) {
+      mergedDigests.replayOptionsDigest = effectivePersistedReplayOptionsDigest;
+    } else if (isRevisionChange) {
+      delete mergedDigests.replayOptionsDigest;
+    } else if (transition.evidenceDigests?.replayOptionsDigest === undefined && existing?.evidenceDigests?.replayOptionsDigest && !effectivePersistedReplayOptionsDigest) {
+      // retain existing if not cleared
+    } else if (!effectivePersistedReplayOptionsDigest) {
+      delete mergedDigests.replayOptionsDigest;
+    }
 
     const record: CandidateLifecycleRecord = {
       id: existing?.id ?? `cls_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
@@ -102,33 +194,19 @@ export class LifecycleRepository {
       idempotencyKey: transition.idempotencyKey,
       attempt: transition.attempt,
       evidenceDigests: mergedDigests,
-      terminalReason: sanitizedTerminalReason,
-      validationResult:
-        transition.validationResult !== undefined
-          ? transition.validationResult
-          : existing?.validationResult,
-      replayResult:
-        transition.replayResult !== undefined ? transition.replayResult : existing?.replayResult,
-      evaluationResult:
-        transition.evaluationResult !== undefined
-          ? transition.evaluationResult
-          : existing?.evaluationResult,
-      publicationRecordId:
-        transition.publicationRecordId !== undefined
-          ? transition.publicationRecordId
-          : existing?.publicationRecordId,
-      publishedVersion:
-        transition.publishedVersion !== undefined
-          ? transition.publishedVersion
-          : existing?.publishedVersion,
+      terminalReason: effectiveTerminalReason,
+      validationResult: effectiveValidationResult as CandidateLifecycleRecord["validationResult"],
+      replayResult: effectiveReplayResult as CandidateLifecycleRecord["replayResult"],
+      evaluationResult: effectiveEvaluationResult as CandidateLifecycleRecord["evaluationResult"],
+      publicationRecordId: effectivePublicationRecordId,
+      publishedVersion: effectivePublishedVersion,
+      persistedReplayOptions: effectivePersistedReplayOptions as CandidateLifecycleRecord["persistedReplayOptions"],
+      persistedReplayOptionsDigest: effectivePersistedReplayOptionsDigest as CandidateLifecycleRecord["persistedReplayOptionsDigest"],
       attemptHistory,
       metadata: { ...(existing?.metadata || {}), ...sanitizedMetadata },
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
-
-    // Update in-memory cache
-    this.inMemoryLifecycles.set(cacheKey, record);
 
     const transitionRecord: LifecycleTransitionRecord = {
       id: `ltr_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
@@ -161,8 +239,9 @@ export class LifecycleRepository {
             current_state, target_version, idempotency_key, attempt,
             evidence_digests, terminal_reason, validation_result, replay_result, evaluation_result,
             publication_record_id, published_version, attempt_history, metadata,
+            persisted_replay_options, persisted_replay_options_digest,
             created_at, updated_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
           ON CONFLICT (workspace_id, candidate_id) DO UPDATE SET
             active_revision_id = EXCLUDED.active_revision_id,
             current_state = EXCLUDED.current_state,
@@ -178,6 +257,8 @@ export class LifecycleRepository {
             published_version = EXCLUDED.published_version,
             attempt_history = EXCLUDED.attempt_history,
             metadata = EXCLUDED.metadata,
+            persisted_replay_options = EXCLUDED.persisted_replay_options,
+            persisted_replay_options_digest = EXCLUDED.persisted_replay_options_digest,
             updated_at = EXCLUDED.updated_at;
           `,
           [
@@ -199,6 +280,8 @@ export class LifecycleRepository {
             record.publishedVersion ?? null,
             JSON.stringify(record.attemptHistory),
             JSON.stringify(record.metadata),
+            record.persistedReplayOptions ? JSON.stringify(record.persistedReplayOptions) : null,
+            record.persistedReplayOptionsDigest ?? null,
             record.createdAt,
             record.updatedAt,
           ],
@@ -271,6 +354,8 @@ export class LifecycleRepository {
           published_version: string | null;
           attempt_history: string | CandidateLifecycleRecord["attemptHistory"];
           metadata: string | Record<string, unknown>;
+          persisted_replay_options?: string | CandidateLifecycleRecord["persistedReplayOptions"] | null;
+          persisted_replay_options_digest?: string | null;
           created_at: string;
           updated_at: string;
         }>(
@@ -330,6 +415,26 @@ export class LifecycleRepository {
                 : row.attempt_history || [],
             metadata:
               typeof row.metadata === "string" ? JSON.parse(row.metadata) : row.metadata || {},
+            persistedReplayOptions:
+              (row as unknown as { persisted_replay_options?: unknown }).persisted_replay_options === null ||
+              (row as unknown as { persisted_replay_options?: unknown }).persisted_replay_options === undefined
+                ? ((() => {
+                    const metaRaw = typeof row.metadata === "string" ? JSON.parse(row.metadata) : (row.metadata as Record<string, unknown> | null) ?? {};
+                    const meta = metaRaw as Record<string, unknown>;
+                    return (meta.persistedReplayOptions as CandidateLifecycleRecord["persistedReplayOptions"] ?? null);
+                  })())
+                : typeof (row as unknown as { persisted_replay_options?: unknown }).persisted_replay_options === "string"
+                  ? (JSON.parse((row as unknown as { persisted_replay_options: string }).persisted_replay_options) as CandidateLifecycleRecord["persistedReplayOptions"])
+                  : ((row as unknown as { persisted_replay_options?: unknown }).persisted_replay_options as CandidateLifecycleRecord["persistedReplayOptions"]),
+            persistedReplayOptionsDigest:
+              ((row as unknown as { persisted_replay_options_digest?: unknown }).persisted_replay_options_digest as string | null | undefined) ??
+              ((() => {
+                const metaRaw = typeof row.metadata === "string" ? JSON.parse(row.metadata) : (row.metadata as Record<string, unknown> | null) ?? {};
+                const meta = metaRaw as Record<string, unknown>;
+                return meta.persistedReplayOptionsDigest as string | null | undefined;
+              })()) ??
+              (row.evidence_digests && typeof row.evidence_digests !== "string" ? (row.evidence_digests as EvidenceDigests).replayOptionsDigest ?? null : null) ??
+              null,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
           };

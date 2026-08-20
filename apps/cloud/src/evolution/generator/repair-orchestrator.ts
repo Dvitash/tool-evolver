@@ -308,9 +308,14 @@ export class RepairOrchestrator {
         fixedIssues = repairResult.fixedIssues;
       }
 
-      // Recompute workflow coverage, regenerate derived artifacts, then self-review and augment
+      // Recompute workflow coverage; regenerate derived artifacts only if plan/schema mutated — preserves inference source when only source changed
+      const _planBeforeForRegenAsync = JSON.stringify(currentArtifacts.plan.steps) + JSON.stringify(currentArtifacts.plan.outputSchema) + JSON.stringify(currentArtifacts.plan.inputSchema);
+      const _planAfterForRegenAsync = JSON.stringify(repairedArtifacts.plan.steps) + JSON.stringify(repairedArtifacts.plan.outputSchema) + JSON.stringify(repairedArtifacts.plan.inputSchema);
+      const _planMutatedAsync = _planBeforeForRegenAsync !== _planAfterForRegenAsync;
       repairedArtifacts = this.recomputeWorkflowCoverage(repairedArtifacts);
-      repairedArtifacts = this.regenerateDerivedArtifacts(repairedArtifacts);
+      if (_planMutatedAsync) {
+        repairedArtifacts = this.regenerateDerivedArtifacts(repairedArtifacts);
+      }
 
       // 3. Compute capability diff and enforce monotonicity
       const diff = this.capabilityMapper.computeCapabilityDiff(
@@ -330,7 +335,16 @@ export class RepairOrchestrator {
             envelope,
           );
           repairedArtifacts = this.recomputeWorkflowCoverage(repairedArtifacts);
-          repairedArtifacts = this.regenerateDerivedArtifacts(repairedArtifacts);
+          // Envelope minimization changes capabilities, not plan steps/schema; do not regenerate derived source that would overwrite inference fix
+          // Update manifest digest to reflect minimized capabilities without regenerating source
+          repairedArtifacts = {
+            ...repairedArtifacts,
+            manifest: {
+              ...repairedArtifacts.manifest,
+              capabilities: repairedArtifacts.capabilities,
+              digest: hashCanonical({ code: repairedArtifacts.sourceCode, capabilities: repairedArtifacts.capabilities }),
+            },
+          };
         }
       }
 
@@ -439,8 +453,14 @@ export class RepairOrchestrator {
         envelope,
       );
 
+      // Track whether plan/schema mutated to decide if derived source regeneration is needed
+      const _planBeforeSync = JSON.stringify(currentArtifacts.plan.steps) + JSON.stringify(currentArtifacts.plan.outputSchema) + JSON.stringify(currentArtifacts.plan.inputSchema);
+      const _planAfterSync = JSON.stringify(rawRepaired.plan.steps) + JSON.stringify(rawRepaired.plan.outputSchema) + JSON.stringify(rawRepaired.plan.inputSchema);
+      const _planMutatedSync = _planBeforeSync !== _planAfterSync;
       let repairedArtifacts = this.recomputeWorkflowCoverage(rawRepaired);
-      repairedArtifacts = this.regenerateDerivedArtifacts(repairedArtifacts);
+      if (_planMutatedSync) {
+        repairedArtifacts = this.regenerateDerivedArtifacts(repairedArtifacts);
+      }
 
       const diff = this.capabilityMapper.computeCapabilityDiff(
         currentArtifacts.capabilities,
@@ -453,7 +473,16 @@ export class RepairOrchestrator {
         if (!subsetCheck.valid) {
           repairedArtifacts.capabilities = this.capabilityMapper.minimizeCapabilities(repairedArtifacts.capabilities, envelope);
           repairedArtifacts = this.recomputeWorkflowCoverage(repairedArtifacts);
-          repairedArtifacts = this.regenerateDerivedArtifacts(repairedArtifacts);
+          // Envelope minimization changes capabilities, not plan steps/schema; do not regenerate derived source that would overwrite inference fix
+          // Update manifest digest to reflect minimized capabilities without regenerating source
+          repairedArtifacts = {
+            ...repairedArtifacts,
+            manifest: {
+              ...repairedArtifacts.manifest,
+              capabilities: repairedArtifacts.capabilities,
+              digest: hashCanonical({ code: repairedArtifacts.sourceCode, capabilities: repairedArtifacts.capabilities }),
+            },
+          };
         }
       }
 
@@ -508,19 +537,24 @@ export class RepairOrchestrator {
     const fixedIssues: string[] = [];
 
     // 0. Repair workflow contract coverage (missing operations/outputs) before other fixes
-    //    Missing coverage is a repairable error, not a warning, and must be recomputed.
+    // Deterministic single-pass: repair ALL uncovered operations/outputs, insert at contract order, rewire chain
+    let coverageDidMutate = false;
     if (plan.workflowContract) {
       try {
         const initialCoverage = buildWorkflowCoverage(plan.workflowContract, plan.steps, plan.outputSchema) as import("./types.js").WorkflowCoverage | undefined;
         if (!initialCoverage?.complete) {
-          // Fix uncovered operations by adding steps with coveredOperationIds
-          for (const opId of [...(initialCoverage?.uncoveredOperationIds ?? [])].sort().slice(0, 1)) {
-            const operation = plan.workflowContract.operations.find((op) => op.id === opId);
-            if (!operation) continue;
+          const contract = plan.workflowContract;
+          const uncoveredOpsInOrder = [...(initialCoverage?.uncoveredOperationIds ?? [])]
+            .map((opId) => contract.operations.find((op) => op.id === opId))
+            .filter((op): op is NonNullable<typeof op> => Boolean(op))
+            .sort((a, b) => a.order - b.order);
+          const newCoverageSteps: typeof plan.steps = [];
+          for (const operation of uncoveredOpsInOrder) {
+            const opId = operation.id;
             if (plan.steps.some((s) => s.coveredOperationIds?.includes(opId))) continue;
             let stepId = `step_${opId}`;
             let counter = 1;
-            while (plan.steps.some((s) => s.id === stepId)) {
+            while (plan.steps.some((s) => s.id === stepId) || newCoverageSteps.some((s) => s.id === stepId)) {
               stepId = `step_${opId}_${counter++}`;
             }
             let toolClass = operation.toolClass ?? "compute";
@@ -549,12 +583,25 @@ export class RepairOrchestrator {
             } else if (toolClass === "file_read" || operation.name.includes("file_read") || operation.name.includes("read_file")) {
               service = "fs";
               action = "fs.readFile";
-              inputs = { path: "${input.path}" };
+              const filePathVar = plan.variableInputs.some((v) => v.name === "targetPaths")
+                ? "${input.targetPaths[0]}"
+                : plan.variableInputs.some((v) => v.name === "targetPath")
+                  ? "${input.targetPath}"
+                  : "${input.path}";
+              inputs = { path: filePathVar };
               toolClass = "file_read";
             } else if (toolClass === "file_edit" || operation.name.includes("file_edit") || operation.name.includes("write")) {
               service = "fs";
               action = "fs.writeFile";
-              inputs = { path: "${input.destPath}", content: "${input.content}" };
+              const filePathVar = plan.variableInputs.some((v) => v.name === "targetPaths")
+                ? "${input.targetPaths[0]}"
+                : plan.variableInputs.some((v) => v.name === "targetPath")
+                  ? "${input.targetPath}"
+                  : "${input.path}";
+              const contentVar = plan.variableInputs.some((v) => v.name === "content")
+                ? "${input.content}"
+                : "${input.input}";
+              inputs = { path: filePathVar, content: contentVar };
               toolClass = "file_edit";
             } else if (toolClass === "vcs" || operation.name.toLowerCase().includes("git")) {
               service = "cmd";
@@ -576,23 +623,23 @@ export class RepairOrchestrator {
             } else if (toolClass === "search" || operation.name.includes("search")) {
               service = "fs";
               action = "fs.readFile";
-              inputs = { path: "${input.query}" };
+              const searchPathVar = plan.variableInputs.some((v) => v.name === "targetPaths")
+                ? "${input.targetPaths[0]}"
+                : plan.variableInputs.some((v) => v.name === "path")
+                  ? "${input.path}"
+                  : plan.variableInputs.some((v) => v.name === "query")
+                    ? "${input.query}"
+                    : "${input.input}";
+              inputs = { path: searchPathVar };
             } else {
               service = "compute";
               action = operation.name.includes(".") ? operation.name : "compute.transform";
               inputs = {};
             }
-            const dependsOn: string[] = [];
-            const opOrder = operation.order;
-            if (opOrder > 0) {
-              const prevOpId = `op_${opOrder - 1}`;
-              const prevStep = plan.steps.find((s) => s.coveredOperationIds?.includes(prevOpId));
-              if (prevStep) {
-                dependsOn.push(prevStep.id);
-              } else if (plan.steps.length > 0) {
-                dependsOn.push(plan.steps[plan.steps.length - 1]!.id);
-              }
-            }
+            const outputsForOp = contract.outputRequirements
+              .filter((req) => req.sourceOperationId === opId)
+              .map((req) => req.name)
+              .sort();
             const newStep = {
               id: stepId,
               name: operation.name,
@@ -602,20 +649,21 @@ export class RepairOrchestrator {
               service,
               inputs,
               outputVar: `result_${stepId}`,
-              dependsOn,
+              dependsOn: [] as string[],
               coveredOperationIds: [opId],
+              ...(outputsForOp.length > 0 ? { outputs: outputsForOp } : {}),
               timeoutMs: 30000,
               timeout: 30000,
               retryPolicy: { maxRetries: 0, backoffMs: 0, idempotent: false },
               failureBehavior: "abort" as const,
               onFailure: "abort" as const,
             };
-            plan.steps.push(newStep as typeof plan.steps[number]);
-            fixedIssues.push(`Added step "${stepId}" covering operation "${opId}" (${operation.name}).`);
+            newCoverageSteps.push(newStep as typeof plan.steps[number]);
           }
-          // Fix uncovered outputs by ensuring they exist in outputSchema
-          for (const outputName of [...(initialCoverage?.uncoveredOutputNames ?? [])].sort().slice(0, 1)) {
-            const req = plan.workflowContract.outputRequirements.find((r) => r.name === outputName);
+          // Fix ALL uncovered outputs deterministically (sorted)
+          const uncoveredOutputsSorted = [...(initialCoverage?.uncoveredOutputNames ?? [])].sort();
+          for (const outputName of uncoveredOutputsSorted) {
+            const req = contract.outputRequirements.find((r) => r.name === outputName);
             if (!req) continue;
             const type = typeof req.type === "string" && req.type.length > 0 ? req.type : "string";
             const description = typeof req.description === "string" && req.description.length > 0 ? req.description : `Output ${outputName} from ${req.sourceOperationId}`;
@@ -635,6 +683,30 @@ export class RepairOrchestrator {
             if (!(outputName in targetProperties)) {
               (targetProperties as Record<string, Record<string, unknown>>)[outputName] = { type, description } as unknown as Record<string, unknown>;
               fixedIssues.push(`Added missing output "${outputName}" to outputSchema.`);
+              coverageDidMutate = true;
+            }
+            // Ensure covering step declares this output for stepIds completeness
+            let coveringStepForOutput: typeof plan.steps[number] | undefined = plan.steps.find((s) => s.coveredOperationIds?.includes(req.sourceOperationId));
+            if (!coveringStepForOutput) {
+              coveringStepForOutput = newCoverageSteps.find((s) => (s.coveredOperationIds as string[] | undefined)?.includes(req.sourceOperationId));
+            }
+            if (coveringStepForOutput) {
+              const existingOutputs = coveringStepForOutput.outputs as unknown;
+              if (Array.isArray(existingOutputs)) {
+                if (!(existingOutputs as string[]).includes(outputName)) {
+                  (coveringStepForOutput.outputs as string[]).push(outputName);
+                  (coveringStepForOutput.outputs as string[]).sort();
+                  coverageDidMutate = true;
+                }
+              } else if (existingOutputs && typeof existingOutputs === "object") {
+                if (!Object.prototype.hasOwnProperty.call(existingOutputs as Record<string, unknown>, outputName)) {
+                  (existingOutputs as Record<string, unknown>)[outputName] = { type, description };
+                  coverageDidMutate = true;
+                }
+              } else {
+                (coveringStepForOutput as unknown as { outputs: string[] }).outputs = [outputName];
+                coverageDidMutate = true;
+              }
             }
             if (req.required) {
               if (dataProp && Array.isArray(dataProp.required)) {
@@ -649,8 +721,45 @@ export class RepairOrchestrator {
               }
             }
           }
-          // Regenerate workflow source if steps were added and targetType is workflow
-          if ((initialCoverage?.uncoveredOperationIds?.length ?? 0) > 0 && plan.targetType === "workflow") {
+          // Merge new steps at contract order and rewire into one linear sequence
+          if (newCoverageSteps.length > 0) {
+            coverageDidMutate = true;
+            const allContractOpsSorted = [...contract.operations].sort((a, b) => a.order - b.order);
+            const opIdToStep = new Map<string, typeof plan.steps[number]>();
+            for (const step of plan.steps) {
+              for (const opId of step.coveredOperationIds ?? []) {
+                if (!opIdToStep.has(opId)) opIdToStep.set(opId, step);
+              }
+            }
+            for (const ns of newCoverageSteps) {
+              const opId = (ns.coveredOperationIds as string[])[0]!;
+              opIdToStep.set(opId, ns);
+            }
+            const orderedSteps: typeof plan.steps = [];
+            const seenIds = new Set<string>();
+            for (const op of allContractOpsSorted) {
+              const step = opIdToStep.get(op.id);
+              if (step && !seenIds.has(step.id)) {
+                orderedSteps.push(step);
+                seenIds.add(step.id);
+              }
+            }
+            for (const step of plan.steps) {
+              if (!seenIds.has(step.id)) {
+                orderedSteps.push(step);
+                seenIds.add(step.id);
+              }
+            }
+            for (let i = 0; i < orderedSteps.length; i++) {
+              orderedSteps[i].dependsOn = i === 0 ? [] : [orderedSteps[i - 1].id];
+            }
+            plan.steps = orderedSteps;
+            for (const ns of newCoverageSteps) {
+              fixedIssues.push(`Added step "${ns.id}" covering operation "${(ns.coveredOperationIds as string[])[0]}" (${ns.name}).`);
+            }
+          }
+          // Regenerate workflow source if steps were added and targetType is workflow — only if plan mutated
+          if (coverageDidMutate && plan.targetType === "workflow") {
             try {
               sourceCode = this.workflowGenerator.generateWorkflowSource(plan as unknown as ToolPlan);
               fixedIssues.push("Regenerated workflow source to include coverage steps");
@@ -658,21 +767,42 @@ export class RepairOrchestrator {
               // ignore generation errors
             }
           }
-          // Regenerate schemas contract-aware to ensure no required outputs are dropped
-          try {
-            const regeneratedInput = this.schemaGenerator.deriveInputSchema(plan.variableInputs, plan.workflowContract);
-            const regeneratedOutput = this.schemaGenerator.deriveOutputSchema(undefined, plan.steps, "workflow", plan.workflowContract);
-            plan.inputSchema = regeneratedInput;
-            plan.outputSchema = regeneratedOutput;
-            fixedIssues.push("Regenerated schemas with contract coverage");
-          } catch {
-            // ignore
+          // Regenerate schemas contract-aware only if coverage mutated
+          if (coverageDidMutate) {
+            try {
+              const regeneratedInput = this.schemaGenerator.deriveInputSchema(plan.variableInputs, plan.workflowContract);
+              const regeneratedOutput = this.schemaGenerator.deriveOutputSchema(undefined, plan.steps, "workflow", plan.workflowContract);
+              // Track whether schemas actually mutated
+              const inputBefore = JSON.stringify(plan.inputSchema);
+              const outputBefore = JSON.stringify(plan.outputSchema);
+              const inputAfter = JSON.stringify(regeneratedInput);
+              const outputAfter = JSON.stringify(regeneratedOutput);
+              if (inputBefore !== inputAfter || outputBefore !== outputAfter) {
+                plan.inputSchema = regeneratedInput;
+                plan.outputSchema = regeneratedOutput;
+                fixedIssues.push("Regenerated schemas with contract coverage");
+              } else {
+                // Even if stringified equal, keep regenerated to ensure coverage completeness deterministically
+                plan.inputSchema = regeneratedInput;
+                plan.outputSchema = regeneratedOutput;
+              }
+            } catch {
+              // ignore
+            }
           }
-          // Recompute and persist coverage after fixes
-          try {
-            plan.workflowCoverage = buildWorkflowCoverage(plan.workflowContract, plan.steps, plan.outputSchema);
-          } catch {
-            // ignore
+          // Recompute and persist coverage after fixes if mutated
+          if (coverageDidMutate) {
+            try {
+              plan.workflowCoverage = buildWorkflowCoverage(plan.workflowContract, plan.steps, plan.outputSchema);
+            } catch {
+              // ignore
+            }
+          } else {
+            try {
+              plan.workflowCoverage = initialCoverage;
+            } catch {
+              // ignore
+            }
           }
         } else {
           // Already complete, ensure coverage is persisted

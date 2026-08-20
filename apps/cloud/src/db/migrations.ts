@@ -1230,6 +1230,26 @@ export const candidateLifecycleMigration: Migration = {
   },
 };
 
+/**
+ * Persisted replay options migration (v9): adds columns to store canonical
+ * HistoricalReplayOptions and its digest for lifecycle replay persistence.
+ * Idempotent: uses IF NOT EXISTS / IF EXISTS so existing DBs upgrade cleanly
+ * and repeated runs are no-ops.
+ */
+export const persistedReplayOptionsMigration: Migration = {
+  version: 9,
+  name: "009_persisted_replay_options",
+  checksum: createHash("sha256").update("009_persisted_replay_options_v1").digest("hex"),
+  up: async (db: Queryable) => {
+    await db.query(`ALTER TABLE candidate_lifecycle_states ADD COLUMN IF NOT EXISTS persisted_replay_options JSONB`);
+    await db.query(`ALTER TABLE candidate_lifecycle_states ADD COLUMN IF NOT EXISTS persisted_replay_options_digest TEXT`);
+  },
+  down: async (db: Queryable) => {
+    await db.query(`ALTER TABLE candidate_lifecycle_states DROP COLUMN IF EXISTS persisted_replay_options`);
+    await db.query(`ALTER TABLE candidate_lifecycle_states DROP COLUMN IF EXISTS persisted_replay_options_digest`);
+  },
+};
+
 export const DEFAULT_MIGRATIONS: Migration[] = [
   initialSchemaMigration,
   observationsAndEvidenceMigration,
@@ -1239,6 +1259,7 @@ export const DEFAULT_MIGRATIONS: Migration[] = [
   opportunitiesMigration,
   candidatesMigration,
   candidateLifecycleMigration,
+  persistedReplayOptionsMigration,
 ];
 
 /**

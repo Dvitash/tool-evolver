@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { CloudConfigSchema, loadConfig, redactConfig, redactDatabaseUrl } from "../src/config.js";
+import {
+  CloudConfigSchema,
+  loadConfig,
+  parseBenchmarkAttestationConfig,
+  redactConfig,
+  redactDatabaseUrl,
+} from "../src/config.js";
+import { createConfiguredBenchmarkEvidenceVerifier } from "../src/evolution/replay/benchmark-attestation.js";
 
 describe("Cloud Configuration", () => {
   it("should load default configuration when no overrides are provided", () => {
@@ -101,5 +108,58 @@ describe("Cloud Configuration", () => {
         server: {},
       });
     }).toThrow();
+  });
+  it("rejects missing or short benchmark attestation config without leaking the secret", () => {
+    const shortSecret = "tooshort";
+    expect(() => parseBenchmarkAttestationConfig(undefined)).toThrow(/required/i);
+    expect(() =>
+      parseBenchmarkAttestationConfig({
+        issuer: "issuer",
+        keyId: "key-1",
+        secret: shortSecret,
+      }),
+    ).toThrow(/at least 32 characters/);
+    try {
+      parseBenchmarkAttestationConfig({
+        issuer: "issuer",
+        keyId: "key-1",
+        secret: shortSecret,
+      });
+    } catch (err) {
+      expect(String(err)).not.toContain(shortSecret);
+    }
+    expect(() => createConfiguredBenchmarkEvidenceVerifier({})).toThrow(/required/i);
+    try {
+      createConfiguredBenchmarkEvidenceVerifier({
+        BENCHMARK_ATTESTATION_ISSUER: "issuer",
+        BENCHMARK_ATTESTATION_KEY_ID: "key-1",
+        BENCHMARK_ATTESTATION_SECRET: shortSecret,
+      });
+    } catch (err) {
+      expect(String(err)).not.toContain(shortSecret);
+    }
+  });
+
+  it("creates a verifier from valid attestation config and redacts the secret", () => {
+    const secret = "benchmark-attestation-secret-32b!!";
+    const verifier = createConfiguredBenchmarkEvidenceVerifier({
+      BENCHMARK_ATTESTATION_ISSUER: "cloud-issuer",
+      BENCHMARK_ATTESTATION_KEY_ID: "key-1",
+      BENCHMARK_ATTESTATION_SECRET: secret,
+    });
+    expect(verifier).toBeDefined();
+    expect(JSON.stringify(verifier)).not.toContain(secret);
+
+    const config = loadConfig({
+      benchmarkAttestation: {
+        issuer: "cloud-issuer",
+        keyId: "key-1",
+        secret,
+      },
+    });
+    const redacted = redactConfig(config);
+    expect(redacted.benchmarkAttestation?.secret).toBe("[REDACTED]");
+    expect(JSON.stringify(redacted)).not.toContain(secret);
+    expect(redacted.benchmarkAttestation?.issuer).toBe("cloud-issuer");
   });
 });

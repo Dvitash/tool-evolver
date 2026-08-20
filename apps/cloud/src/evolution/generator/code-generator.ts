@@ -45,7 +45,7 @@ export class CodeGenerator {
       allowDeterministicFallback?: boolean;
     } = {},
   ): Promise<GeneratedSourceResult> {
-    if (plan.targetType === "workflow") {
+    if (plan.targetType === "workflow" || !!plan.workflowContract) {
       const sourceCode = this.workflowGenerator.generateWorkflowSource(plan);
       return { sourceCode };
     }
@@ -300,13 +300,37 @@ ${customLogic}
    * Deterministically synthesizes TypeScript tool code.
    */
   generateSource(plan: ToolPlan): string {
-    if (plan.targetType === "workflow") {
+    if (plan.targetType === "workflow" || !!plan.workflowContract) {
       return this.workflowGenerator.generateWorkflowSource(plan);
     }
 
     const zodInputSchemaSource = this.schemaGenerator.generateZodSource(plan.inputSchema);
     const zodOutputSchemaSource = this.schemaGenerator.generateOutputZodSource(plan.outputSchema);
     const executionBody = this.deriveExecutionBody(plan);
+
+    let dataReturnCode: string;
+    const _wc = (plan as unknown as { workflowContract?: { outputRequirements: Array<{ name: string; type: string }> } }).workflowContract;
+    if (_wc && _wc.outputRequirements.length > 0) {
+      const sortedReqs = [..._wc.outputRequirements].sort((a, b) => a.name.localeCompare(b.name));
+      const mappings = sortedReqs.map((req) => {
+        let expr: string;
+        if (req.type === "string") {
+          expr = `String((resultData as any)?.content ?? (resultData as any)?.stdout ?? String(resultData ?? ""))`;
+        } else if (req.type === "number") {
+          expr = `Number((resultData as any)?.size ?? (resultData as any)?.count ?? 0)`;
+        } else if (req.type === "boolean") {
+          expr = `Boolean((resultData as any)?.success ?? !!resultData)`;
+        } else if (req.type === "array") {
+          expr = `Array.isArray(resultData) ? resultData as unknown[] : [resultData]`;
+        } else {
+          expr = `typeof resultData === 'object' && resultData !== null ? resultData as Record<string, unknown> : { value: resultData }`;
+        }
+        return `        ${JSON.stringify(req.name)}: ${expr},`;
+      }).join("\n");
+      dataReturnCode = `      return {\n        success: true,\n        data: {\n${mappings}\n        },\n      };\n`;
+    } else {
+      dataReturnCode = `      return {\n        success: true,\n        data: resultData as Record<string, unknown>,\n      };\n`;
+    }
 
     return `import { defineTool, type ToolContext } from "@tool-evolver/runtime";
 import { z } from "zod";
@@ -331,10 +355,7 @@ ${executionBody}
       await progress(100, "Execution finished successfully", "complete");
       await logger.info("Tool finished successfully", { toolName: ${JSON.stringify(plan.name)} });
 
-      return {
-        success: true,
-        data: resultData as Record<string, unknown>,
-      };
+${dataReturnCode}
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       await logger.error("Tool execution failed", { error: errorMessage });
@@ -371,42 +392,118 @@ ${executionBody}
           name.includes("write") ||
           desc.includes("file")))
     ) {
+      const isSearch = toolClass === "search" || action.includes("search") || name.includes("search") || desc.includes("search");
+      if (isSearch) {
+        return `      const _rawSearchPath = (input as Record<string, unknown>).targetPaths ?? (input as Record<string, unknown>).path ?? (input as Record<string, unknown>).filePath ?? (input as Record<string, unknown>).targetPath ?? (input as Record<string, unknown>).filePaths;
+      const _searchQuery = (input as Record<string, unknown>).query as string ?? (input as Record<string, unknown>).pattern as string ?? "";
+      if (_rawSearchPath == null || (Array.isArray(_rawSearchPath) && _rawSearchPath.length === 0) || (!Array.isArray(_rawSearchPath) && String(_rawSearchPath).trim() === "")) throw new Error("Missing required file path");
+      if (_searchQuery == null || String(_searchQuery).trim() === "") throw new Error("Missing required search query/pattern");
+      const _searchPaths = Array.isArray(_rawSearchPath) ? _rawSearchPath as string[] : [String(_rawSearchPath)];
+      if (_searchPaths.some(p => p == null || String(p).trim() === "")) throw new Error("Missing required file path entry");
+      const _agg: string[] = [];
+      for (const _sp of _searchPaths) {
+        const _entries = await broker.fs.listDir(String(_sp));
+        const _list = Array.isArray(_entries) ? _entries : [_entries];
+        for (const _ent of _list) {
+          if (String(_ent).includes(String(_searchQuery))) _agg.push(String(_ent));
+        }
+      }
+      resultData = {
+        query: _searchQuery,
+        path: _searchPaths[0],
+        filePath: _searchPaths[0],
+        entries: _agg,
+        results: _agg,
+        count: _agg.length,
+      };`;
+      }
+
       if (
         action.includes("write") ||
         name.includes("write") ||
         name.includes("save") ||
         toolClass === "file_edit"
       ) {
-        return `      const filePath = (input as Record<string, unknown>).filePath as string ?? (input as Record<string, unknown>).path as string ?? "./output.txt";
-      const content = (input as Record<string, unknown>).content as string ?? "";
-      await logger.debug("Writing file via filesystem broker", { filePath, size: content.length });
-      await broker.fs.writeFile(filePath, content);
-      resultData = {
-        filePath,
-        written: true,
-        bytes: content.length,
-      };`;
+        return `      const _rawWritePath = (input as Record<string, unknown>).targetPaths ?? (input as Record<string, unknown>).path ?? (input as Record<string, unknown>).filePath ?? (input as Record<string, unknown>).targetPath ?? (input as Record<string, unknown>).filePaths;
+      if (_rawWritePath == null || (Array.isArray(_rawWritePath) && _rawWritePath.length === 0) || (!Array.isArray(_rawWritePath) && String(_rawWritePath).trim() === "")) throw new Error("Missing required file path");
+      const content = (input as Record<string, unknown>).content as string;
+      if (content == null) throw new Error("Missing required file content");
+      if (Array.isArray(_rawWritePath)) {
+        if (_rawWritePath.some(p => p == null || String(p).trim() === "")) throw new Error("Missing required file path entry");
+        await logger.debug("Writing files via filesystem broker", { filePaths: _rawWritePath, size: content.length });
+        await Promise.all((_rawWritePath as string[]).map(p => broker.fs.writeFile(String(p), content)));
+        resultData = {
+          filePath: String((_rawWritePath as string[])[0]),
+          filePaths: _rawWritePath as string[],
+          written: true,
+          bytes: content.length,
+        };
+      } else {
+        const filePath = String(_rawWritePath);
+        await logger.debug("Writing file via filesystem broker", { filePath, size: content.length });
+        await broker.fs.writeFile(filePath, content);
+        resultData = {
+          filePath,
+          written: true,
+          bytes: content.length,
+        };
+      }`;
       }
 
       if (action.includes("list") || name.includes("list") || name.includes("dir")) {
-        return `      const filePath = (input as Record<string, unknown>).filePath as string ?? (input as Record<string, unknown>).path as string ?? ".";
-      await logger.debug("Listing directory via filesystem broker", { filePath });
-      const entries = await broker.fs.listDir(filePath);
-      resultData = {
-        filePath,
-        entries,
-        count: entries.length,
-      };`;
+        return `      const _rawListPath = (input as Record<string, unknown>).targetPaths ?? (input as Record<string, unknown>).path ?? (input as Record<string, unknown>).filePath ?? (input as Record<string, unknown>).targetPath ?? (input as Record<string, unknown>).filePaths;
+      if (_rawListPath == null || (Array.isArray(_rawListPath) && _rawListPath.length === 0) || (!Array.isArray(_rawListPath) && String(_rawListPath).trim() === "")) throw new Error("Missing required file path");
+      if (Array.isArray(_rawListPath)) {
+        if (_rawListPath.some(p => p == null || String(p).trim() === "")) throw new Error("Missing required file path entry");
+        await logger.debug("Listing directories via filesystem broker", { filePaths: _rawListPath });
+        const _allEntries: string[] = [];
+        for (const _lp of _rawListPath as string[]) {
+          const _entries = await broker.fs.listDir(String(_lp));
+          const _list = Array.isArray(_entries) ? _entries : [_entries];
+          _allEntries.push(..._list.map(e => String(e)));
+        }
+        resultData = {
+          filePath: String((_rawListPath as string[])[0]),
+          filePaths: _rawListPath as string[],
+          entries: _allEntries,
+          count: _allEntries.length,
+        };
+      } else {
+        const filePath = String(_rawListPath);
+        await logger.debug("Listing directory via filesystem broker", { filePath });
+        const entries = await broker.fs.listDir(filePath);
+        resultData = {
+          filePath,
+          entries,
+          count: entries.length,
+        };
+      }`;
       }
 
-      return `      const filePath = (input as Record<string, unknown>).filePath as string ?? (input as Record<string, unknown>).path as string ?? "./data.txt";
-      await logger.debug("Reading file via filesystem broker", { filePath });
-      const content = await broker.fs.readFile(filePath, "utf-8");
-      resultData = {
-        filePath,
-        content,
-        bytes: content.length,
-      };`;
+      return `      const _rawReadPath = (input as Record<string, unknown>).targetPaths ?? (input as Record<string, unknown>).path ?? (input as Record<string, unknown>).filePath ?? (input as Record<string, unknown>).targetPath ?? (input as Record<string, unknown>).filePaths;
+      if (_rawReadPath == null || (Array.isArray(_rawReadPath) && _rawReadPath.length === 0) || (!Array.isArray(_rawReadPath) && String(_rawReadPath).trim() === "")) throw new Error("Missing required file path");
+      if (Array.isArray(_rawReadPath)) {
+        if (_rawReadPath.some(p => p == null || String(p).trim() === "")) throw new Error("Missing required file path entry");
+        const _contents = await Promise.all((_rawReadPath as string[]).map(async p => ({ filePath: String(p), content: await broker.fs.readFile(String(p), "utf-8") })));
+        await logger.debug("Reading files via filesystem broker", { filePaths: _rawReadPath });
+        resultData = {
+          filePath: _contents[0].filePath,
+          filePaths: _rawReadPath as string[],
+          content: _contents[0].content,
+          contents: _contents.map(c => c.content),
+          bytes: _contents[0].content.length,
+          results: _contents,
+        };
+      } else {
+        const filePath = String(_rawReadPath);
+        await logger.debug("Reading file via filesystem broker", { filePath });
+        const content = await broker.fs.readFile(filePath, "utf-8");
+        resultData = {
+          filePath,
+          content,
+          bytes: content.length,
+        };
+      }`;
     }
 
     // 2. Outbound HTTP / Network tools

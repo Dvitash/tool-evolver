@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import process from "node:process";
 import { createCloudService } from "../index.js";
+import { createConfiguredBenchmarkEvidenceVerifier } from "../evolution/replay/benchmark-attestation.js";
 
 async function main(): Promise<void> {
-  const service = createCloudService();
+  const benchmarkEvidenceVerifier = createConfiguredBenchmarkEvidenceVerifier();
+  const service = createCloudService({ benchmarkEvidenceVerifier });
   await service.initialize();
 
   console.log("[Worker] Durable cloud worker and scheduler started");

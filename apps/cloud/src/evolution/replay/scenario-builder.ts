@@ -13,6 +13,38 @@ import type {
 } from "./types.js";
 import { DeterministicRandom, VirtualBrokerReconstructor } from "./virtual-broker.js";
 
+function unwrapCandidateRevision(candidate: CandidateTarget): CandidateTarget {
+  if (candidate && typeof candidate === "object" && "artifacts" in candidate) {
+    const maybeArtifacts = (candidate as unknown as Record<string, unknown>).artifacts;
+    if (maybeArtifacts && typeof maybeArtifacts === "object") {
+      const art = maybeArtifacts as Record<string, unknown>;
+      const out: Record<string, unknown> = { ...(candidate as unknown as Record<string, unknown>) };
+      const candidateRec = candidate as unknown as Record<string, unknown>;
+      if ((!("sourceCode" in candidate) || typeof candidateRec.sourceCode !== "string") && typeof art.sourceCode === "string") {
+        out.sourceCode = art.sourceCode;
+      }
+      const hasManifest = "manifest" in candidate;
+      const hasProposed = "proposedTool" in candidate;
+      if (!hasManifest && !hasProposed && art.manifest) {
+        out.manifest = art.manifest;
+      } else if (!hasManifest && art.manifest && !out.manifest) {
+        out.manifest = art.manifest;
+      }
+      if (!("requiredCapabilities" in candidate) && art.capabilities) {
+        out.requiredCapabilities = art.capabilities;
+      }
+      if (!("workflowDefinition" in candidate) && art.workflowDefinition) {
+        out.workflowDefinition = art.workflowDefinition;
+      }
+      if (!("plan" in candidate) && art.plan) {
+        out.plan = art.plan;
+      }
+      return out as unknown as CandidateTarget;
+    }
+  }
+  return candidate;
+}
+
 /**
  * Derives inputs, expected invariants, and baseline metrics from historical workflow episodes.
  */
@@ -25,6 +57,7 @@ export class ReplayScenarioBuilder {
     candidate: CandidateTarget,
     options: HistoricalReplayOptions = {},
   ): ReplayScenario[] {
+    const normalizedCandidate = unwrapCandidateRevision(candidate);
     const events = VirtualBrokerReconstructor.extractEvents(evidence);
     const rng = new DeterministicRandom(options.seed ?? 42);
     const scenarios: ReplayScenario[] = [];
@@ -50,15 +83,17 @@ export class ReplayScenarioBuilder {
           : `ep-${evidenceEventIds[0] ?? "unknown"}`;
 
     const manifest: ToolManifest | Partial<ToolManifest> =
-      "manifest" in candidate && candidate.manifest
-        ? candidate.manifest
-        : "proposedTool" in candidate && candidate.proposedTool
-          ? candidate.proposedTool
-          : { name: "candidate_tool" };
+      "manifest" in normalizedCandidate && (normalizedCandidate as unknown as { manifest?: unknown }).manifest
+        ? (normalizedCandidate as unknown as { manifest: ToolManifest }).manifest
+        : "proposedTool" in normalizedCandidate && (normalizedCandidate as unknown as { proposedTool?: unknown }).proposedTool
+          ? (normalizedCandidate as unknown as { proposedTool: ToolManifest }).proposedTool
+          : (normalizedCandidate as unknown as { artifacts?: { manifest?: ToolManifest } }).artifacts?.manifest
+            ? (normalizedCandidate as unknown as { artifacts: { manifest: ToolManifest } }).artifacts.manifest
+            : { name: "candidate_tool" };
 
     const virtualBaseState = VirtualBrokerReconstructor.buildFromEvents(events);
     const baselineMetrics = this.computeBaselineMetrics(events);
-    const allowedOps = this.deriveAllowedBrokerOperations(candidate);
+    const allowedOps = this.deriveAllowedBrokerOperations(normalizedCandidate);
     const primaryInput = this.derivePrimaryInput(events, manifest, virtualBaseState);
 
     // 1. Primary Observed Episode Scenario
@@ -108,7 +143,7 @@ export class ReplayScenarioBuilder {
         primaryScenario,
         manifest,
         rng,
-        candidate,
+        normalizedCandidate,
       );
       scenarios.push(...negativeScenarios);
     }
@@ -297,11 +332,18 @@ export class ReplayScenarioBuilder {
    * Derives allowed broker operations based on required capabilities and manifests.
    */
   private deriveAllowedBrokerOperations(candidate: CandidateTarget): AllowedBrokerOperation[] {
+    const normalized = unwrapCandidateRevision(candidate);
     const allowed: AllowedBrokerOperation[] = [];
-    const caps =
-      "requiredCapabilities" in candidate && candidate.requiredCapabilities
-        ? candidate.requiredCapabilities
-        : undefined;
+    const caps = (() => {
+      const n = normalized as unknown as { requiredCapabilities?: unknown; artifacts?: { capabilities?: unknown } };
+      if ("requiredCapabilities" in normalized && n.requiredCapabilities) {
+        return n.requiredCapabilities as unknown as import("@tool-evolver/contracts").CapabilityManifest;
+      }
+      if (n.artifacts?.capabilities) {
+        return n.artifacts.capabilities as unknown as import("@tool-evolver/contracts").CapabilityManifest;
+      }
+      return undefined;
+    })();
     if (!caps) return allowed;
 
     const regexEscape = String.fromCharCode(92);

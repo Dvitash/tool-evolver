@@ -13,36 +13,45 @@ import type {
   ReplayStatus,
   WorkloadBenchmarkComparison,
   WorkloadSize,
+  WorkloadBenchmarkEvidence,
 } from "./types.js";
 import {
   WORKLOAD_SIZE_ORDER,
-  DEFAULT_MODEL_TOKEN_PRICES,
   calculateWeightedModelCost,
+  assertValidWorkloadBenchmarkComparison,
+  assertValidWorkloadBenchmarkEvidence,
 } from "./types.js";
 
 /**
  * Replay trace and invariant comparator assessing candidate correctness, side effects, and metrics.
- * Extended to compute deterministic workload benchmark comparisons when baseline and candidate model usage are present.
+ * Extended to compute deterministic workload benchmark comparisons when baseline and candidate model usage are present
+ * alongside explicit canonical benchmark evidence.
  * Redundancy is explicit from ModelUsageMetrics.redundantToolCalls, never inferred from broker operations.
+ * No placeholder evidence is fabricated; evidence must be explicitly provided.
  */
 export class ReplayTraceComparator {
   /**
    * Computes a single workload benchmark comparison deterministically.
+   * Requires explicit canonical evidence carrying all immutable identity/binding/pricing fields.
    * Validates finite non-negative metrics and workload size ordering.
+   * Recomputes weighted costs server-side from raw usage and authoritative scheduleId; rejects caller costs that mismatch.
+   * No fallback placeholder evidence.
    */
   buildWorkloadBenchmark(
     workloadSize: WorkloadSize,
     baseline: ModelUsageMetrics,
     candidate: ModelUsageMetrics,
+    evidence: WorkloadBenchmarkEvidence,
   ): WorkloadBenchmarkComparison {
     if (!WORKLOAD_SIZE_ORDER.includes(workloadSize)) {
       throw new Error(
         `Invalid workloadSize '${String(workloadSize)}' — must be one of ${WORKLOAD_SIZE_ORDER.join(",")}`,
       );
     }
-    // validate metrics via calculateWeightedModelCost (which validates finite non-negative)
-    const baselineCostUsd = calculateWeightedModelCost(baseline, DEFAULT_MODEL_TOKEN_PRICES);
-    const candidateCostUsd = calculateWeightedModelCost(candidate, DEFAULT_MODEL_TOKEN_PRICES);
+    assertValidWorkloadBenchmarkEvidence(evidence, "WorkloadBenchmarkEvidence");
+    const scheduleId = evidence.scheduleId;
+    const baselineCostUsd = calculateWeightedModelCost(baseline, scheduleId);
+    const candidateCostUsd = calculateWeightedModelCost(candidate, scheduleId);
 
     if (!Number.isFinite(baselineCostUsd) || baselineCostUsd < 0) {
       throw new Error(`baselineCostUsd must be finite non-negative, got ${baselineCostUsd}`);
@@ -58,7 +67,6 @@ export class ReplayTraceComparator {
       throw new Error(`costDeltaPercent must be finite, got ${costDeltaPercent}`);
     }
 
-    // Redundancy must be explicit from usage, not guessed from broker calls
     const redundantVerificationCalls = candidate.redundantToolCalls;
     if (!Number.isInteger(redundantVerificationCalls) || !Number.isFinite(redundantVerificationCalls) || redundantVerificationCalls < 0) {
       throw new Error(`redundantVerificationCalls must be integer finite non-negative, got ${redundantVerificationCalls}`);
@@ -66,7 +74,7 @@ export class ReplayTraceComparator {
 
     const correctnessPassed = candidate.correct === true;
 
-    return {
+    const result: WorkloadBenchmarkComparison = {
       workloadSize,
       baseline,
       candidate,
@@ -75,14 +83,30 @@ export class ReplayTraceComparator {
       costDeltaPercent,
       correctnessPassed,
       redundantVerificationCalls,
+      benchmarkId: evidence.benchmarkId,
+      baselineRunId: evidence.baselineRunId,
+      candidateRunId: evidence.candidateRunId,
+      workloadInputDigest: evidence.workloadInputDigest,
+      candidateRevisionId: evidence.candidateRevisionId,
+      artifactDigest: evidence.artifactDigest,
+      modelProvider: evidence.modelProvider,
+      modelId: evidence.modelId,
+      observedAt: evidence.observedAt,
+      scheduleId: evidence.scheduleId,
     };
+    const att = (evidence as unknown as Record<string, unknown>).attestation as WorkloadBenchmarkComparison["attestation"] | undefined;
+    if (att !== undefined) {
+      (result as unknown as Record<string, unknown>).attestation = att;
+    }
+    return result;
   }
 
   /**
-   * Derives workload benchmark from scenario and trace when both model usages are present.
-   * Returns undefined when any canonical telemetry field is absent.
-   * Canonical fields: scenario.workloadSize, scenario.baselineModelUsage, trace.modelUsage
-   * Validates finite non-negative metrics; throws fail-closed on invalid.
+   * Derives workload benchmark from scenario and trace when all canonical telemetry and explicit evidence are present.
+   * Returns undefined when any canonical field is absent.
+   * Canonical fields: scenario.workloadSize, scenario.baselineModelUsage, scenario.benchmarkEvidence, trace.modelUsage
+   * No synthesis from tokensUsed or other implicit signals.
+   * Validates finite non-negative metrics and evidence; throws fail-closed on invalid.
    */
   deriveWorkloadBenchmark(
     scenario: ReplayScenario,
@@ -90,59 +114,25 @@ export class ReplayTraceComparator {
   ): WorkloadBenchmarkComparison | undefined {
     const workloadSize = scenario.workloadSize;
     const baseline = scenario.baselineModelUsage;
+    const evidence = scenario.benchmarkEvidence;
     const candidate = trace.modelUsage;
-    if (!workloadSize || !baseline || !candidate) return undefined;
-    return this.buildWorkloadBenchmark(workloadSize, baseline, candidate);
+    if (!workloadSize || !baseline || !evidence || !candidate) return undefined;
+    return this.buildWorkloadBenchmark(workloadSize, baseline, candidate, evidence);
   }
 
   /**
    * Validates a WorkloadBenchmarkComparison for finite non-negative fields and deterministic expectations.
-   * Throws on invalid.
+   * Throws on invalid. Strict: recomputes costs with authoritative scheduleId and validates all evidence fields.
    */
   private validateWorkloadBenchmark(comp: WorkloadBenchmarkComparison): void {
-    if (!WORKLOAD_SIZE_ORDER.includes(comp.workloadSize)) {
-      throw new Error(`Invalid workloadSize '${String(comp.workloadSize)}'`);
-    }
-    // Re-use calculateWeightedModelCost validation via build logic check
-    calculateWeightedModelCost(comp.baseline, DEFAULT_MODEL_TOKEN_PRICES);
-    calculateWeightedModelCost(comp.candidate, DEFAULT_MODEL_TOKEN_PRICES);
-    if (!Number.isFinite(comp.baselineCostUsd) || comp.baselineCostUsd < 0) {
-      throw new Error(`Invalid baselineCostUsd ${comp.baselineCostUsd}`);
-    }
-    if (!Number.isFinite(comp.candidateCostUsd) || comp.candidateCostUsd < 0) {
-      throw new Error(`Invalid candidateCostUsd ${comp.candidateCostUsd}`);
-    }
-    if (!Number.isFinite(comp.costDeltaPercent)) {
-      throw new Error(`Invalid costDeltaPercent ${comp.costDeltaPercent}`);
-    }
-    if (typeof comp.correctnessPassed !== "boolean") {
-      throw new Error(`Invalid correctnessPassed ${String(comp.correctnessPassed)}`);
-    }
-    if (!Number.isInteger(comp.redundantVerificationCalls) || comp.redundantVerificationCalls < 0 || !Number.isFinite(comp.redundantVerificationCalls)) {
-      throw new Error(`Invalid redundantVerificationCalls ${comp.redundantVerificationCalls}`);
-    }
-    if (comp.redundantVerificationCalls !== comp.candidate.redundantToolCalls) {
-      throw new Error(
-        `redundantVerificationCalls must equal candidate.redundantToolCalls (${comp.candidate.redundantToolCalls})`,
-      );
-    }
-    if (comp.correctnessPassed !== comp.candidate.correct) {
-      throw new Error(
-        `correctnessPassed must equal candidate.correct (${comp.candidate.correct})`,
-      );
-    }
-    const expectedDelta =
-      comp.baselineCostUsd === 0 ? 0 : ((comp.candidateCostUsd - comp.baselineCostUsd) / comp.baselineCostUsd) * 100;
-    if (Math.abs(comp.costDeltaPercent - expectedDelta) > 1e-6) {
-      throw new Error(
-        `costDeltaPercent mismatch: expected ${expectedDelta}, got ${comp.costDeltaPercent}`,
-      );
-    }
+    assertValidWorkloadBenchmarkComparison(comp);
   }
 
   /**
    * Sorts workload benchmarks deterministically by WORKLOAD_SIZE_ORDER (small→medium→large).
    * Validates no duplicate workloadSize and that entries are valid.
+   * Enforces distinct benchmarkId/baselineRunId/candidateRunId/workloadInputDigest across rows
+   * and exact candidateRevisionId/artifactDigest binding across all rows. All rows must be fully bound.
    */
   sortAndValidateWorkloadBenchmarks(
     benchmarks: WorkloadBenchmarkComparison[],
@@ -156,6 +146,38 @@ export class ReplayTraceComparator {
         throw new Error(`Duplicate workloadSize '${b.workloadSize}' in workloadBenchmarks`);
       }
       seen.add(b.workloadSize);
+    }
+    const seenBenchmarkId = new Set<string>();
+    const seenBaselineRunId = new Set<string>();
+    const seenCandidateRunId = new Set<string>();
+    const seenInputDigest = new Set<string>();
+    let expectedRevision: string | undefined;
+    let expectedArtifact: string | undefined;
+    for (const b of benchmarks) {
+      if (seenBenchmarkId.has(b.benchmarkId)) {
+        throw new Error(`Duplicate benchmarkId '${b.benchmarkId}' in workloadBenchmarks`);
+      }
+      seenBenchmarkId.add(b.benchmarkId);
+      if (seenBaselineRunId.has(b.baselineRunId)) {
+        throw new Error(`Duplicate baselineRunId '${b.baselineRunId}' in workloadBenchmarks`);
+      }
+      seenBaselineRunId.add(b.baselineRunId);
+      if (seenCandidateRunId.has(b.candidateRunId)) {
+        throw new Error(`Duplicate candidateRunId '${b.candidateRunId}' in workloadBenchmarks`);
+      }
+      seenCandidateRunId.add(b.candidateRunId);
+      if (seenInputDigest.has(b.workloadInputDigest)) {
+        throw new Error(`Duplicate workloadInputDigest '${b.workloadInputDigest}' in workloadBenchmarks`);
+      }
+      seenInputDigest.add(b.workloadInputDigest);
+      if (expectedRevision === undefined) expectedRevision = b.candidateRevisionId;
+      else if (b.candidateRevisionId !== expectedRevision) {
+        throw new Error(`candidateRevisionId mismatch: expected '${expectedRevision}', got '${b.candidateRevisionId}'`);
+      }
+      if (expectedArtifact === undefined) expectedArtifact = b.artifactDigest;
+      else if (b.artifactDigest !== expectedArtifact) {
+        throw new Error(`artifactDigest mismatch: expected '${expectedArtifact}', got '${b.artifactDigest}'`);
+      }
     }
     return [...benchmarks].sort(
       (a, b) => WORKLOAD_SIZE_ORDER.indexOf(a.workloadSize) - WORKLOAD_SIZE_ORDER.indexOf(b.workloadSize),
@@ -217,7 +239,7 @@ export class ReplayTraceComparator {
     // 4. Compute metrics comparison (existing behavior unchanged)
     const metricsComparison = this.computeMetricsComparison(scenario, trace);
 
-    // 5. Compute workload benchmark when canonical telemetry is present
+    // 5. Compute workload benchmark when canonical telemetry and explicit evidence are present
     let workloadBenchmark: WorkloadBenchmarkComparison | undefined;
     workloadBenchmark = this.deriveWorkloadBenchmark(scenario, trace);
 

@@ -12,7 +12,7 @@ import {
 } from "@tool-evolver/contracts";
 import { z } from "zod";
 import type { CandidateRevision } from "../generator/types.js";
-import type { HistoricalReplayResult } from "../replay/types.js";
+import type { HistoricalReplayOptions, HistoricalReplayResult } from "../replay/types.js";
 import type { CandidateValidationResult } from "../testing/types.js";
 
 /**
@@ -84,6 +84,8 @@ export interface EvidenceDigests {
   evaluationDigest?: string;
   artifactDigest?: string;
   signatureDigest?: string;
+  artifactSetDigest?: string;
+  replayOptionsDigest?: string;
 }
 
 /**
@@ -124,6 +126,8 @@ export interface CandidateLifecycleRecord {
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+  persistedReplayOptions?: HistoricalReplayOptions | null;
+  persistedReplayOptionsDigest?: string | null;
 }
 
 /**

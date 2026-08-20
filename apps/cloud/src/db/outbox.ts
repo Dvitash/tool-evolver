@@ -49,7 +49,7 @@ export class OutboxRepository {
     await db.query(
       `INSERT INTO outbox (
         id, account_id, workspace_id, aggregate_type, aggregate_id, event_type, payload, headers, status, retry_count, last_error, created_at, published_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) ON CONFLICT (id) DO NOTHING`,
       [
         id,
         input.accountId,

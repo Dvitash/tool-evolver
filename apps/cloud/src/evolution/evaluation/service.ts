@@ -11,9 +11,10 @@ import {
   type ToolManifest,
   hashCanonical,
 } from "@tool-evolver/contracts";
-import type { CandidateRevision } from "../generator/types.js";
+import type { CandidateRevision, ToolPlan } from "../generator/types.js";
 import type { OpportunityDetection } from "../opportunity/types.js";
-import type { HistoricalReplayResult } from "../replay/types.js";
+import type { HistoricalReplayResult, WorkloadBenchmarkComparison } from "../replay/types.js";
+import type { BenchmarkEvidenceVerifier } from "../replay/benchmark-attestation.js";
 import type { CandidateValidationResult, CandidateValidationTarget } from "../testing/types.js";
 import { HardGateEvaluator } from "./hard-gates.js";
 import {
@@ -49,6 +50,7 @@ export interface CandidateEvaluationServiceOptions {
   policyRegistry?: EvaluationPolicyRegistry;
   onEligibilityDecision?: (result: EvaluationResult) => Promise<void> | void;
   onRepairRequested?: (result: EvaluationResult) => Promise<void> | void;
+  benchmarkEvidenceVerifier?: BenchmarkEvidenceVerifier;
 }
 
 /**
@@ -79,6 +81,7 @@ export class CandidateEvaluationService {
   private updateComparator = new UpdateComparator();
   private shadowEvaluator = new ShadowPolicyEvaluator();
   private shadowCalibrationAggregator = new ShadowCalibrationAggregator();
+  private benchmarkEvidenceVerifier?: BenchmarkEvidenceVerifier;
 
   private evaluationStore = new Map<string, EvaluationResult>();
   private candidateEvaluations = new Map<string, string[]>();
@@ -90,6 +93,7 @@ export class CandidateEvaluationService {
     this.policyRegistry = options.policyRegistry ?? defaultPolicyRegistry;
     this.onEligibilityDecision = options.onEligibilityDecision;
     this.onRepairRequested = options.onRepairRequested;
+    this.benchmarkEvidenceVerifier = options.benchmarkEvidenceVerifier;
   }
 
   /**
@@ -105,13 +109,37 @@ export class CandidateEvaluationService {
     const candidateInfo = this.extractCandidateInfo(input.candidate);
     const { candidateId, revisionId, manifest, sourceCode, requiredCapabilities } = candidateInfo;
 
-    // Resolve authoritative workflow contract/coverage (explicit input preferred, fallback to CandidateRevision plan)
-    const candidateAsRevision = input.candidate as unknown as CandidateRevision & {
-      artifacts?: CandidateRevision["artifacts"];
-    };
-    const revisionPlan = candidateAsRevision?.artifacts?.plan;
-    const workflowContract = input.workflowContract ?? revisionPlan?.workflowContract;
-    const workflowCoverage = input.workflowCoverage ?? revisionPlan?.workflowCoverage;
+    // Resolve authoritative ToolPlan and workflow contract (authoritative plan overrides stale caller fields)
+    const explicitToolPlan: ToolPlan | undefined = input.toolPlan;
+    let revisionPlan: ToolPlan | undefined;
+    const candidateForPlan: unknown = input.candidate;
+    if (
+      candidateForPlan !== null &&
+      typeof candidateForPlan === "object" &&
+      "artifacts" in candidateForPlan
+    ) {
+      const artifactsValue: unknown = candidateForPlan.artifacts;
+      if (
+        artifactsValue !== null &&
+        typeof artifactsValue === "object" &&
+        "plan" in artifactsValue
+      ) {
+        const planValue: unknown = artifactsValue.plan;
+        if (
+          planValue !== null &&
+          typeof planValue === "object" &&
+          "steps" in planValue
+        ) {
+          const stepsValue: unknown = planValue.steps;
+          if (Array.isArray(stepsValue)) {
+            revisionPlan = planValue as ToolPlan;
+          }
+        }
+      }
+    }
+    const toolPlan: ToolPlan | undefined = explicitToolPlan ?? revisionPlan;
+    const workflowContract = toolPlan?.workflowContract ?? input.workflowContract;
+    const artifactDigest = hashCanonical(sourceCode);
 
     // 2. Resolve active evaluation policy
     const policy = this.policyRegistry.resolve(input.policy);
@@ -121,7 +149,28 @@ export class CandidateEvaluationService {
       input.options?.forceRiskTier ?? classifyRiskTier(manifest, requiredCapabilities);
     const tierThresholds = policy.riskTierThresholds[riskTier];
 
-    // 4. Evaluate non-negotiable hard safety gates
+    // 4a. Verify benchmark attestations asynchronously before hard gates; pass verified IDs for hard-gate enforcement
+    let verifiedBenchmarkIds: string[] = [];
+    const rawBenchmarks = (input.replayResult as unknown as { workloadBenchmarks?: WorkloadBenchmarkComparison[] })?.workloadBenchmarks;
+    if (rawBenchmarks && rawBenchmarks.length > 0) {
+      if (this.benchmarkEvidenceVerifier) {
+        const results = await Promise.all(
+          rawBenchmarks.map(async (bm) => {
+            try {
+              const ok = await this.benchmarkEvidenceVerifier!.verify(bm);
+              return ok ? bm.benchmarkId : null;
+            } catch {
+              return null;
+            }
+          }),
+        );
+        verifiedBenchmarkIds = results.filter((id): id is string => typeof id === "string");
+      } else {
+        verifiedBenchmarkIds = [];
+      }
+    }
+
+    // 4. Evaluate non-negotiable hard safety gates — thread authoritative ToolPlan and recompute coverage at gate time
     const hardGateResult = this.hardGateEvaluator.evaluate({
       manifest,
       sourceCode,
@@ -132,8 +181,11 @@ export class CandidateEvaluationService {
       policy,
       riskTier,
       workflowContract,
-      workflowCoverage,
-    } as unknown as Parameters<HardGateEvaluator["evaluate"]>[0]);
+      toolPlan,
+      candidateRevisionId: revisionId,
+      artifactDigest,
+      verifiedBenchmarkIds,
+    });
 
 
     // 5. Multi-dimensional scoring

@@ -55,8 +55,8 @@ describe("Database Client, Migrations & Outbox", () => {
 
     // Initial run
     const result = await runMigrations(pool);
-    expect(result.appliedCount).toBe(8);
-    expect(result.currentVersion).toBe(8);
+    expect(result.appliedCount).toBe(9);
+    expect(result.currentVersion).toBe(9);
 
     // Verify migration status
     const statuses = await getMigrationStatus(pool);
@@ -77,10 +77,12 @@ describe("Database Client, Migrations & Outbox", () => {
     expect(statuses[6].version).toBe(7);
     expect(statuses[7].applied).toBe(true);
     expect(statuses[7].version).toBe(8);
+    expect(statuses[8].applied).toBe(true);
+    expect(statuses[8].version).toBe(9);
     // Re-running migrations is idempotent
     const secondRun = await runMigrations(pool);
     expect(secondRun.appliedCount).toBe(0);
-    expect(secondRun.currentVersion).toBe(8);
+    expect(secondRun.currentVersion).toBe(9);
     const accountsRes = await pool.query(`SELECT * FROM accounts`);
     expect(accountsRes.rows).toEqual([]);
     const jobsRes = await pool.query(`SELECT * FROM jobs`);
@@ -96,7 +98,7 @@ describe("Database Client, Migrations & Outbox", () => {
     // Rollback migration
     const rollback = await rollbackMigration(pool, { targetVersion: 0 });
     expect(rollback.success).toBe(true);
-    expect(rollback.rolledBackCount).toBe(8);
+    expect(rollback.rolledBackCount).toBe(9);
     expect(rollback.currentVersion).toBe(0);
   });
   it("should atomically commit domain entity and outbox message in the same transaction", async () => {

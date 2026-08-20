@@ -552,12 +552,25 @@ export class WorkflowGenerator {
             } else if (toolClass === "file_read" || operation.name.includes("file_read") || operation.name.includes("read_file")) {
               service = "fs";
               action = "fs.readFile";
-              inputs = { path: "${input.path}" };
+              const filePathVar = currentPlan.variableInputs.some((v) => v.name === "targetPaths")
+                ? "${input.targetPaths[0]}"
+                : currentPlan.variableInputs.some((v) => v.name === "targetPath")
+                  ? "${input.targetPath}"
+                  : "${input.path}";
+              inputs = { path: filePathVar };
               toolClass = "file_read";
             } else if (toolClass === "file_edit" || operation.name.includes("file_edit") || operation.name.includes("write")) {
               service = "fs";
               action = "fs.writeFile";
-              inputs = { path: "${input.destPath}", content: "${input.content}" };
+              const filePathVar = currentPlan.variableInputs.some((v) => v.name === "targetPaths")
+                ? "${input.targetPaths[0]}"
+                : currentPlan.variableInputs.some((v) => v.name === "targetPath")
+                  ? "${input.targetPath}"
+                  : "${input.path}";
+              const contentVar = currentPlan.variableInputs.some((v) => v.name === "content")
+                ? "${input.content}"
+                : "${input.input}";
+              inputs = { path: filePathVar, content: contentVar };
               toolClass = "file_edit";
             } else if (toolClass === "vcs" || operation.name.toLowerCase().includes("git")) {
               service = "cmd";
@@ -578,24 +591,24 @@ export class WorkflowGenerator {
               inputs = { command: "pnpm", args: ["build"] };
             } else if (toolClass === "search" || operation.name.includes("search")) {
               service = "fs";
-              action = "fs.readFile";
-              inputs = { path: "${input.query}" };
+              action = "fs.listDirectory";
+              const searchPathVar = currentPlan.variableInputs.some((v) => v.name === "targetPaths")
+                ? "${input.targetPaths[0]}"
+                : currentPlan.variableInputs.some((v) => v.name === "path")
+                  ? "${input.path}"
+                  : currentPlan.variableInputs.some((v) => v.name === "query")
+                    ? "${input.query}"
+                    : "${input.input}";
+              inputs = { path: searchPathVar, recursive: true, toolClass: "search" };
             } else {
               service = "compute";
               action = operation.name.includes(".") ? operation.name : "compute.transform";
               inputs = {};
             }
-            const dependsOn: string[] = [];
-            const opOrder = operation.order;
-            if (opOrder > 0) {
-              const prevOpId = `op_${opOrder - 1}`;
-              const prevStep = currentPlan.steps.find((s) => s.coveredOperationIds?.includes(prevOpId));
-              if (prevStep) {
-                dependsOn.push(prevStep.id);
-              } else if (currentPlan.steps.length > 0) {
-                dependsOn.push(currentPlan.steps[currentPlan.steps.length - 1]!.id);
-              }
-            }
+            const outputsForOp = currentPlan.workflowContract.outputRequirements
+              .filter((req) => req.sourceOperationId === opId)
+              .map((req) => req.name)
+              .sort();
             const newStep: WorkflowStep = {
               id: stepId,
               name: operation.name,
@@ -605,8 +618,9 @@ export class WorkflowGenerator {
               service: service as WorkflowStep["service"],
               inputs,
               outputVar: `result_${stepId}`,
-              dependsOn,
+              dependsOn: [],
               coveredOperationIds: [opId],
+              ...(outputsForOp.length > 0 ? { outputs: outputsForOp } : {}),
               timeoutMs: 30000,
               timeout: 30000,
               retryPolicy: { maxRetries: 0, backoffMs: 0, idempotent: false },
@@ -616,7 +630,7 @@ export class WorkflowGenerator {
             currentPlan.steps.push(newStep);
             appliedFixes.push(`Added step "${stepId}" covering operation "${opId}" (${operation.name}).`);
           }
-          // Fix uncovered outputs
+          // Fix uncovered outputs (one per iteration)
           for (const outputName of [...coverage.uncoveredOutputNames].sort().slice(0, 1)) {
             const req = currentPlan.workflowContract.outputRequirements.find((r) => r.name === outputName);
             if (!req) continue;
@@ -637,6 +651,23 @@ export class WorkflowGenerator {
             if (!targetProperties[outputName]) {
               targetProperties[outputName] = { type, description } as unknown as Record<string, unknown>;
               appliedFixes.push(`Added missing output "${outputName}" to outputSchema.`);
+            }
+            // Ensure covering step declares this output
+            let coveringStep = currentPlan.steps.find((s) => s.coveredOperationIds?.includes(req.sourceOperationId));
+            if (coveringStep) {
+              const existingOutputs = coveringStep.outputs as unknown;
+              if (Array.isArray(existingOutputs)) {
+                if (!(existingOutputs as string[]).includes(outputName)) {
+                  (coveringStep.outputs as string[]).push(outputName);
+                  (coveringStep.outputs as string[]).sort();
+                }
+              } else if (existingOutputs && typeof existingOutputs === "object") {
+                if (!Object.prototype.hasOwnProperty.call(existingOutputs as Record<string, unknown>, outputName)) {
+                  (existingOutputs as Record<string, unknown>)[outputName] = { type, description };
+                }
+              } else {
+                coveringStep.outputs = [outputName];
+              }
             }
             if (req.required) {
               if (dataProp && Array.isArray(dataProp.required)) {
@@ -810,7 +841,10 @@ export class WorkflowGenerator {
 
       // Call broker action
       code += `            const res = await ${this.compileBrokerCall(step)};\n`;
-      if (step.action === "cmd.exec" || step.action === "exec") {
+      const isCompositeCmd =
+        Array.isArray((step.inputs as Record<string, unknown>).commandProfiles) &&
+        ((step.inputs as Record<string, unknown>).commandProfiles as unknown[]).length > 1;
+      if ((step.action === "cmd.exec" || step.action === "exec") && !isCompositeCmd) {
         code += `            if (res.exitCode !== 0) throw new Error(String(res.stderr || "Command " + ${JSON.stringify(step.id)} + " failed with exit code " + res.exitCode));\n`;
       }
       code += `            stepResults[${JSON.stringify(step.id)}] = res;\n`;
@@ -833,6 +867,7 @@ export class WorkflowGenerator {
       code += `          } catch (err) {\n`;
       code += `            lastErr = err;\n`;
       code += `            attempts++;\n`;
+      code += `            await logger.warn("[Step ${step.id}] Attempt " + attempts + " failed: " + String(err));\n`;
       if (maxRetries > 0) {
         code += `            if (attempts <= ${maxRetries}) {\n`;
         code += `              await logger.warn("[Step ${step.id}] Attempt " + attempts + " failed. Retrying in ${backoffMs}ms...");\n`;
@@ -861,7 +896,102 @@ export class WorkflowGenerator {
 
     code += `      return {\n`;
     code += `        success: true,\n`;
-    code += `        data: stepResults,\n`;
+    if (plan.workflowContract && plan.workflowContract.outputRequirements.length > 0) {
+      code += `        data: {\n`;
+      const sortedReqs = [...plan.workflowContract.outputRequirements].sort((a, b) => a.name.localeCompare(b.name));
+      for (const req of sortedReqs) {
+        let stepId: string | undefined;
+        let sourceStep: WorkflowStep | undefined;
+        for (const s of sortedSteps) {
+          const covers = Array.isArray(s.coveredOperationIds) && s.coveredOperationIds.includes(req.sourceOperationId);
+          const declares = s.outputs
+            ? Array.isArray(s.outputs)
+              ? (s.outputs as string[]).includes(req.name)
+              : Object.prototype.hasOwnProperty.call(s.outputs as Record<string, unknown>, req.name)
+            : false;
+          if (covers && declares) {
+            stepId = s.id;
+            sourceStep = s;
+            break;
+          }
+        }
+        if (!stepId) {
+          const fallback = sortedSteps.find((s) => Array.isArray(s.coveredOperationIds) && s.coveredOperationIds.includes(req.sourceOperationId));
+          stepId = fallback?.id ?? sortedSteps[0]!.id;
+          sourceStep = fallback ?? sortedSteps[0];
+        }
+        const ref = `stepResults[${JSON.stringify(stepId)}]`;
+        const lowerName = String(req.name ?? "").toLowerCase();
+        const lowerDesc = String((req as unknown as Record<string, unknown>).description ?? "").toLowerCase();
+        const combined = `${lowerName} ${lowerDesc}`;
+        const rawType = String((req as unknown as Record<string, unknown>).type ?? "string").toLowerCase();
+        const type = rawType === "integer" ? "number" : rawType;
+        const action = String((sourceStep as WorkflowStep | undefined)?.action ?? "").toLowerCase();
+        const service = String((sourceStep as WorkflowStep | undefined)?.service ?? "").toLowerCase();
+        const toolClass = String(((sourceStep as unknown as Record<string, unknown>)?.toolClass as string) ?? "").toLowerCase();
+        const isCmd = service === "cmd" || action === "cmd.exec" || action === "exec" || toolClass === "command" || toolClass === "vcs" || toolClass === "test_runner" || toolClass === "build_tool";
+        const isFileRead = service === "fs" && (action === "fs.readfile" || action === "readfile" || action === "fs.read");
+        const isFileWrite = service === "fs" && (action === "fs.writefile" || action === "writefile");
+        const isList = service === "fs" && (action.includes("listdirectory") || action.includes("list") || toolClass === "search");
+        const isStat = action.includes("stat") || action.includes("exists");
+        let valueExpr: string;
+        if (type === "string") {
+          if (isCmd) {
+            if (combined.includes("stderr")) {
+              valueExpr = `String(((${ref} as unknown as Record<string, unknown>)?.stderr ?? ""))`;
+            } else {
+              valueExpr = `String(((${ref} as unknown as Record<string, unknown>)?.stdout ?? (${ref} as unknown as Record<string, unknown>)?.content ?? (${ref} as unknown as Record<string, unknown>)?.text ?? JSON.stringify(${ref} ?? "")) ?? "")`;
+            }
+          } else if (isFileRead || isFileWrite) {
+            valueExpr = `(typeof ${ref} === 'string' ? ${ref} : Array.isArray(${ref}) ? (${ref} as string[]).join("\\n") : String(((${ref} as unknown as Record<string, unknown>)?.content ?? (${ref} as unknown as Record<string, unknown>)?.text ?? JSON.stringify(${ref} ?? "")) ?? ""))`;
+          } else if (isList) {
+            valueExpr = `(Array.isArray(${ref}) ? String((${ref} as string[])[0] ?? JSON.stringify(${ref})) : String(((${ref} as unknown as Record<string, unknown>)?.content ?? JSON.stringify(${ref} ?? "")) ?? ""))`;
+          } else {
+            valueExpr = `(typeof ${ref} === 'string' ? ${ref} : String(((${ref} as unknown as Record<string, unknown>)?.content ?? (${ref} as unknown as Record<string, unknown>)?.stdout ?? (${ref} as unknown as Record<string, unknown>)?.text ?? (${ref} as unknown as Record<string, unknown>)?.value ?? JSON.stringify(${ref} ?? "")) ?? ""))`;
+          }
+        } else if (type === "number") {
+          if (isCmd && (combined.includes("exitcode") || combined.includes("exit_code") || combined.includes("status") || combined.includes("code"))) {
+            valueExpr = `Number(((${ref} as unknown as Record<string, unknown>)?.exitCode ?? 0))`;
+          } else if (combined.includes("count") || combined.includes("size") || combined.includes("length")) {
+            if (isCmd) {
+              valueExpr = `Number(String(((${ref} as unknown as Record<string, unknown>)?.stdout ?? "")).split("\\n").filter(Boolean).length)`;
+            } else if (isFileRead || isList) {
+              valueExpr = `(Array.isArray(${ref}) ? (${ref} as unknown[]).length : typeof ${ref} === 'string' ? ${ref}.length : Number(((${ref} as unknown as Record<string, unknown>)?.size ?? (${ref} as unknown as Record<string, unknown>)?.count ?? (${ref} as unknown as Record<string, unknown>)?.length ?? 0)))`;
+            } else {
+              valueExpr = `Number(((${ref} as unknown as Record<string, unknown>)?.size ?? (${ref} as unknown as Record<string, unknown>)?.count ?? (${ref} as unknown as Record<string, unknown>)?.exitCode ?? (${ref} as unknown as Record<string, unknown>)?.length ?? 0))`;
+            }
+          } else {
+            valueExpr = `(typeof ${ref} === 'number' ? ${ref} : Number(((${ref} as unknown as Record<string, unknown>)?.size ?? (${ref} as unknown as Record<string, unknown>)?.count ?? (${ref} as unknown as Record<string, unknown>)?.exitCode ?? (${ref} as unknown as Record<string, unknown>)?.length ?? 0)))`;
+          }
+        } else if (type === "boolean") {
+          if (isCmd && (combined.includes("success") || combined.includes("status"))) {
+            valueExpr = `Boolean(((${ref} as unknown as Record<string, unknown>)?.exitCode === 0))`;
+          } else if (service === "fs" && (action.includes("exists") || combined.includes("exists"))) {
+            valueExpr = `(typeof ${ref} === 'boolean' ? ${ref} : Boolean(((${ref} as unknown as Record<string, unknown>)?.exists ?? !!${ref})))`;
+          } else {
+            valueExpr = `(typeof ${ref} === 'boolean' ? ${ref} : Boolean(((${ref} as unknown as Record<string, unknown>)?.success ?? (${ref} as unknown as Record<string, unknown>)?.exists ?? ((${ref} as unknown as Record<string, unknown>)?.exitCode === 0) ?? !!${ref})))`;
+          }
+        } else if (type === "array") {
+          if (isCmd) {
+            valueExpr = `(Array.isArray(${ref}) ? ${ref} as unknown[] : typeof ((${ref} as unknown as Record<string, unknown>)?.stdout) === 'string' ? String(((${ref} as unknown as Record<string, unknown>)?.stdout ?? "")).split("\\n").filter(Boolean) : Array.isArray(((${ref} as unknown as Record<string, unknown>)?.entries)) ? (${ref} as unknown as Record<string, unknown>).entries : (${ref} as unknown as Record<string, unknown>)?.content !== undefined ? [(${ref} as unknown as Record<string, unknown>).content] : [${ref}])`;
+          } else if (isList) {
+            valueExpr = `(Array.isArray(${ref}) ? ${ref} as unknown[] : Array.isArray(((${ref} as unknown as Record<string, unknown>)?.entries)) ? (${ref} as unknown as Record<string, unknown>).entries : [${ref}])`;
+          } else if (isFileRead) {
+            valueExpr = `(Array.isArray(${ref}) ? ${ref} as unknown[] : typeof ${ref} === 'string' ? [${ref}] : (${ref} as unknown as Record<string, unknown>)?.content !== undefined ? [(${ref} as unknown as Record<string, unknown>).content] : [${ref}])`;
+          } else {
+            valueExpr = `(Array.isArray(${ref}) ? ${ref} as unknown[] : Array.isArray(((${ref} as unknown as Record<string, unknown>)?.entries)) ? (${ref} as unknown as Record<string, unknown>).entries : (${ref} as unknown as Record<string, unknown>)?.content !== undefined ? [(${ref} as unknown as Record<string, unknown>).content] : [${ref}])`;
+          }
+        } else if (type === "object") {
+          valueExpr = `(typeof ${ref} === 'object' && ${ref} !== null && !Array.isArray(${ref}) ? ${ref} as Record<string, unknown> : typeof ${ref} === 'string' ? (() => { try { return JSON.parse(${ref} as string) as Record<string, unknown>; } catch { return { value: ${ref} }; } })() : { value: ${ref} })`;
+        } else {
+          valueExpr = `${ref}`;
+        }
+        code += `          ${JSON.stringify(req.name)}: ${valueExpr},\n`;
+      }
+      code += `        },\n`;
+    } else {
+      code += `        data: stepResults,\n`;
+    }
     code += `        durationMs: Date.now() - startTime,\n`;
     code += `        stepCount: ${sortedSteps.length},\n`;
     code += `      };\n`;
@@ -928,8 +1058,24 @@ export class WorkflowGenerator {
 
   private compileBrokerCall(step: WorkflowStep, customInputVar = "stepInput"): string {
     const action = step.action;
-    // For command execution, emit literal command/args when available so evidence coverage can be verified deterministically
+    // Composite commandProfiles: one WorkflowOperation carries every same-origin profile; execute sequentially via broker.cmd.exec, check each exitCode, return ordered results
     if (action === "cmd.exec" || action === "exec") {
+      const rawProfiles = (step.inputs as Record<string, unknown>).commandProfiles;
+      if (Array.isArray(rawProfiles) && rawProfiles.length > 0 && rawProfiles.every((p) => typeof p === "string")) {
+        const profiles = rawProfiles as string[];
+        if (profiles.length === 1) {
+          const [bin, ...rest] = profiles[0]!.trim().split(/\s+/);
+          return `broker.cmd.exec(${JSON.stringify(bin)}, ${JSON.stringify(rest)})`;
+        }
+        const stmts = profiles
+          .map((profile, idx) => {
+            const [bin, ...rest] = profile.trim().split(/\s+/);
+            return `const _res${idx} = await broker.cmd.exec(${JSON.stringify(bin)}, ${JSON.stringify(rest)});\n      if (_res${idx}.exitCode !== 0) throw new Error(String(_res${idx}.stderr || "Command " + ${JSON.stringify(bin)} + " failed with exit code " + _res${idx}.exitCode));`;
+          })
+          .join("\n      ");
+        const resultRefs = profiles.map((_, idx) => `_res${idx}`).join(", ");
+        return `(async () => {\n      ${stmts}\n      return [${resultRefs}];\n    })()`;
+      }
       const rawCmd = (step.inputs as Record<string, unknown>).command;
       const rawArgs = (step.inputs as Record<string, unknown>).args;
       if (typeof rawCmd === "string" && Array.isArray(rawArgs) && rawArgs.every((a) => typeof a === "string")) {
@@ -940,10 +1086,10 @@ export class WorkflowGenerator {
       }
     }
     if (action === "fs.readFile" || action === "readFile") {
-      return `broker.fs.readFile(${customInputVar}.path, ${customInputVar}.encoding)`;
+      return `(async () => { const _rp = ${customInputVar}.path ?? ${customInputVar}.targetPaths; if (_rp == null || (Array.isArray(_rp) && _rp.length === 0) || (!Array.isArray(_rp) && String(_rp).trim() === "")) throw new Error("Missing required file path"); return Array.isArray(_rp) ? await Promise.all((_rp as string[]).map(p => { if (p == null || String(p).trim() === "") throw new Error("Missing required file path entry"); return broker.fs.readFile(String(p), ${customInputVar}.encoding ?? "utf-8"); })) : await broker.fs.readFile(String(_rp), ${customInputVar}.encoding ?? "utf-8"); })()`;
     }
     if (action === "fs.writeFile" || action === "writeFile") {
-      return `broker.fs.writeFile(${customInputVar}.path, ${customInputVar}.content)`;
+      return `(async () => { const _wp = ${customInputVar}.path ?? ${customInputVar}.targetPaths; if (_wp == null || (Array.isArray(_wp) && _wp.length === 0) || (!Array.isArray(_wp) && String(_wp).trim() === "")) throw new Error("Missing required file path"); const _content = ${customInputVar}.content; if (_content == null) throw new Error("Missing required file content"); if (Array.isArray(_wp)) return await Promise.all((_wp as string[]).map(p => { if (p == null || String(p).trim() === "") throw new Error("Missing required file path entry"); return broker.fs.writeFile(String(p), _content); })); return await broker.fs.writeFile(String(_wp), _content); })()`;
     }
     if (
       action === "fs.createDirectory" ||
@@ -951,16 +1097,47 @@ export class WorkflowGenerator {
       action === "fs.mkdir" ||
       action === "mkdir"
     ) {
-      return `broker.fs.createDirectory(${customInputVar}.path, { recursive: ${customInputVar}.recursive ?? true })`;
+      return `(async () => { const _cp = ${customInputVar}.path ?? ${customInputVar}.targetPaths; if (_cp == null || (Array.isArray(_cp) && _cp.length === 0) || (!Array.isArray(_cp) && String(_cp).trim() === "")) throw new Error("Missing required directory path"); return Array.isArray(_cp) ? await Promise.all((_cp as string[]).map(p => broker.fs.createDirectory(String(p), { recursive: ${customInputVar}.recursive ?? true }))) : await broker.fs.createDirectory(String(_cp), { recursive: ${customInputVar}.recursive ?? true }); })()`;
     }
     if (action === "fs.remove" || action === "remove" || action === "fs.delete") {
-      return `broker.fs.remove(${customInputVar}.path, { recursive: ${customInputVar}.recursive ?? false })`;
+      return `(async () => { const _rmp = ${customInputVar}.path ?? ${customInputVar}.targetPaths; if (_rmp == null || (Array.isArray(_rmp) && _rmp.length === 0) || (!Array.isArray(_rmp) && String(_rmp).trim() === "")) throw new Error("Missing required remove path"); return Array.isArray(_rmp) ? await Promise.all((_rmp as string[]).map(p => broker.fs.remove(String(p), { recursive: ${customInputVar}.recursive ?? false }))) : await broker.fs.remove(String(_rmp), { recursive: ${customInputVar}.recursive ?? false }); })()`;
     }
     if (action === "fs.copy" || action === "copy") {
       return `broker.fs.copy(${customInputVar}.source ?? ${customInputVar}.from, ${customInputVar}.destination ?? ${customInputVar}.to)`;
     }
     if (action === "fs.move" || action === "move") {
       return `broker.fs.move(${customInputVar}.source ?? ${customInputVar}.from, ${customInputVar}.destination ?? ${customInputVar}.to)`;
+    }
+    if (action === "fs.listDirectory" || action === "listDirectory" || action === "fs.listDir" || action === "listDir" || action === "fs.list" || action === "list") {
+      if (step.toolClass === "search") {
+        return `(async () => {
+      const _q = ${customInputVar}.query ?? ${customInputVar}.pattern;
+      if (_q == null || String(_q).length === 0) throw new Error("Missing required search query/pattern");
+      const _rawPath = ${customInputVar}.path ?? ${customInputVar}.targetPaths;
+      if (_rawPath == null || (Array.isArray(_rawPath) && _rawPath.length === 0) || (!Array.isArray(_rawPath) && String(_rawPath).length === 0)) throw new Error("Missing required search path");
+      const _basePaths = Array.isArray(_rawPath) ? _rawPath : [_rawPath];
+      const _aggregated: unknown[] = [];
+      for (const _basePath of _basePaths) {
+        if (_basePath == null || String(_basePath).length === 0) throw new Error("Missing required search path entry");
+        const _entries = await broker.fs.listDirectory(String(_basePath), { recursive: ${customInputVar}.recursive ?? true });
+        const _list = Array.isArray(_entries) ? _entries : [_entries];
+        for (const _ent of _list) {
+          const _entryPath = typeof _ent === "string" ? _ent : (_ent as any).path ?? String(_ent);
+          let _content: string;
+          try {
+            const _full = _entryPath.includes(String(_basePath)) ? _entryPath : (String(_basePath).endsWith("/") ? String(_basePath) + _entryPath : String(_basePath) + "/" + _entryPath);
+            try { _content = await broker.fs.readFile(_full, "utf-8"); } catch { _content = await broker.fs.readFile(_entryPath, "utf-8"); }
+          } catch {
+            if (String(_entryPath).includes(String(_q))) _aggregated.push(_ent);
+            continue;
+          }
+          if (String(_content).includes(String(_q))) _aggregated.push(_ent);
+        }
+      }
+      return _aggregated;
+    })()`;
+      }
+      return `(async () => { const _lp = ${customInputVar}.path ?? ${customInputVar}.targetPaths; if (_lp == null || (Array.isArray(_lp) && _lp.length === 0) || (!Array.isArray(_lp) && String(_lp).trim() === "")) throw new Error("Missing required directory path"); return Array.isArray(_lp) ? (await Promise.all((_lp as string[]).map(p => broker.fs.listDirectory(String(p), { recursive: ${customInputVar}.recursive ?? true })))).flat() : await broker.fs.listDirectory(String(_lp), { recursive: ${customInputVar}.recursive ?? true }); })()`;
     }
     if (action === "net.fetch" || action === "net.request") {
       return `broker.net.fetch(${customInputVar}.url, ${customInputVar})`;
@@ -971,8 +1148,14 @@ export class WorkflowGenerator {
     if (action === "secrets.get" || action === "secret.get") {
       return `broker.secret.getSecretRef(${customInputVar}.name)`;
     }
+    if (action === "search.query" || action === "search" || action.includes("search")) {
+      return `(await broker.fs.listDirectory(Array.isArray(${customInputVar}.path) ? ${customInputVar}.path[0] : ${customInputVar}.path ?? ${customInputVar}.query ?? ".", { recursive: true })).filter(entry => { const q = ${customInputVar}.query ?? ${customInputVar}.pattern; return !q || String(entry).includes(String(q)); })`;
+    }
+    if (action === "compute.transform" || step.service === "compute") {
+      return `Promise.resolve({ result: ${customInputVar}.data ?? ${customInputVar}, inputs: ${customInputVar} })`;
+    }
 
-    return `context.brokerHandler(${JSON.stringify(step.service ?? "compute")}, ${JSON.stringify(action)}, ${customInputVar})`;
+    return `(async () => { const _pp = ${customInputVar}.path ?? ${customInputVar}.targetPaths; if (_pp == null || (Array.isArray(_pp) && _pp.length === 0) || (!Array.isArray(_pp) && String(_pp).trim() === "")) throw new Error("Missing required file path"); const _ppp = Array.isArray(_pp) ? _pp[0] : _pp; return broker.fs.readFile(String(_ppp), "utf-8"); })()`;
   }
 
   private compileStepInputObject(inputs: Record<string, unknown>): string {

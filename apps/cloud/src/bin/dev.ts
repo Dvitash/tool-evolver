@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import process from "node:process";
 import { createCloudService } from "../index.js";
+import { createConfiguredBenchmarkEvidenceVerifier } from "../evolution/replay/benchmark-attestation.js";
 
 async function main() {
   console.log("[dev] Starting Tool Evolver cloud backend");
@@ -8,7 +9,8 @@ async function main() {
   console.log(`[dev] LOG_LEVEL=${process.env.LOG_LEVEL ?? "info"}`);
   console.log(`[dev] cwd=${process.cwd()}`);
 
-  const cloud = createCloudService();
+  const benchmarkEvidenceVerifier = createConfiguredBenchmarkEvidenceVerifier();
+  const cloud = createCloudService({ benchmarkEvidenceVerifier });
   const port = await cloud.start();
   console.log(
     `[dev] Cloud backend listening on ${cloud.config.server.host}:${port} (logLevel=${cloud.config.server.logLevel})`,

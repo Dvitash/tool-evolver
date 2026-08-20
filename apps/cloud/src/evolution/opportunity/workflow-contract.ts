@@ -8,6 +8,10 @@ import type {
   WorkflowOperation,
   WorkflowOutputRequirement,
 } from "./types.js";
+import {
+  normalizeCommandProfile,
+  splitCompositeCommand,
+} from "./signature.js";
 
 function sanitizeFieldName(raw: string): string {
   const base = raw
@@ -21,11 +25,51 @@ function deepCloneJsonSafe<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
 
+function sortEventsDeterministically(events: NormalizedSessionEvent[]): NormalizedSessionEvent[] {
+  return [...events].sort((a, b) => {
+    const aSeq = (a as unknown as { causalRef?: { causalSequence?: number } }).causalRef?.causalSequence ?? 0;
+    const bSeq = (b as unknown as { causalRef?: { causalSequence?: number } }).causalRef?.causalSequence ?? 0;
+    if (aSeq !== bSeq) return aSeq - bSeq;
+    const aTime = Date.parse((a as unknown as { timestamp?: string }).timestamp ?? "") || 0;
+    const bTime = Date.parse((b as unknown as { timestamp?: string }).timestamp ?? "") || 0;
+    if (aTime !== bTime) return aTime - bTime;
+    const ai: string = (a as unknown as { eventId?: string }).eventId ?? "";
+    const bi: string = (b as unknown as { eventId?: string }).eventId ?? "";
+    if (ai && bi) return ai.localeCompare(bi);
+    return String(a.type).localeCompare(String(b.type));
+  });
+}
+
+function isCommandOperation(op: WorkflowOperation): boolean {
+  const lower = op.name.toLowerCase();
+  const tc = op.toolClass;
+  if (tc === "vcs" || tc === "shell_exec" || tc === "package_manager" || tc === "build_tool" || tc === "test_runner") return true;
+  if (lower.startsWith("command:") || lower.startsWith("cmd:")) return true;
+  // Tool class string variants
+  if ((tc as string) === "command" || (tc as string) === "shell") return true;
+  return false;
+}
+
+function isFileOperation(op: WorkflowOperation): boolean {
+  const lower = op.name.toLowerCase();
+  const tc = op.toolClass;
+  if (tc === "file_read" || tc === "file_edit") return true;
+  if ((tc as string) === "filesystem" || (tc as string) === "fs") return true;
+  if (lower.includes("file_read") || lower.includes("file_edit") || lower.startsWith("edit:") || lower === "file_edit:update") return true;
+  if (lower.startsWith("tool:read") || lower.startsWith("tool:edit") || lower.startsWith("tool:write")) return true;
+  // Generic read/write file patterns in operation name
+  if (lower.includes("read") && lower.includes("file")) return true;
+  if (lower.includes("write") && lower.includes("file")) return true;
+  return false;
+}
+
 /**
  * Derive a deterministic, JSON-safe WorkflowContract for the observed workflow cluster.
  *
  * - Retains the full ordered representative workflow (operationSequence + commandProfiles), not only the first command.
  * - Assigns stable operation IDs (`op_0`, `op_1`, …) preserving order.
+ * - Binds `commandProfile` and per-operation `args`/`filePath`/`targetPaths` to the originating ordered event
+ *   instead of indexing a filtered deduplicated command list (prevents cross-assignment like read getting git profile).
  * - Surfaces required inputs from classification.inferredInputs.
  * - Surfaces required structured outputs with explicit sourceOperationId, derived from the full workflow + candidateOutputSchema.
  * - Enumerates explicit invariants, expensive and repeated operation IDs.
@@ -38,27 +82,101 @@ export function extractWorkflowContract(
 ): WorkflowContract {
   const sig = cluster.representativeSignature;
   const opSeq: string[] = sig.operationSequence ?? [];
-  const cmdProfiles: string[] = classification.commandProfiles ?? [];
   const toolClasses: ToolClass[] = sig.toolClasses ?? [];
+
+  // Deterministically ordered events for evidence binding
+  const orderedEvents = sortEventsDeterministically(events);
+
+  // Build per-event evidence queues in causal order
+
+  const commandQueue: Array<{ profiles: string[]; argsList: string[][] }> = [];
+  const fileQueue: Array<{ filePath: string; targetPaths: string[] }> = [];
+
+  for (const evt of orderedEvents) {
+    if (evt.type === "command_exec") {
+      const ce = evt as unknown as { command: string; args?: string[] };
+      const rawCmd = (ce.command ?? "").trim();
+      const rawArgs: string[] = Array.isArray(ce.args) ? ce.args : [];
+      const joined = [rawCmd, ...rawArgs].join(" ").trim();
+      if (joined) {
+        const profiles: string[] = [];
+        const argsList: string[][] = [];
+        for (const seg of splitCompositeCommand(joined)) {
+          const profile = normalizeCommandProfile(seg);
+          if (profile) {
+            profiles.push(profile);
+            const parts = profile.trim().split(/\s+/);
+            argsList.push(parts.slice(1));
+          }
+        }
+        if (profiles.length > 0) {
+          commandQueue.push({ profiles, argsList });
+        }
+      }
+    } else if (evt.type === "tool_call") {
+      const tc = evt as unknown as { toolName: string; parameters?: Record<string, unknown> };
+      const params = tc.parameters as Record<string, unknown> | undefined;
+      if (params) {
+        const rawCmd = params.command ?? params.cmd ?? params.executable;
+        if (typeof rawCmd === "string" && rawCmd.trim()) {
+          const profiles: string[] = [];
+          const argsList: string[][] = [];
+          for (const seg of splitCompositeCommand(rawCmd)) {
+            const profile = normalizeCommandProfile(seg);
+            if (profile) {
+              profiles.push(profile);
+              const parts = profile.trim().split(/\s+/);
+              argsList.push(parts.slice(1));
+            }
+          }
+          if (profiles.length > 0) {
+            commandQueue.push({ profiles, argsList });
+          }
+        }
+        // File evidence from tool_call parameters
+        const maybePaths = (params.targetPaths ?? params.paths ?? params.files ?? params.filePaths) as unknown;
+        if (Array.isArray(maybePaths)) {
+          const strs = (maybePaths as unknown[]).filter((v): v is string => typeof v === "string" && v.trim().length > 0) as string[];
+          if (strs.length > 0) {
+            fileQueue.push({ filePath: strs[0]!, targetPaths: [...strs] });
+          }
+        } else {
+          const maybePath = (params.path ?? params.filePath ?? params.file ?? params.targetPath ?? params.sourcePath) as unknown;
+          if (typeof maybePath === "string" && maybePath.trim().length > 0) {
+            fileQueue.push({ filePath: maybePath, targetPaths: [maybePath] });
+          } else {
+            const maybePathArray = params.targetPath as unknown;
+            if (typeof maybePathArray === "string" && maybePathArray.trim().length > 0) {
+              fileQueue.push({ filePath: maybePathArray, targetPaths: [maybePathArray] });
+            }
+          }
+        }
+      }
+    } else if (evt.type === "file_edit") {
+      const fe = evt as unknown as { filePath: string };
+      if (fe.filePath && typeof fe.filePath === "string" && fe.filePath.trim().length > 0) {
+        fileQueue.push({ filePath: fe.filePath, targetPaths: [fe.filePath] });
+      }
+    }
+  }
+
+  // Also consider file_edit via normalizedPaths if no explicit fileQueue but signature has paths? Keep for completeness but per-operation evidence primary is from events.
 
   // Stable operations: preserve full ordered workflow
   let baseOps: string[] = opSeq.length > 0 ? [...opSeq] : [];
-  if (baseOps.length === 0 && cmdProfiles.length > 0) {
-    baseOps = cmdProfiles.map((p: string) => `cmd:${p}`);
+  if (baseOps.length === 0 && classification.commandProfiles && classification.commandProfiles.length > 0) {
+    // Fallback when signature empty: derive from classification profiles (rare)
+    baseOps = classification.commandProfiles.map((p: string) => `cmd:${String(p)}`);
   }
-  if (baseOps.length === 0 && events.length > 0) {
-    const sorted = [...events].sort((a, b) => {
-      const ai: string = a.eventId;
-      const bi: string = b.eventId;
-      if (ai && bi) return ai.localeCompare(bi);
-      return String(a.type).localeCompare(String(b.type));
-    });
-    baseOps = sorted.slice(0, Math.min(sorted.length, 8)).map((e: NormalizedSessionEvent): string => {
+  if (baseOps.length === 0 && orderedEvents.length > 0) {
+    // Final fallback: derive from ordered events
+    baseOps = orderedEvents.slice(0, Math.min(orderedEvents.length, 8)).map((e: NormalizedSessionEvent): string => {
       if (e.type === "tool_call" || e.type === "tool_result") {
-        return `tool:${String(e.toolName).toLowerCase().replace(/[^a-z0-9_]/g, "_")}`;
+        const toolName = (e as unknown as { toolName: string }).toolName ?? "unknown";
+        return `tool:${String(toolName).toLowerCase().replace(/[^a-z0-9_]/g, "_")}`;
       }
       if (e.type === "command_exec") {
-        const cmd: string = e.command;
+        const cmd: string = (e as unknown as { command: string }).command ?? "";
         const head: string = cmd ? cmd.split(" ")[0]! : "exec";
         return `command:${head.toLowerCase().replace(/[^a-z0-9_]/g, "_")}`;
       }
@@ -76,14 +194,6 @@ export function extractWorkflowContract(
     };
     const tc: ToolClass | undefined = toolClasses[idx];
     if (tc !== undefined) op.toolClass = tc;
-    const cp: string | undefined = cmdProfiles[idx];
-    if (cp !== undefined) op.commandProfile = String(cp);
-    else if (cmdProfiles.length > 0 && String(name).startsWith("command:")) {
-      // Fallback: correlate commandProfile by scanning for matching prefix when idx misaligned
-      // Keep deterministic: use first profile that shares prefix, else undefined
-      const inferred: string | undefined = cmdProfiles.find((p: string) => String(name).includes(p.split(" ")[0]!));
-      if (inferred !== undefined) op.commandProfile = String(inferred);
-    }
     return op;
   });
 
@@ -93,6 +203,45 @@ export function extractWorkflowContract(
       order: 0,
       name: "workflow:generic",
     });
+  }
+
+  // Bind per-operation evidence to originating ordered event, not filtered index
+  // Only command-like ops consume from commandQueue in order; file-like ops consume from fileQueue.
+
+  let cmdCursor = 0;
+  let fileCursor = 0;
+
+  // Fallback sequential profiles when event queue exhausted but classification has profiles
+  const fallbackProfiles: string[] = classification.commandProfiles ?? [];
+  let fallbackIdx = 0;
+
+  for (const op of operations) {
+    if (isCommandOperation(op)) {
+      let entry: { profiles: string[]; argsList: string[][] } | undefined;
+      if (cmdCursor < commandQueue.length) {
+        entry = commandQueue[cmdCursor++];
+      } else if (fallbackIdx < fallbackProfiles.length) {
+        const profile = String(fallbackProfiles[fallbackIdx++]);
+        const parts = profile.trim().split(/\s+/);
+        entry = { profiles: [profile], argsList: [parts.slice(1)] };
+      }
+      if (entry) {
+        op.commandProfiles = [...entry.profiles];
+        op.commandProfile = entry.profiles[0];
+        const firstArgs = entry.argsList[0];
+        if (firstArgs && firstArgs.length > 0) {
+          op.args = [...firstArgs];
+        }
+      }
+    } else if (isFileOperation(op)) {
+      if (fileCursor < fileQueue.length) {
+        const fe = fileQueue[fileCursor++];
+        op.filePath = fe.filePath;
+        if (fe.targetPaths && fe.targetPaths.length > 0) {
+          op.targetPaths = [...fe.targetPaths];
+        }
+      }
+    }
   }
 
   // Required inputs: inferredInputs from classification, deterministic JSON clone
@@ -187,7 +336,7 @@ export function extractWorkflowContract(
   invariants.push(`structuralHash:${cluster.structuralHash}`);
   invariants.push(`operationCount:${operations.length}`);
   invariants.push(`toolClasses:${[...toolClasses].sort().join(",")}`);
-  invariants.push(`commandProfiles:${[...cmdProfiles].sort().join("|")}`);
+  invariants.push(`commandProfiles:${[...(classification.commandProfiles ?? [])].sort().join("|")}`);
   invariants.push(`workflowVersion:1`);
   // Side-effect invariants derived from toolClasses / operation names
   const hasFileEdit = operations.some((o) => o.toolClass === "file_edit" || o.name.includes("file_edit") || o.name.includes("edit:"));
@@ -253,22 +402,33 @@ export function extractWorkflowContract(
       expensiveOperationIdsSet.add(op.id);
     }
     // Duration-based: use events durationMs if available
-    if (events.length > 0) {
-      const related: NormalizedSessionEvent | undefined = events.find((e: NormalizedSessionEvent): boolean => {
+    if (orderedEvents.length > 0) {
+      const related: NormalizedSessionEvent | undefined = orderedEvents.find((e: NormalizedSessionEvent): boolean => {
         if (op.commandProfile !== undefined) {
-          if (e.type === "command_exec" && e.command.includes(op.commandProfile.split(" ")[0]!)) return true;
+          const cmdHead = op.commandProfile.split(" ")[0]!;
+          if (e.type === "command_exec" && (e as unknown as { command: string }).command.includes(cmdHead)) return true;
+          if (e.type === "tool_call") {
+            const params = (e as unknown as { parameters?: Record<string, unknown> }).parameters;
+            const rc = params ? ((params.command ?? params.cmd) as string | undefined) : undefined;
+            if (typeof rc === "string" && rc.includes(cmdHead)) return true;
+          }
         }
         if (e.type === "tool_call" || e.type === "tool_result") {
-          if (op.name.includes(String(e.toolName).toLowerCase())) return true;
+          const toolName = (e as unknown as { toolName: string }).toolName;
+          if (toolName && op.name.includes(String(toolName).toLowerCase())) return true;
+        }
+        if (e.type === "file_edit" && op.filePath) {
+          const fp = (e as unknown as { filePath: string }).filePath;
+          if (fp === op.filePath) return true;
         }
         return false;
       });
       let dur: number | undefined;
       if (related !== undefined) {
         if (related.type === "command_exec") {
-          dur = related.durationMs;
+          dur = (related as unknown as { durationMs?: number }).durationMs;
         } else if (related.type === "model_reasoning") {
-          dur = related.durationMs;
+          dur = (related as unknown as { durationMs?: number }).durationMs;
         }
       }
       if (typeof dur === "number" && dur > 5000) {
@@ -286,9 +446,6 @@ export function extractWorkflowContract(
   for (const rid of repeatedOperationIds) {
     expensiveOperationIdsSet.add(rid);
   }
-  // Deterministic fallback: if still empty and we have >2 operations, mark last as expensive to satisfy flag check
-  // But only if cluster indicates some waste or repeated exists; for git/file audit with repeated, this will trigger via repeated above
-  // Ensure at least one expensive if repeated exists already covered
 
   const expensiveOperationIds: string[] = [...expensiveOperationIdsSet].sort();
 

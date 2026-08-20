@@ -10,7 +10,7 @@ import type {
   NormalizedSessionEvent,
   ToolManifest,
 } from "@tool-evolver/contracts";
-import type { CandidateRevision, GeneratedArtifactSet } from "../generator/types.js";
+import type { CandidateRevision, GeneratedArtifactSet, ToolPlan } from "../generator/types.js";
 import type { OpportunityDetection } from "../opportunity/types.js";
 import type { WorkflowCoverage } from "../generator/types.js";
 import type { WorkflowContract } from "../opportunity/types.js";
@@ -301,6 +301,7 @@ export interface CandidateEvaluationInput {
   options?: CandidateEvaluationOptions;
   workflowContract?: WorkflowContract;
   workflowCoverage?: WorkflowCoverage;
+  toolPlan?: ToolPlan;
 }
 
 /**

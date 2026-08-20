@@ -4,14 +4,55 @@ import {
   type EvolutionCandidate,
   EvolutionCandidateSchema,
   type ToolManifest,
+  ToolManifestSchema,
+  canonicalJsonStringify,
   hashCanonical,
 } from "@tool-evolver/contracts";
 import type { DatabasePool, Queryable } from "../../../db/client.js";
 import type { ModelUsage } from "../../../models/types.js";
 import type { ObjectStore } from "../../../storage/object-store.js";
 import { type TenantContext, TenantGuard } from "../../../tenant.js";
-import type { CandidateRevision, GeneratedArtifactSet, SelfReviewVerdict } from "../types.js";
+import type { CandidateRevision, GeneratedArtifactSet, SelfReviewVerdict, ToolPlan } from "../types.js";
+function normalizeManifest(manifest: unknown): Record<string, unknown> {
+  const raw = manifest as Record<string, unknown>;
+  // Preserve legacy fs/exec shapes without defaulting fs to true (brokered old schema used allowRead/allowWrite)
+  const rawCaps = raw.capabilities as Record<string, unknown> | undefined;
+  let preNormalized: Record<string, unknown> = raw;
+  if (rawCaps && typeof rawCaps === "object" && (rawCaps.fs || rawCaps.exec)) {
+    const capsCopy = JSON.parse(JSON.stringify(rawCaps)) as Record<string, unknown>;
+    const fs = capsCopy.fs as Record<string, unknown> | undefined;
+    if (fs && typeof fs === "object" && ("allowRead" in fs || "allowWrite" in fs)) {
+      const allowRead = Boolean((fs as Record<string, unknown>).allowRead);
+      const allowWrite = Boolean((fs as Record<string, unknown>).allowWrite);
+      capsCopy.fs = {
+        readPaths: Array.isArray(fs.readPaths) ? fs.readPaths : [],
+        writePaths: Array.isArray(fs.writePaths) ? fs.writePaths : [],
+        allowWorkspaceRoot: allowRead,
+        allowTemp: allowRead || allowWrite,
+        denyPaths: Array.isArray((fs as Record<string, unknown>).denyPaths) ? (fs as Record<string, unknown>).denyPaths : [],
+        maxFileSizeBytes: typeof (fs as Record<string, unknown>).maxFileSizeBytes === "number" ? (fs as Record<string, unknown>).maxFileSizeBytes : 10485760,
+      };
+    }
+    if ((capsCopy as Record<string, unknown>).exec && !(capsCopy as Record<string, unknown>).command) {
+      const exec = (capsCopy as Record<string, unknown>).exec as Record<string, unknown>;
+      (capsCopy as Record<string, unknown>).command = {
+        allowShellExecution: Boolean(exec.allowExec),
+        allowedCommands: Array.isArray(exec.allowedCommands) ? exec.allowedCommands : [],
+      };
+    }
+    preNormalized = { ...raw, capabilities: capsCopy };
+  }
+  const parsed = ToolManifestSchema.parse(preNormalized);
+  const { digest: _d, createdAt: _ca, updatedAt: _ua, ...withoutMeta } = parsed as unknown as Record<string, unknown>;
+  return JSON.parse(canonicalJsonStringify(withoutMeta)) as Record<string, unknown>;
+}
 
+function normalizePlanForComparison(plan: unknown): unknown {
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) return plan;
+  const p = plan as Record<string, unknown>;
+  const { createdAt: _ca, updatedAt: _ua, id: _id, planId: _pid, opportunityId: _oid, workspaceId: _wid, metadata: _meta, ...rest } = p;
+  return rest;
+}
 /**
  * Filter options for listing evolution candidates.
  */
@@ -26,11 +67,28 @@ export interface CandidateFilter {
  * Maps a database row to an EvolutionCandidate domain entity.
  */
 export function mapRowToCandidate(row: Record<string, unknown>): EvolutionCandidate {
-  const manifest =
+  const rawManifest =
     typeof row.manifest === "string"
       ? JSON.parse(row.manifest)
       : (row.manifest as Record<string, unknown>);
-
+  // Stored manifest is normalized without digest/createdAt (stripped on write).
+  // Do not re-validate with ToolManifestSchema which requires digest; use raw as base.
+  const manifestBase = rawManifest as Record<string, unknown>;
+  const createdAtForManifest =
+    row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at ?? (rawManifest as Record<string, unknown>).createdAt ?? new Date().toISOString());
+  const updatedAtForManifest = row.updated_at
+    ? row.updated_at instanceof Date
+      ? row.updated_at.toISOString()
+      : String(row.updated_at)
+    : (rawManifest as Record<string, unknown>).updatedAt
+      ? String((rawManifest as Record<string, unknown>).updatedAt)
+      : undefined;
+  const manifest = {
+    ...manifestBase,
+    digest: String(row.manifest_digest ?? (rawManifest as Record<string, unknown>).digest ?? ""),
+    createdAt: String((rawManifest as Record<string, unknown>).createdAt ?? createdAtForManifest),
+    ...(updatedAtForManifest ? { updatedAt: updatedAtForManifest } : {}),
+  } as unknown as Record<string, unknown>;
   const requiredCapabilities =
     typeof row.required_capabilities === "string"
       ? JSON.parse(row.required_capabilities)
@@ -87,6 +145,9 @@ export function mapRowToCandidate(row: Record<string, unknown>): EvolutionCandid
 
 /**
  * Maps a database row to a CandidateRevision domain entity.
+ * Reconstructs the full immutable ToolPlan exactly as persisted in
+ * provenance.plan when present; falls back to lossy reconstruction for
+ * legacy rows without a stored plan.
  */
 export function mapRowToRevision(row: Record<string, unknown>): CandidateRevision {
   const inputSchema =
@@ -99,10 +160,18 @@ export function mapRowToRevision(row: Record<string, unknown>): CandidateRevisio
       ? JSON.parse(row.output_schema)
       : (row.output_schema as Record<string, unknown>);
 
-  const manifest =
+  const rawManifest =
     typeof row.manifest === "string"
       ? JSON.parse(row.manifest)
       : (row.manifest as Record<string, unknown>);
+  // Stored manifest is normalized without digest/createdAt; reconstruct without re-validating.
+  const manifestBaseRev = rawManifest as Record<string, unknown>;
+  const createdAtRev = row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at ?? (rawManifest as Record<string, unknown>).createdAt ?? new Date().toISOString());
+  const manifest = {
+    ...manifestBaseRev,
+    digest: String(row.manifest_digest ?? (rawManifest as Record<string, unknown>).digest ?? ""),
+    createdAt: String((rawManifest as Record<string, unknown>).createdAt ?? createdAtRev),
+  } as unknown as Record<string, unknown>;
 
   const capabilities =
     typeof row.capabilities === "string"
@@ -140,15 +209,57 @@ export function mapRowToRevision(row: Record<string, unknown>): CandidateRevisio
 
   const sourceCode = String(row.source_code);
 
-  const artifacts: GeneratedArtifactSet = {
-    plan: {
+  let plan: ToolPlan;
+  const storedPlan = (provenance as Record<string, unknown>).plan;
+  if (storedPlan && typeof storedPlan === "object" && !Array.isArray(storedPlan)) {
+    const sp = storedPlan as Record<string, unknown>;
+    // If stored plan is minimal (missing runtime/id) from legacy synthesized path, enrich with fallback defaults while preserving original artifacts
+    const isMinimal = !sp.runtime || !sp.id || !sp.opportunityId;
+    if (isMinimal) {
+      const fallback = {
+        id: `plan_${String(row.candidate_id)}`,
+        opportunityId: String((provenance as Record<string, unknown>).opportunityId ?? ""),
+        workspaceId: String(row.workspace_id),
+        targetType: (manifest as Record<string, unknown>).scope === "workspace" ? "single_tool" : "single_tool",
+        intent: String((manifest as Record<string, unknown>).description ?? ""),
+        name: String((manifest as Record<string, unknown>).name ?? ""),
+        description: String((manifest as Record<string, unknown>).description ?? ""),
+        variableInputs: [],
+        invariantInputs: [],
+        inputSchema,
+        outputSchema,
+        steps: [],
+        capabilities: capabilities as unknown as CapabilityManifest,
+        capabilityRequirements: capabilities as unknown as CapabilityManifest,
+        runtime: {
+          runtime: "deno",
+          memoryLimitMb: 128,
+          timeoutMs: 30000,
+          cpuLimitPercent: 100,
+          maxOutputSizeBytes: 1048576,
+        },
+        metadata: {},
+        createdAt,
+      } as Record<string, unknown>;
+      plan = { ...fallback, ...sp } as unknown as ToolPlan;
+      if (sp.capabilities) plan.capabilities = sp.capabilities as CapabilityManifest;
+      if (sp.capabilityRequirements) plan.capabilityRequirements = sp.capabilityRequirements as CapabilityManifest;
+      if (sp.workflowContract) (plan as unknown as Record<string, unknown>).workflowContract = sp.workflowContract;
+      else delete (plan as unknown as Record<string, unknown>).workflowContract;
+      if (sp.workflowCoverage) (plan as unknown as Record<string, unknown>).workflowCoverage = sp.workflowCoverage;
+      else delete (plan as unknown as Record<string, unknown>).workflowCoverage;
+    } else {
+      plan = sp as unknown as ToolPlan;
+    }
+  } else {
+    plan = {
       id: `plan_${String(row.candidate_id)}`,
-      opportunityId: String(provenance.opportunityId ?? ""),
+      opportunityId: String((provenance as Record<string, unknown>).opportunityId ?? ""),
       workspaceId: String(row.workspace_id),
-      targetType: manifest.scope === "workspace" ? "single_tool" : "single_tool",
-      intent: manifest.description ?? "",
-      name: manifest.name,
-      description: manifest.description ?? "",
+      targetType: (manifest as Record<string, unknown>).scope === "workspace" ? "single_tool" : "single_tool",
+      intent: String((manifest as Record<string, unknown>).description ?? ""),
+      name: String((manifest as Record<string, unknown>).name ?? ""),
+      description: String((manifest as Record<string, unknown>).description ?? ""),
       variableInputs: [],
       invariantInputs: [],
       inputSchema,
@@ -165,7 +276,13 @@ export function mapRowToRevision(row: Record<string, unknown>): CandidateRevisio
       },
       metadata: {},
       createdAt,
-    },
+      workflowContract: (provenance as Record<string, unknown>).workflowContract as unknown as ToolPlan["workflowContract"],
+      workflowCoverage: (provenance as Record<string, unknown>).workflowCoverage as unknown as ToolPlan["workflowCoverage"],
+    };
+  }
+
+  const artifacts: GeneratedArtifactSet = {
+    plan,
     manifest: manifest as unknown as ToolManifest,
     capabilities: capabilities as unknown as CapabilityManifest,
     sourceCode,
@@ -173,15 +290,15 @@ export function mapRowToRevision(row: Record<string, unknown>): CandidateRevisio
       ? typeof row.workflow_definition === "string"
         ? JSON.parse(row.workflow_definition)
         : (row.workflow_definition as Record<string, unknown>)
-      : provenance.workflowDefinition
-        ? (provenance.workflowDefinition as Record<string, unknown>)
+      : (provenance as Record<string, unknown>).workflowDefinition
+        ? ((provenance as Record<string, unknown>).workflowDefinition as Record<string, unknown>)
         : undefined,
     tests: row.tests
       ? typeof row.tests === "string"
         ? JSON.parse(row.tests)
         : (row.tests as GeneratedArtifactSet["tests"])
-      : provenance.tests
-        ? (provenance.tests as GeneratedArtifactSet["tests"])
+      : (provenance as Record<string, unknown>).tests
+        ? ((provenance as Record<string, unknown>).tests as GeneratedArtifactSet["tests"])
         : undefined,
     generatedAt: createdAt,
   };
@@ -194,12 +311,12 @@ export function mapRowToRevision(row: Record<string, unknown>): CandidateRevisio
     artifacts,
     selfReview,
     repairHistory,
-    capabilityDiff: provenance.capabilityDiff
-      ? (provenance.capabilityDiff as CandidateRevision["capabilityDiff"])
+    capabilityDiff: (provenance as Record<string, unknown>).capabilityDiff
+      ? ((provenance as Record<string, unknown>).capabilityDiff as CandidateRevision["capabilityDiff"])
       : undefined,
-    cost: provenance.cost ? (provenance.cost as CandidateRevision["cost"]) : undefined,
+    cost: (provenance as Record<string, unknown>).cost ? ((provenance as Record<string, unknown>).cost as CandidateRevision["cost"]) : undefined,
     storageUri: row.storage_uri ? String(row.storage_uri) : undefined,
-    provenance,
+    provenance: provenance as Record<string, unknown>,
     usage: usage as unknown as ModelUsage,
     promptTemplateVersion: row.prompt_template_version
       ? String(row.prompt_template_version)
@@ -302,7 +419,7 @@ export class CandidateRepository {
       candidate.state,
       candidate.proposedTool.name,
       candidate.proposedTool.version,
-      JSON.stringify(candidate.proposedTool),
+      canonicalJsonStringify(normalizeManifest(candidate.proposedTool)),
       candidate.proposedTool.digest,
       JSON.stringify(candidate.requiredCapabilities),
       candidate.trigger.reason,
@@ -335,6 +452,29 @@ export class CandidateRepository {
     );
 
     const client = options.db ?? this.pool;
+    // Enforce immutability: same revision ID must not be overwritten with different artifacts.
+    // Identical delivery (same revisionId + same artifact hash) is idempotent; different artifacts must use new revisionId.
+    const existingRevision = await this.getRevisionById(tenant, revision.revisionId, client);
+    if (existingRevision) {
+      const normalizeForComparison = (rev: CandidateRevision) => {
+        return hashCanonical({
+          manifest: normalizeManifest(rev.artifacts.manifest),
+          sourceCode: rev.artifacts.sourceCode ?? "",
+          capabilities: rev.artifacts.capabilities ?? {},
+          tests: rev.artifacts.tests ?? null,
+          workflowDefinition: rev.artifacts.workflowDefinition ?? null,
+          plan: normalizePlanForComparison(rev.artifacts.plan) ?? null,
+        });
+      };
+      const existingHash = normalizeForComparison(existingRevision);
+      const newHash = normalizeForComparison(revision);
+      if (existingHash !== newHash) {
+        throw new Error(
+          `Immutable revision violation: revision ${revision.revisionId} already exists with different artifacts; new revision ID required for changed artifacts`,
+        );
+      }
+      return existingRevision;
+    }
 
     let storageUri = revision.storageUri;
     if (this.objectStore && !storageUri) {
@@ -391,22 +531,7 @@ export class CandidateRepository {
         created_at,
         updated_at
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
-      ON CONFLICT (workspace_id, id) DO UPDATE SET
-        source_code = EXCLUDED.source_code,
-        source_digest = EXCLUDED.source_digest,
-        input_schema = EXCLUDED.input_schema,
-        output_schema = EXCLUDED.output_schema,
-        schema_digest = EXCLUDED.schema_digest,
-        manifest = EXCLUDED.manifest,
-        manifest_digest = EXCLUDED.manifest_digest,
-        capabilities = EXCLUDED.capabilities,
-        state = EXCLUDED.state,
-        self_review = EXCLUDED.self_review,
-        repair_history = EXCLUDED.repair_history,
-        usage = EXCLUDED.usage,
-        provenance = EXCLUDED.provenance,
-        storage_uri = COALESCE(EXCLUDED.storage_uri, candidate_revisions.storage_uri),
-        updated_at = EXCLUDED.updated_at
+      ON CONFLICT (workspace_id, id) DO NOTHING
       RETURNING *;
     `;
 
@@ -422,7 +547,7 @@ export class CandidateRepository {
       JSON.stringify(revision.artifacts.plan.inputSchema),
       JSON.stringify(revision.artifacts.plan.outputSchema),
       schemaDigest,
-      JSON.stringify(revision.artifacts.manifest),
+      canonicalJsonStringify(normalizeManifest(revision.artifacts.manifest)),
       revision.artifacts.manifest.digest,
       JSON.stringify(revision.artifacts.capabilities),
       "active",
@@ -439,6 +564,9 @@ export class CandidateRepository {
         cost: revision.cost,
         workflowDefinition: revision.artifacts.workflowDefinition,
         tests: revision.artifacts.tests,
+        workflowContract: revision.artifacts.plan?.workflowContract,
+        workflowCoverage: revision.artifacts.plan?.workflowCoverage,
+        plan: revision.artifacts.plan,
       }),
       JSON.stringify(revision.selfReview),
       JSON.stringify(revision.repairHistory || []),
@@ -448,6 +576,11 @@ export class CandidateRepository {
     ];
 
     const result = await client.query<Record<string, unknown>>(query, values);
+    if (result.rows.length === 0) {
+      const existing = await this.getRevisionById(tenant, revision.revisionId, client);
+      if (existing) return existing;
+      throw new Error(`Failed to persist revision ${revision.revisionId}`);
+    }
     return mapRowToRevision(result.rows[0]);
   }
 

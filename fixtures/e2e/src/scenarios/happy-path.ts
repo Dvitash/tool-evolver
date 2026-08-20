@@ -6,11 +6,13 @@
  * publication, local activation, and native/meta tool invocation without per-tool prompts.
  */
 
-import { type OpportunityDetection, runWithTenant } from "@tool-evolver/cloud";
+import { type OpportunityDetection, runWithTenant, calculateWeightedModelCost, signWorkloadBenchmark } from "@tool-evolver/cloud";
+import type { CandidateRevision, ToolPlan, WorkloadBenchmarkComparison, WorkflowContract, WorkflowCoverage } from "@tool-evolver/cloud";
 import {
   type EvolutionCandidate,
   type NormalizedSessionEvent,
   type ToolVersion,
+  hashCanonical,
   hashCanonicalContent,
   nowIso,
 } from "@tool-evolver/contracts";
@@ -23,6 +25,20 @@ const DEFAULT_REDACTION = {
   redactionStrategy: "mask" as const,
   scrubbedPatterns: [],
 };
+
+const E2E_BENCHMARK_ISSUER = "e2e-test-issuer";
+const E2E_BENCHMARK_KEY_ID = "e2e-test-key-1";
+const E2E_BENCHMARK_SECRET = "e2e-deterministic-hmac-secret-32-bytes-long-2024!!";
+
+export function signE2EBenchmarkRow(
+  row: Omit<WorkloadBenchmarkComparison, "attestation">,
+): WorkloadBenchmarkComparison {
+  return signWorkloadBenchmark(row, {
+    issuer: E2E_BENCHMARK_ISSUER,
+    keyId: E2E_BENCHMARK_KEY_ID,
+    secret: E2E_BENCHMARK_SECRET,
+  });
+}
 
 export interface HappyPathResult {
   success: boolean;
@@ -38,6 +54,10 @@ export interface HappyPathResult {
   toolName: string;
   candidateId?: string;
   artifactDigest?: string;
+  workflowContract?: WorkflowContract;
+  workflowCoverage?: WorkflowCoverage;
+  workloadBenchmarks?: WorkloadBenchmarkComparison[];
+  evaluationDecision?: string;
 }
 
 export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise<HappyPathResult> {
@@ -265,6 +285,21 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
       suggestedToolName: "fast_git_status",
       suggestedScope: "workspace",
       inferredInputs: [],
+      workflowContract: {
+        version: 1,
+        operations: [
+          { id: "op_git_status", order: 1, name: "git_status", toolClass: "vcs", commandProfile: "git status --porcelain" },
+          { id: "op_git_diff", order: 2, name: "git_diff", toolClass: "vcs", commandProfile: "git diff --stat" },
+        ],
+        requiredInputs: [],
+        outputRequirements: [
+          { name: "branchStatus", sourceOperationId: "op_git_status", type: "object", required: true },
+          { name: "diffSummary", sourceOperationId: "op_git_diff", type: "object", required: true },
+        ],
+        invariants: ["no destructive side effects"],
+        expensiveOperationIds: ["op_git_diff"],
+        repeatedOperationIds: ["op_git_status"],
+      } as WorkflowContract,
     },
     metrics: {
       totalDurationMs: 250,
@@ -388,30 +423,13 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     { category: "functional", evidence: { candidateId: candidate.id, toolName } },
   );
 
+  // Use real validation result without forgery; the authoritative candidate revision must pass static analysis/typecheck naturally
   const validationResult = await env.cloudService.candidateValidationService.validateCandidate(
-    candidate,
+    candidateResult?.activeRevision ?? candidate,
     { skipLlmTestSynthesis: true },
   );
-  validationResult.passed = true;
-  validationResult.testReport = {
-    suiteId: "suite_01",
-    totalTests: 1,
-    passed: 1,
-    failed: 0,
-    timeouts: 0,
-    durationMs: 10,
-    results: [
-      {
-        testId: "test_01",
-        name: "test_clean_status",
-        testType: "unit" as const,
-        status: "pass" as const,
-        passed: true,
-        durationMs: 5,
-      },
-    ],
-  };
-  const candidateValidated = validationResult.passed;
+  // Inspect actual validation outcome for trace; do not forge passed/testReport
+  const candidateValidated = validationResult.passed && validationResult.status !== "terminal_fail" && validationResult.status !== "repairable_fail";
 
   reporter.assertRequirement(
     "TE-REQ-004",
@@ -420,28 +438,115 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     { category: "functional", evidence: { typecheckPassed: validationResult.typecheckPassed } },
   );
 
+  // Bind workload benchmarks to exactly CandidateEvaluationService's helper contract:
+  // artifactDigest = hashCanonical(sourceCode), candidateRevisionId = revisionId
+  // Use authoritative ToolPlan from activeRevision.artifacts.plan
+  const activeRevision = candidateResult?.activeRevision;
+  const authoritativePlan = activeRevision?.artifacts.plan;
+  if (!authoritativePlan) {
+    throw new Error("Authoritative ToolPlan missing from activeRevision.artifacts.plan");
+  }
+  const workflowContractForEval = (authoritativePlan.workflowContract ?? opp.classification.workflowContract) as WorkflowContract;
+  const workflowCoverage = authoritativePlan.workflowCoverage;
+  if (!workflowCoverage || !workflowCoverage.complete) {
+    throw new Error(`Authoritative WorkflowCoverage incomplete or missing: ${JSON.stringify(workflowCoverage)}`);
+  }
+  if (workflowCoverage.uncoveredOperationIds.length > 0 || workflowCoverage.uncoveredOutputNames.length > 0) {
+    throw new Error(`Authoritative WorkflowCoverage has uncovered ids: ${JSON.stringify(workflowCoverage)}`);
+  }
+  // Compute digests via CandidateEvaluationService contract: hashCanonical of sourceCode and revisionId
+  const digestSourceCode = activeRevision ? activeRevision.artifacts.sourceCode : (candidate.sourceCode ?? "");
+  const expectedArtifactDigest = hashCanonical(digestSourceCode);
+  const effectiveCandidateRevisionId = activeRevision ? activeRevision.revisionId : candidate.id;
+  const benchmarkScheduleId = "MODEL_COST_SCHEDULE_V1" as const;
+  const benchmarkModelProvider = "openai";
+  const benchmarkModelId = "gpt-4o-mini";
+  const benchmarkObservedAt = env.clock.iso();
+  const makeBenchmark = (
+    workloadSize: WorkloadBenchmarkComparison["workloadSize"],
+    baselineMetrics: { inputTokens: number; outputTokens: number; cacheReadTokens: number; turns: number; toolCalls: number; wallTimeMs: number },
+    candidateMetrics: { inputTokens: number; outputTokens: number; cacheReadTokens: number; turns: number; toolCalls: number; wallTimeMs: number },
+  ): WorkloadBenchmarkComparison => {
+    const baseline = {
+      ...baselineMetrics,
+      redundantToolCalls: 0,
+      correct: true as const,
+    };
+    const candidateMetricsFull = {
+      ...candidateMetrics,
+      redundantToolCalls: 0,
+      correct: true as const,
+    };
+    const baselineCostUsd = calculateWeightedModelCost(baseline, benchmarkScheduleId);
+    const candidateCostUsd = calculateWeightedModelCost(candidateMetricsFull, benchmarkScheduleId);
+    const costDeltaPercent = baselineCostUsd === 0 ? 0 : ((candidateCostUsd - baselineCostUsd) / baselineCostUsd) * 100;
+    const idx = workloadSize === "small" ? "01" : workloadSize === "medium" ? "02" : "03";
+    const unsigned: Omit<WorkloadBenchmarkComparison, "attestation"> = {
+      workloadSize,
+      baseline,
+      candidate: candidateMetricsFull,
+      baselineCostUsd,
+      candidateCostUsd,
+      costDeltaPercent,
+      correctnessPassed: true,
+      redundantVerificationCalls: 0,
+      benchmarkId: `bench-happy-${workloadSize}-${idx}`,
+      baselineRunId: `baseline-happy-${workloadSize}-${idx}`,
+      candidateRunId: `candidate-happy-${workloadSize}-${idx}`,
+      workloadInputDigest: hashCanonical(`happy-path-workload-input-${workloadSize}-v1-${idx}`),
+      candidateRevisionId: effectiveCandidateRevisionId,
+      artifactDigest: expectedArtifactDigest,
+      modelProvider: benchmarkModelProvider,
+      modelId: benchmarkModelId,
+      observedAt: benchmarkObservedAt,
+      scheduleId: benchmarkScheduleId,
+    };
+    return signE2EBenchmarkRow(unsigned);
+  };
+
+  const workloadBenchmarks: WorkloadBenchmarkComparison[] = [
+    makeBenchmark("small", { inputTokens: 1200, outputTokens: 600, cacheReadTokens: 200, turns: 3, toolCalls: 4, wallTimeMs: 800 }, { inputTokens: 1000, outputTokens: 500, cacheReadTokens: 200, turns: 2, toolCalls: 2, wallTimeMs: 600 }),
+    makeBenchmark("medium", { inputTokens: 5000, outputTokens: 2000, cacheReadTokens: 500, turns: 5, toolCalls: 8, wallTimeMs: 1500 }, { inputTokens: 4500, outputTokens: 1800, cacheReadTokens: 500, turns: 4, toolCalls: 5, wallTimeMs: 1200 }),
+    makeBenchmark("large", { inputTokens: 10000, outputTokens: 4000, cacheReadTokens: 1000, turns: 8, toolCalls: 12, wallTimeMs: 2500 }, { inputTokens: 9000, outputTokens: 3500, cacheReadTokens: 1000, turns: 6, toolCalls: 8, wallTimeMs: 2000 }),
+  ];
+
+  // HistoricalReplayService natively normalizes CandidateRevision from artifacts; pass CandidateRevision directly
+  const replayCandidateTarget: CandidateRevision | EvolutionCandidate = activeRevision ?? candidate;
   const replayResult = await env.cloudService.historicalReplayService.replayCandidate(env.tenant, {
-    candidate,
+    candidate: replayCandidateTarget,
     evidence: session1Events,
+    options: { workloadBenchmarks },
   });
-  replayResult.passed = true;
-  replayResult.status = "pass";
-  replayResult.divergenceFindings = [];
   const candidateReplayed = replayResult.passed;
 
   reporter.assertRequirement(
     "TE-REQ-005",
-    "Deterministic replay simulation against historical session episodes",
+    "Historical replay scenario reconstruction and invariant verification",
     candidateReplayed,
     { category: "functional", evidence: { passedCount: replayResult.passedScenarioCount } },
   );
 
+  // Evaluate authoritative persisted ToolPlan; hard-gates recompute coverage from ToolPlan at gate time
   const evalResult = await env.cloudService.candidateEvaluationService.evaluateCandidate({
-    candidate,
+    candidate: replayCandidateTarget,
     replayResult,
     validationResult,
+    workflowContract: workflowContractForEval,
+    toolPlan: authoritativePlan,
   });
-  const candidateEvaluated = Boolean(evalResult.evaluationId);
+  // Assert actual hardGateResult per contract
+  const rawHardGateResult = evalResult.decisionRecord.hardGateResult;
+  const hardGatePassed = rawHardGateResult.passed;
+  const failedGates: string[] = rawHardGateResult.failedGates ?? [];
+  if (!hardGatePassed) {
+    reporter.assertRequirement(
+      "TE-REQ-006-HARDGATE",
+      `Candidate evaluation hard gates failed: ${failedGates.join(", ") || "unknown"}`,
+      false,
+      { category: "functional", evidence: { failedGates, hardGateResult: rawHardGateResult } },
+    );
+  }
+  const candidateEvaluated = Boolean(evalResult.evaluationId) && hardGatePassed && failedGates.length === 0 && evalResult.overallDecision.verdict === "pass";
 
   reporter.assertRequirement(
     "TE-REQ-006",
@@ -450,6 +555,15 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     { category: "functional", evidence: { score: evalResult.overallDecision.score } },
   );
 
+  if (!candidateEvaluated) {
+    // Diagnostic: log full evalResult for canonical payload fix verification (no secret)
+    console.log("[HAPPY_PATH_DIAG] candidateEvaluated false", JSON.stringify({ hardGatePassed, failedGates, verdict: evalResult.overallDecision.verdict, dimensions: evalResult.dimensions.map((d: any) => ({ name: d.name, passed: d.passed, score: d.score, metrics: d.metrics })), hardGateResult: evalResult.decisionRecord.hardGateResult, staticFindings: (evalResult as any).validationResult?.staticFindings ?? [] }, null, 2));
+    const secDim = evalResult.dimensions.find((d) => d.name === "security");
+    if (secDim && !secDim.passed) {
+      throw new Error(`Candidate '${candidate.id}' failed mandatory security evaluation gate (hardGateResult failedGates=${failedGates.join(",")})`);
+    }
+    throw new Error(`Candidate evaluation did not achieve eligible state: hardGatePassed=${hardGatePassed} failedGates=${failedGates.join(",")} verdict=${evalResult.overallDecision.verdict}`);
+  }
   const publishResult = await runWithTenant(env.tenant, async () => {
     return env.cloudService.artifactRegistryService.publishCandidate(candidate, evalResult);
   });
@@ -632,7 +746,11 @@ export async function runHappyPathScenario(env: HermeticE2EEnvironment): Promise
     nativeInvocationSuccess,
     metaToolInvocationSuccess,
     toolName,
-    candidateId: candidate.id,
+    candidateId: effectiveCandidateRevisionId,
     artifactDigest,
+    workflowContract: workflowContractForEval,
+    workflowCoverage,
+    workloadBenchmarks: replayResult.workloadBenchmarks ?? workloadBenchmarks,
+    evaluationDecision: evalResult.evaluationId ? String(evalResult.overallDecision?.verdict ?? evalResult.evaluationId) : undefined,
   };
 }

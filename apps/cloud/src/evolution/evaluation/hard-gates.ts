@@ -1,8 +1,10 @@
 import type { CapabilityEnvelope, CapabilityManifest, ToolManifest } from "@tool-evolver/contracts";
-import type { WorkflowCoverage } from "../generator/types.js";
+import type { ToolPlan, WorkflowCoverage } from "../generator/types.js";
 import type { WorkflowContract } from "../opportunity/types.js";
 import type { HistoricalReplayResult, WorkloadBenchmarkComparison, WorkloadSize } from "../replay/types.js";
 import type { CandidateValidationResult, StaticAnalysisFinding } from "../testing/types.js";
+import { buildWorkflowCoverage } from "../generator/workflow-coverage.js";
+import { calculateWeightedModelCost, resolveModelCostSchedule, assertValidScheduleId, MODEL_COST_SCHEDULES } from "../replay/types.js";
 import { classifyRiskTier } from "./policy.js";
 import type { EvaluationPolicy, GateCheckResult, HardGateResult, RiskTier } from "./types.js";
 
@@ -20,6 +22,10 @@ export interface HardGateEvaluationContext {
   riskTier?: RiskTier;
   workflowContract?: WorkflowContract;
   workflowCoverage?: WorkflowCoverage;
+  toolPlan?: ToolPlan;
+  candidateRevisionId?: string;
+  artifactDigest?: string;
+  verifiedBenchmarkIds?: string[];
 }
 
 /**
@@ -108,17 +114,24 @@ export class HardGateEvaluator {
       );
     }
 
-    // 9. Workflow Coverage Gate (only for workflow-contract candidates)
-    if (this.shouldEvaluateWorkflowCoverage(policy, context.workflowContract)) {
+    const authoritativeWorkflowContract = context.toolPlan?.workflowContract ?? context.workflowContract;
+    // 9. Workflow Coverage Gate (only for workflow-contract candidates) — recompute coverage from authoritative ToolPlan
+    if (this.shouldEvaluateWorkflowCoverage(policy, authoritativeWorkflowContract)) {
       gateResults.push(
-        this.evaluateWorkflowCoverageGate(context.workflowContract, context.workflowCoverage),
+        this.evaluateWorkflowCoverageGate(authoritativeWorkflowContract, context.toolPlan),
       );
     }
 
     // 10. Workload Cost Non-Regression Gate (only for workflow-contract candidates)
-    if (this.shouldEvaluateWorkloadCostNonRegression(policy, context.workflowContract)) {
+    if (this.shouldEvaluateWorkloadCostNonRegression(policy, authoritativeWorkflowContract)) {
       gateResults.push(
-        this.evaluateWorkloadCostNonRegressionGate(context.workflowContract, replayResult),
+        this.evaluateWorkloadCostNonRegressionGate(
+          authoritativeWorkflowContract,
+          replayResult,
+          context.candidateRevisionId,
+          context.artifactDigest,
+          context.verifiedBenchmarkIds,
+        ),
       );
     }
 
@@ -662,12 +675,13 @@ export class HardGateEvaluator {
   }
 
   /**
-   * Gate 9: Workflow Coverage — requires complete=true with no uncovered IDs/names.
-   * Repairable; details contain missing IDs/names.
+   * Gate 9: Workflow Coverage — recomputes coverage from authoritative ToolPlan via buildWorkflowCoverage.
+   * Ignores caller-provided WorkflowCoverage.complete as evidence. Enforces exact contract operation/output sets
+   * and nonempty step/schema mappings. Repairable; details contain missing IDs/names.
    */
   private evaluateWorkflowCoverageGate(
     workflowContract: WorkflowContract | undefined,
-    workflowCoverage: WorkflowCoverage | undefined,
+    toolPlan: ToolPlan | undefined,
   ): GateCheckResult {
     if (!workflowContract) {
       return {
@@ -678,7 +692,7 @@ export class HardGateEvaluator {
       };
     }
 
-    if (!workflowCoverage) {
+    if (!toolPlan) {
       const uncoveredOperationIds = (workflowContract.operations ?? []).map((op) => op.id);
       const uncoveredOutputNames = (workflowContract.outputRequirements ?? [])
         .filter((r) => r.required)
@@ -687,7 +701,31 @@ export class HardGateEvaluator {
         gate: "workflow_coverage",
         passed: false,
         category: "workflow",
-        message: `Workflow coverage missing: coverage is undefined (required ${uncoveredOperationIds.length} operations, ${uncoveredOutputNames.length} outputs).`,
+        message: `Workflow coverage missing: no ToolPlan provided (required ${uncoveredOperationIds.length} operations, ${uncoveredOutputNames.length} outputs).`,
+        details: {
+          uncoveredOperationIds,
+          uncoveredOutputNames,
+          missingToolPlan: true,
+        },
+        canRepair: true,
+        repairHint: "Ensure every workflow contract operation and required output is covered by plan steps and outputSchema.",
+      };
+    }
+
+    const steps = (toolPlan.steps ?? []) as unknown as import("../generator/types.js").WorkflowStep[];
+    const outputSchema = toolPlan.outputSchema as unknown as Record<string, unknown>;
+    const computed = buildWorkflowCoverage(workflowContract, steps, outputSchema as any);
+
+    if (!computed) {
+      const uncoveredOperationIds = (workflowContract.operations ?? []).map((op) => op.id);
+      const uncoveredOutputNames = (workflowContract.outputRequirements ?? [])
+        .filter((r) => r.required)
+        .map((r) => r.name);
+      return {
+        gate: "workflow_coverage",
+        passed: false,
+        category: "workflow",
+        message: `Workflow coverage missing: unable to compute coverage (required ${uncoveredOperationIds.length} operations, ${uncoveredOutputNames.length} outputs).`,
         details: {
           uncoveredOperationIds,
           uncoveredOutputNames,
@@ -698,17 +736,58 @@ export class HardGateEvaluator {
       };
     }
 
-    const uncoveredOperationIds = workflowCoverage.uncoveredOperationIds ?? [];
-    const uncoveredOutputNames = workflowCoverage.uncoveredOutputNames ?? [];
-    const complete = workflowCoverage.complete === true;
+    const uncoveredOperationIds = computed.uncoveredOperationIds ?? [];
+    const uncoveredOutputNames = computed.uncoveredOutputNames ?? [];
+    const complete = computed.complete === true;
 
-    if (!complete || uncoveredOperationIds.length > 0 || uncoveredOutputNames.length > 0) {
+    const contractOperationIds = new Set((workflowContract.operations ?? []).map((op) => op.id));
+    const coverageOperationIds = new Set((computed.operationCoverage ?? []).map((e) => e.operationId));
+
+    const hasEmptyStepMapping = (computed.operationCoverage ?? []).some(
+      (entry) => !Array.isArray((entry as any).stepIds) || (entry as any).stepIds.length === 0,
+    );
+    const hasEmptySchemaMapping = (computed.outputCoverage ?? []).some((entry) => {
+      const req = workflowContract.outputRequirements.find((r) => r.name === (entry as any).outputName);
+      if (!req?.required) return false;
+      return !Array.isArray((entry as any).schemaPaths) || (entry as any).schemaPaths.length === 0;
+    });
+    const hasEmptyOutputStepMapping = (computed.outputCoverage ?? []).some((entry) => {
+      const req = workflowContract.outputRequirements.find((r) => r.name === (entry as any).outputName);
+      if (!req?.required) return false;
+      return !Array.isArray((entry as any).stepIds) || (entry as any).stepIds.length === 0;
+    });
+
+    const operationSetMismatch =
+      contractOperationIds.size !== coverageOperationIds.size ||
+      [...contractOperationIds].some((id) => !coverageOperationIds.has(id));
+
+    if (
+      !complete ||
+      uncoveredOperationIds.length > 0 ||
+      uncoveredOutputNames.length > 0 ||
+      hasEmptyStepMapping ||
+      hasEmptySchemaMapping ||
+      hasEmptyOutputStepMapping ||
+      operationSetMismatch
+    ) {
       const parts: string[] = [];
       if (uncoveredOperationIds.length > 0) {
         parts.push(`uncovered operations: ${uncoveredOperationIds.join(", ")}`);
       }
       if (uncoveredOutputNames.length > 0) {
         parts.push(`uncovered outputs: ${uncoveredOutputNames.join(", ")}`);
+      }
+      if (hasEmptyStepMapping && uncoveredOperationIds.length === 0) {
+        parts.push("empty step mapping for required operation");
+      }
+      if (hasEmptySchemaMapping && uncoveredOutputNames.length === 0) {
+        parts.push("empty schema path for required output");
+      }
+      if (hasEmptyOutputStepMapping && uncoveredOutputNames.length === 0) {
+        parts.push("empty step mapping for required output");
+      }
+      if (operationSetMismatch && uncoveredOperationIds.length === 0) {
+        parts.push("operation set mismatch with contract");
       }
       if (!complete && parts.length === 0) {
         parts.push("coverage incomplete");
@@ -722,6 +801,8 @@ export class HardGateEvaluator {
           uncoveredOperationIds,
           uncoveredOutputNames,
           complete,
+          operationCoverage: computed.operationCoverage,
+          outputCoverage: computed.outputCoverage,
         },
         canRepair: true,
         repairHint: "Add steps covering missing operations and ensure outputSchema includes required outputs.",
@@ -741,9 +822,21 @@ export class HardGateEvaluator {
    * candidate.correct, candidateCostUsd <= baselineCostUsd at each size, and redundantVerificationCalls===0.
    * Missing data, incorrect result, cost regression, or redundancy is terminal and names the workload.
    */
+    /**
+   * Gate 10: Workload Cost Non-Regression — requires exactly small/medium/large comparisons,
+   * candidate.correct, candidateCostUsd <= baselineCostUsd at each size, and redundantVerificationCalls===0.
+   * Additionally requires immutable evidence bindings: benchmarkId, baselineRunId, candidateRunId,
+   * workloadInputDigest, candidateRevisionId, artifactDigest, modelProvider, modelId, observedAt, and scheduleId.
+   * Validators recompute baseline/candidate cost with authoritative scheduleId and reject mismatch. Small/medium/large rows
+   * require distinct benchmark/run/input identities and exact candidate revision/artifact binding.
+   * Missing data, incorrect result, cost regression, binding mismatch, or redundancy is terminal and names the workload.
+   */
   private evaluateWorkloadCostNonRegressionGate(
     workflowContract: WorkflowContract | undefined,
     replayResult: HistoricalReplayResult | undefined,
+    candidateRevisionId?: string,
+    artifactDigest?: string,
+    verifiedBenchmarkIds?: string[],
   ): GateCheckResult {
     if (!workflowContract) {
       return {
@@ -796,6 +889,174 @@ export class HardGateEvaluator {
       };
     }
 
+    // Validate required immutable evidence binding fields for each benchmark
+    for (const bm of benchmarks) {
+      const anyBm = bm as unknown as Record<string, unknown>;
+      const ws = String((bm as any).workloadSize);
+      const requiredStringFields = [
+        "benchmarkId",
+        "baselineRunId",
+        "candidateRunId",
+        "workloadInputDigest",
+        "candidateRevisionId",
+        "artifactDigest",
+        "modelProvider",
+        "modelId",
+        "observedAt",
+        "scheduleId",
+      ];
+      for (const field of requiredStringFields) {
+        const val = anyBm[field];
+        if (typeof val !== "string" || (val as string).trim().length === 0) {
+          return {
+            gate: "workload_cost_non_regression",
+            passed: false,
+            category: "workflow",
+            message: `Workload ${ws} missing or invalid ${field}: ${String(val)}.`,
+            details: {
+              workloadSize: ws,
+              missingField: field,
+              benchmarkId: anyBm["benchmarkId"],
+              workloadInputDigest: anyBm["workloadInputDigest"],
+            },
+            canRepair: false,
+            repairHint: `Provide valid ${field} for workload ${ws}.`,
+          };
+        }
+      }
+      const scheduleId = anyBm["scheduleId"] as unknown as string | undefined;
+      try {
+        assertValidScheduleId(scheduleId);
+        // also resolve to ensure schedule exists and prices are valid
+        resolveModelCostSchedule(scheduleId as string);
+      } catch (e) {
+        return {
+          gate: "workload_cost_non_regression",
+          passed: false,
+          category: "workflow",
+          message: `Workload ${ws} has invalid or unknown scheduleId: ${String(scheduleId)} — ${(e as Error).message}.`,
+          details: { workloadSize: ws, scheduleId, error: (e as Error).message },
+          canRepair: false,
+          repairHint: `Provide a known evaluator-owned scheduleId (e.g. MODEL_COST_SCHEDULE_V1) for workload ${ws}.`,
+        };
+      }
+      const observedAt = anyBm["observedAt"] as string;
+      const parsed = Date.parse(observedAt);
+      if (!Number.isFinite(parsed)) {
+        return {
+          gate: "workload_cost_non_regression",
+          passed: false,
+          category: "workflow",
+          message: `Workload ${ws} has invalid observedAt: ${observedAt}.`,
+          details: { workloadSize: ws, observedAt },
+          canRepair: false,
+          repairHint: `Provide valid ISO observedAt for workload ${ws}.`,
+        };
+      }
+    }
+
+    // Require distinct identities across small/medium/large for benchmark/run/input fields
+    const distinctFields = ["benchmarkId", "baselineRunId", "candidateRunId", "workloadInputDigest"] as const;
+    for (const field of distinctFields) {
+      const values = benchmarks.map((b) => (b as unknown as Record<string, unknown>)[field] as string);
+      const seen = new Set(values);
+      if (seen.size !== benchmarks.length) {
+        return {
+          gate: "workload_cost_non_regression",
+          passed: false,
+          category: "workflow",
+          message: `Workload benchmarks have duplicate ${field}: ${values.join(", ")} (expected distinct across workloads).`,
+          details: { field, values, duplicateField: field },
+          canRepair: false,
+          repairHint: `Ensure ${field} is distinct for small/medium/large workloads.`,
+        };
+      }
+    }
+
+    // Benchmark attestation verification: for workflow-contract candidates, all rows must be verified via BenchmarkEvidenceVerifier
+    if (workflowContract) {
+      const verifiedSet = new Set(verifiedBenchmarkIds ?? []);
+      for (const bm of benchmarks) {
+        if (!verifiedSet.has(bm.benchmarkId)) {
+          return {
+            gate: "workload_cost_non_regression",
+            passed: false,
+            category: "workflow",
+            message: `Workload ${String(bm.workloadSize)} benchmark ${String(bm.benchmarkId)} not verified: missing or invalid attestation (expected HMAC-SHA256 via BenchmarkEvidenceVerifier).`,
+            details: {
+              workloadSize: bm.workloadSize,
+              benchmarkId: bm.benchmarkId,
+              verifiedBenchmarkIds: verifiedBenchmarkIds ?? [],
+              expectedAttestation: "HMAC-SHA256 via BenchmarkEvidenceVerifier",
+            },
+            canRepair: false,
+            repairHint: "Ensure workload benchmark is signed via signWorkloadBenchmark with HMAC-SHA256 and verifiedBenchmarkIds includes its benchmarkId.",
+          };
+        }
+        // Also require attestation field presence for defense in depth
+        const anyBm = bm as unknown as Record<string, unknown>;
+        if (!anyBm["attestation"] || typeof anyBm["attestation"] !== "object") {
+          return {
+            gate: "workload_cost_non_regression",
+            passed: false,
+            category: "workflow",
+            message: `Workload ${String(bm.workloadSize)} benchmark ${String(bm.benchmarkId)} missing attestation object.`,
+            details: {
+              workloadSize: bm.workloadSize,
+              benchmarkId: bm.benchmarkId,
+            },
+            canRepair: false,
+            repairHint: "Provide HMAC-SHA256 attestation via signWorkloadBenchmark.",
+          };
+        }
+      }
+    }
+
+    // Exact candidate revision/artifact binding check
+    if (candidateRevisionId) {
+      for (const bm of benchmarks) {
+        const anyBm = bm as unknown as Record<string, unknown>;
+        if (anyBm["candidateRevisionId"] !== candidateRevisionId) {
+          return {
+            gate: "workload_cost_non_regression",
+            passed: false,
+            category: "workflow",
+            message: `Workload ${String(bm.workloadSize)} candidateRevisionId mismatch: expected ${candidateRevisionId}, got ${String(anyBm["candidateRevisionId"])}.`,
+            details: {
+              workloadSize: bm.workloadSize,
+              expectedCandidateRevisionId: candidateRevisionId,
+              actualCandidateRevisionId: anyBm["candidateRevisionId"],
+            },
+            canRepair: false,
+            repairHint: "Ensure workload benchmark candidateRevisionId matches evaluated candidate revision.",
+          };
+        }
+      }
+    } else {
+      // No candidateRevisionId provided but contract exists: treat as missing binding -> fail if benchmarks lack it (already checked), but if we have no expected, skip exact match.
+    }
+
+    if (artifactDigest) {
+      for (const bm of benchmarks) {
+        const anyBm = bm as unknown as Record<string, unknown>;
+        if (anyBm["artifactDigest"] !== artifactDigest) {
+          return {
+            gate: "workload_cost_non_regression",
+            passed: false,
+            category: "workflow",
+            message: `Workload ${String(bm.workloadSize)} artifactDigest mismatch: expected ${artifactDigest}, got ${String(anyBm["artifactDigest"])}.`,
+            details: {
+              workloadSize: bm.workloadSize,
+              expectedArtifactDigest: artifactDigest,
+              actualArtifactDigest: anyBm["artifactDigest"],
+            },
+            canRepair: false,
+            repairHint: "Ensure workload benchmark artifactDigest matches evaluated candidate artifact digest.",
+          };
+        }
+      }
+    }
+
     for (const bm of benchmarks) {
       const ws = String(bm.workloadSize);
       const baseline = bm.baseline as unknown as { correct?: boolean; redundantToolCalls?: number } & Record<string, unknown>;
@@ -804,8 +1065,63 @@ export class HardGateEvaluator {
       const candidateCost = bm.candidateCostUsd;
       const correctnessPassed = bm.correctnessPassed;
       const redundant = bm.redundantVerificationCalls;
+      const anyBm2 = bm as unknown as { scheduleId?: string };
+      const scheduleId2 = (anyBm2.scheduleId ?? (bm as unknown as Record<string, unknown>)["scheduleId"]) as string | undefined;
 
       const candidateCorrect = candidate?.correct;
+
+      // Validate and recompute costs with authoritative scheduleId
+      {
+        try {
+          if (!scheduleId2) throw new Error("missing scheduleId");
+          assertValidScheduleId(scheduleId2);
+          const expectedBaseline = calculateWeightedModelCost(bm.baseline as any, scheduleId2);
+          const expectedCandidate = calculateWeightedModelCost(bm.candidate as any, scheduleId2);
+          const epsilon = 1e-6;
+          if (Math.abs(expectedBaseline - baselineCost) > epsilon) {
+            return {
+              gate: "workload_cost_non_regression",
+              passed: false,
+              category: "workflow",
+              message: `Workload ${ws} baselineCostUsd mismatch: expected ${expectedBaseline} (recomputed with scheduleId ${scheduleId2}), got ${baselineCost}.`,
+              details: {
+                workloadSize: ws,
+                expectedBaselineCostUsd: expectedBaseline,
+                baselineCostUsd: baselineCost,
+                scheduleId: scheduleId2,
+              },
+              canRepair: false,
+              repairHint: `Ensure baselineCostUsd matches weighted cost with authoritative scheduleId ${scheduleId2} for workload ${ws}.`,
+            };
+          }
+          if (Math.abs(expectedCandidate - candidateCost) > epsilon) {
+            return {
+              gate: "workload_cost_non_regression",
+              passed: false,
+              category: "workflow",
+              message: `Workload ${ws} candidateCostUsd mismatch: expected ${expectedCandidate} (recomputed with scheduleId ${scheduleId2}), got ${candidateCost}.`,
+              details: {
+                workloadSize: ws,
+                expectedCandidateCostUsd: expectedCandidate,
+                candidateCostUsd: candidateCost,
+                scheduleId: scheduleId2,
+              },
+              canRepair: false,
+              repairHint: `Ensure candidateCostUsd matches weighted cost with authoritative scheduleId ${scheduleId2} for workload ${ws}.`,
+            };
+          }
+        } catch (e) {
+          return {
+            gate: "workload_cost_non_regression",
+            passed: false,
+            category: "workflow",
+            message: `Workload ${ws} has invalid model usage metrics for cost calculation: ${(e as Error).message}`,
+            details: { workloadSize: ws, error: (e as Error).message },
+            canRepair: false,
+            repairHint: `Provide valid model usage metrics for workload ${ws}.`,
+          };
+        }
+      }
 
       if (candidateCorrect === undefined && correctnessPassed === undefined) {
         return {

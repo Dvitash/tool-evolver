@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import process from "node:process";
 import { loadConfig } from "../config.js";
+import { createConfiguredBenchmarkEvidenceVerifier } from "../evolution/replay/benchmark-attestation.js";
 import { createCloudServer } from "../server/api.js";
 
 async function main() {
   const config = loadConfig();
-  const server = createCloudServer({ config });
+  const benchmarkEvidenceVerifier = createConfiguredBenchmarkEvidenceVerifier();
+  const server = createCloudServer({ config, benchmarkEvidenceVerifier });
 
   const port = await server.start();
   console.log(`[API] Cloud API Server listening on port ${port} (${config.server.host}:${port})`);

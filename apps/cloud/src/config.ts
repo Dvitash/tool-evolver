@@ -112,6 +112,69 @@ export const ModelConfigSchema = z.object({
 });
 export type ModelConfig = z.infer<typeof ModelConfigSchema>;
 
+export const BENCHMARK_ATTESTATION_SECRET_MIN_LENGTH = 32;
+
+/**
+ * HMAC benchmark attestation verifier configuration.
+ * Secret is never included in redacted/serialized representations or error messages.
+ */
+export const BenchmarkAttestationConfigSchema = z.object({
+  issuer: z.string().min(1),
+  keyId: z.string().min(1),
+  secret: z.string().min(BENCHMARK_ATTESTATION_SECRET_MIN_LENGTH),
+});
+export type BenchmarkAttestationConfig = z.infer<typeof BenchmarkAttestationConfigSchema>;
+
+/**
+ * Validate benchmark attestation fields without echoing the secret in errors.
+ */
+export function parseBenchmarkAttestationConfig(raw: unknown): BenchmarkAttestationConfig {
+  if (raw === undefined || raw === null || typeof raw !== "object") {
+    throw new Error("Benchmark attestation config is required");
+  }
+  const rec = raw as Record<string, unknown>;
+  const issuer = rec.issuer;
+  const keyId = rec.keyId;
+  const secret = rec.secret;
+  if (typeof secret !== "string" || secret.length === 0) {
+    throw new Error("BENCHMARK_ATTESTATION_SECRET is required");
+  }
+  if (secret.length < BENCHMARK_ATTESTATION_SECRET_MIN_LENGTH) {
+    throw new Error(
+      `BENCHMARK_ATTESTATION_SECRET must be at least ${BENCHMARK_ATTESTATION_SECRET_MIN_LENGTH} characters`,
+    );
+  }
+  if (typeof issuer !== "string" || issuer.trim().length === 0) {
+    throw new Error("BENCHMARK_ATTESTATION_ISSUER is required");
+  }
+  if (typeof keyId !== "string" || keyId.trim().length === 0) {
+    throw new Error("BENCHMARK_ATTESTATION_KEY_ID is required");
+  }
+  return {
+    issuer: issuer.trim(),
+    keyId: keyId.trim(),
+    secret,
+  };
+}
+
+export function readBenchmarkAttestationEnv(
+  env: Record<string, string | undefined> = process.env,
+): { issuer?: string; keyId?: string; secret?: string } {
+  return {
+    issuer: env.BENCHMARK_ATTESTATION_ISSUER,
+    keyId: env.BENCHMARK_ATTESTATION_KEY_ID,
+    secret: env.BENCHMARK_ATTESTATION_SECRET,
+  };
+}
+
+export function hasBenchmarkAttestationInput(raw: {
+  issuer?: string;
+  keyId?: string;
+  secret?: string;
+}): boolean {
+  return Boolean(raw.issuer || raw.keyId || raw.secret);
+}
+
 /**
  * Comprehensive Cloud Configuration schema.
  */
@@ -123,6 +186,7 @@ export const CloudConfigSchema = z.object({
   auth: AuthConfigSchema,
   models: ModelConfigSchema.default({}),
   server: ServerConfigSchema,
+  benchmarkAttestation: BenchmarkAttestationConfigSchema.optional(),
 });
 export type CloudConfig = z.infer<typeof CloudConfigSchema>;
 export type RawCloudConfig = z.input<typeof CloudConfigSchema>;
@@ -138,6 +202,7 @@ export type RedactedCloudConfig = {
     deviceTokenSecret: string;
   };
   server: ServerConfig;
+  benchmarkAttestation?: Omit<BenchmarkAttestationConfig, "secret"> & { secret: string };
 };
 
 /**
@@ -185,6 +250,13 @@ export function redactConfig(config: CloudConfig): RedactedCloudConfig {
     server: {
       ...config.server,
     },
+    benchmarkAttestation: config.benchmarkAttestation
+      ? {
+          issuer: config.benchmarkAttestation.issuer,
+          keyId: config.benchmarkAttestation.keyId,
+          secret: "[REDACTED]",
+        }
+      : undefined,
   };
 }
 
@@ -244,6 +316,14 @@ export function loadConfig(overrides?: Partial<RawCloudConfig>): CloudConfig {
   const allowDevAuth = env.AUTH_ALLOW_DEV_AUTH
     ? env.AUTH_ALLOW_DEV_AUTH === "true" || env.AUTH_ALLOW_DEV_AUTH === "1"
     : environment === "development" || environment === "test";
+
+  const envAttestation = readBenchmarkAttestationEnv(env);
+  let resolvedAttestation: BenchmarkAttestationConfig | undefined;
+  if (overrides?.benchmarkAttestation) {
+    resolvedAttestation = parseBenchmarkAttestationConfig(overrides.benchmarkAttestation);
+  } else if (hasBenchmarkAttestationInput(envAttestation)) {
+    resolvedAttestation = parseBenchmarkAttestationConfig(envAttestation);
+  }
 
   const rawFromEnv: RawCloudConfig = {
     environment,
@@ -316,6 +396,7 @@ export function loadConfig(overrides?: Partial<RawCloudConfig>): CloudConfig {
         ? env.CORS_ORIGINS.split(",").map((s) => s.trim())
         : ["http://127.0.0.1:9400", "http://localhost:9400"],
     },
+    benchmarkAttestation: resolvedAttestation,
   };
 
   // Merge overrides
@@ -327,6 +408,7 @@ export function loadConfig(overrides?: Partial<RawCloudConfig>): CloudConfig {
     models: { ...rawFromEnv.models, ...overrides?.models },
     auth: { ...rawFromEnv.auth, ...overrides?.auth },
     server: { ...rawFromEnv.server, ...overrides?.server },
+    benchmarkAttestation: resolvedAttestation,
   };
 
   const parsed = CloudConfigSchema.parse(merged);

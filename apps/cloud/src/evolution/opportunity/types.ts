@@ -200,6 +200,12 @@ export interface OpportunityInferredInput {
 
 /**
  * A single ordered operation in the retained representative workflow.
+ * `commandProfile` is bound to its originating ordered event (not a filtered list index).
+ * `commandProfiles` retains per-origin composite segments as an array so that
+ * `git status && git diff` stays on one operation and later `npm test` remains
+ * on its own operation without profile loss or cross-assignment.
+ * Per-operation argument and path evidence is retained for deterministic replay and to
+ * avoid cross-assignment (e.g., read followed by git status must keep git profile only on git).
  */
 export interface WorkflowOperation {
   id: string;
@@ -207,6 +213,14 @@ export interface WorkflowOperation {
   name: string;
   toolClass?: ToolClass;
   commandProfile?: string;
+  /** Per-origin command profiles; composite `git status && git diff` stays on one operation. */
+  commandProfiles?: string[];
+  /** Command arguments (excluding executable) from the originating event's profile, retained per-operation. */
+  args?: string[];
+  /** File path evidence for file operations, retained per-operation from the originating event. */
+  filePath?: string;
+  /** Multi-path evidence for file operations when the workflow operates on multiple files. */
+  targetPaths?: string[];
 }
 
 /**

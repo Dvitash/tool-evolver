@@ -41,6 +41,23 @@ if [[ -z "${OPENROUTER_API_KEY:-}" && -z "${MODEL_API_KEY:-}" ]]; then
   die "OPENROUTER_API_KEY is not set in .env"
 fi
 
+# Benchmark attestation HMAC config — required for dev/worker boot (fail fast, no secret output)
+if [[ -z "${BENCHMARK_ATTESTATION_SECRET:-}" ]]; then
+  die "BENCHMARK_ATTESTATION_SECRET is required (at least 32 chars)"
+fi
+if (( ${#BENCHMARK_ATTESTATION_SECRET} < 32 )); then
+  die "BENCHMARK_ATTESTATION_SECRET must be at least 32 characters"
+fi
+if [[ -z "${BENCHMARK_ATTESTATION_ISSUER:-}" ]]; then
+  die "BENCHMARK_ATTESTATION_ISSUER is required"
+fi
+if [[ -z "${BENCHMARK_ATTESTATION_KEY_ID:-}" ]]; then
+  die "BENCHMARK_ATTESTATION_KEY_ID is required"
+fi
+export BENCHMARK_ATTESTATION_SECRET
+export BENCHMARK_ATTESTATION_ISSUER
+export BENCHMARK_ATTESTATION_KEY_ID
+
 export MODEL_PROVIDER="${MODEL_PROVIDER:-openai-compatible}"
 export MODEL_BASE_URL="${MODEL_BASE_URL:-https://openrouter.ai/api/v1}"
 export MODEL_API_KEY="${MODEL_API_KEY:-$OPENROUTER_API_KEY}"
@@ -78,6 +95,7 @@ log "MODEL_REASONING_ENABLED=$MODEL_REASONING_ENABLED"
 log "MODEL_REASONING_EFFORT=$MODEL_REASONING_EFFORT"
 log "LOG_LEVEL=$LOG_LEVEL"
 log "listen ${HOST}:${PORT}"
+log "benchmark attestation: configured (issuer=$BENCHMARK_ATTESTATION_ISSUER, keyId=$BENCHMARK_ATTESTATION_KEY_ID)"
 
 if [[ ! -f "$ROOT/apps/cloud/dist/bin/dev.js" ]]; then
   log "cloud dist missing; building @tool-evolver/cloud"

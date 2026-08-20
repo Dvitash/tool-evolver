@@ -39,23 +39,72 @@ describe("Candidate Lifecycle - Signed Publication & Security Invariants", () =>
     const candidate = createMockCandidate(tenant);
     const revision = createMockRevision(candidate, tenant);
 
-    const record = await env.orchestrator.startLifecycle(tenant, candidate, revision);
+    await env.orchestrator.startLifecycle(tenant, candidate, revision);
     await env.orchestrator.stepValidate(tenant, candidate.id);
     await env.orchestrator.stepReplay(tenant, candidate.id);
     await env.orchestrator.stepEvaluate(tenant, candidate.id);
 
-    // Tamper with candidate source code in candidate repository & active revision
     const activeRev = await env.candidateRepo.getActiveRevision(tenant, candidate.id);
-    if (activeRev) {
-      await env.candidateRepo.saveRevision(tenant, {
+    expect(activeRev).not.toBeNull();
+    if (!activeRev) throw new Error("activeRev missing");
+
+    // 1. Repository immutability: same revision ID with altered source artifacts must be rejected
+    await expect(
+      env.candidateRepo.saveRevision(tenant, {
         ...activeRev,
         artifacts: {
           ...activeRev.artifacts,
           sourceCode: "export const maliciousInjectedCode = true;",
         },
-      });
-    }
-    // stepPublish detects source digest mismatch
+      }),
+    ).rejects.toThrow(/Immutable revision violation/i);
+
+    // Preserve manifest tamper coverage: same-ID altered manifest is also rejected
+    await expect(
+      env.candidateRepo.saveRevision(tenant, {
+        ...activeRev,
+        artifacts: {
+          ...activeRev.artifacts,
+          manifest: {
+            ...activeRev.artifacts.manifest,
+            name: "tampered_tool_name",
+          },
+        },
+      }),
+    ).rejects.toThrow(/Immutable revision violation/i);
+
+    // Original revision remains intact
+    const persisted = await env.candidateRepo.getRevisionById(tenant, activeRev.revisionId);
+    expect(persisted?.artifacts.sourceCode).toBe(activeRev.artifacts.sourceCode);
+    expect(persisted?.artifacts.manifest.name).toBe(activeRev.artifacts.manifest.name);
+
+    // 2. Publication pinning: distinct revision with tampered source cannot be published with old evidence
+    const tamperedRevisionId = `${activeRev.revisionId}_tampered_src_${randomUUID().replace(/-/g, "").slice(0, 6)}`;
+    const tamperedRevision = {
+      ...activeRev,
+      revisionId: tamperedRevisionId,
+      revisionNumber: (activeRev.revisionNumber ?? 1) + 1,
+      parentRevisionId: activeRev.revisionId,
+      artifacts: {
+        ...activeRev.artifacts,
+        sourceCode: "export const maliciousInjectedCode = true;",
+      },
+    };
+    const savedTampered = await env.candidateRepo.saveRevision(tenant, tamperedRevision);
+    expect(savedTampered.revisionId).toBe(tamperedRevisionId);
+
+    // Lifecycle is still pinned to original revision; simulate tampered pin by pointing lifecycle to new revision while keeping old evidence digests
+    const lifecycleRecord = await env.lifecycleRepo.getLifecycle(tenant, candidate.id);
+    expect(lifecycleRecord).not.toBeNull();
+    expect(lifecycleRecord?.activeRevisionId).toBe(activeRev.revisionId);
+
+    const tamperedPinnedRecord = {
+      ...lifecycleRecord!,
+      activeRevisionId: savedTampered.revisionId,
+    };
+    await env.lifecycleRepo.saveLifecycleRecord(tenant, tamperedPinnedRecord);
+
+    // Publication must reject due to pinned evidence mismatch (artifact-set / source digest)
     await expect(env.orchestrator.stepPublish(tenant, candidate.id)).rejects.toThrow(
       /digest mismatch/i,
     );
@@ -72,7 +121,7 @@ describe("Candidate Lifecycle - Signed Publication & Security Invariants", () =>
     await env.orchestrator.stepEvaluate(tenant, candidate.id);
 
     // Manually set evaluation evidence timestamp to 48 hours ago (exceeding 24h default)
-    const currentRecord = await env.lifecycleRepo.getLifecycleRecord(tenant, candidate.id);
+    const currentRecord = await env.lifecycleRepo.getLifecycle(tenant, candidate.id);
     if (currentRecord && currentRecord.evaluationResult) {
       const staleTimestamp = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
       const staleRecord = {

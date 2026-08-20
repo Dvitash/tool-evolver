@@ -246,4 +246,192 @@ describe("WorkflowContract - Deterministic End-to-End Workflow Retention", () =>
     expect(contract.repeatedOperationIds.length).toBe(3);
     expect(contract.repeatedOperationIds).toEqual(["op_0", "op_1", "op_2"]);
   });
+
+  it("should bind commandProfile to originating ordered event not cross-assign to read, retain per-operation args/path evidence, and avoid fallback paths", async () => {
+    const segmenter = new EpisodeSegmenter();
+    const clusterer = new StructuralClusterer();
+    const classifier = new OpportunityClassifier();
+    const t0 = new Date("2026-08-20T10:00:00.000Z").getTime();
+    const ts = (o: number) => new Date(t0 + o).toISOString();
+    // Read followed by git status: read must remain read, git must have correct command only on git, with per-operation evidence
+    const events = [
+      createToolCallEvent({
+        eventId: "cross_e1",
+        sessionId: "sess-cross",
+        toolName: "read_file",
+        parameters: { path: "src/a.ts" },
+        timestamp: ts(0),
+        causalSequence: 1,
+      }),
+      createCommandExecEvent({
+        eventId: "cross_e2",
+        sessionId: "sess-cross",
+        command: "git status --porcelain",
+        args: [],
+        timestamp: ts(1000),
+        causalSequence: 2,
+      }),
+    ];
+    const episodes = segmenter.segmentEvents(events);
+    expect(episodes.length).toBeGreaterThanOrEqual(1);
+    const clusters = clusterer.clusterEpisodes(episodes);
+    expect(clusters.length).toBeGreaterThanOrEqual(1);
+    const cluster = clusters[0]!;
+    const classification = await classifier.classifyOpportunity("tenant-cross", cluster, "repeated_pattern");
+    const contract = extractWorkflowContract(cluster, events, classification);
+    expect(contract.operations.length).toBeGreaterThanOrEqual(2);
+    // Preserve order and deterministic IDs
+    expect(contract.operations.map((o) => o.id)).toEqual(contract.operations.map((_, i) => `op_${i}`));
+    expect(contract.operations.map((o) => o.order)).toEqual(contract.operations.map((_, i) => i));
+    // Locate read and git ops by order (first should be read, second git)
+    const op0 = contract.operations[0]!;
+    const op1 = contract.operations[1]!;
+    // Op0 is read - must NOT have commandProfile (cross-assignment would incorrectly give it git profile)
+    expect(op0.name.toLowerCase()).toMatch(/read|file/);
+    expect(op0.commandProfile).toBeUndefined();
+    // Op1 is git - must have correct command only on git, with args evidence
+    expect(op1.name.toLowerCase()).toMatch(/git|command/);
+    expect(op1.commandProfile).toBeDefined();
+    expect(op1.commandProfile).toContain("git");
+    expect(op1.commandProfile).toContain("status");
+    expect(op1.args).toBeDefined();
+    expect(op1.args).toEqual(expect.arrayContaining(["status", "--porcelain"]));
+    // Per-operation file evidence retained on read, not fallback
+    expect(op0.filePath ?? op0.targetPaths?.[0]).toBeDefined();
+    const readPath = op0.filePath ?? op0.targetPaths?.[0] ?? "";
+    expect(readPath).toContain("src/a.ts");
+    // No fallback paths like ./data.txt on any operation
+    for (const op of contract.operations) {
+      expect(op.commandProfile).not.toBe("./data.txt");
+      expect(op.filePath).not.toBe("./data.txt");
+      if (op.targetPaths) {
+        for (const p of op.targetPaths) expect(p).not.toBe("./data.txt");
+      }
+    }
+    // Deterministic: second call yields same contract
+    const contract2 = extractWorkflowContract(cluster, events, classification);
+    expect(contract2).toEqual(contract);
+  });
+
+  it("should retain multi-path file evidence and not fallback to ./data.txt", async () => {
+    const segmenter = new EpisodeSegmenter();
+    const clusterer = new StructuralClusterer();
+    const classifier = new OpportunityClassifier();
+    const events = [
+      createToolCallEvent({
+        eventId: "mp_e1",
+        sessionId: "sess-mp",
+        toolName: "read_file",
+        parameters: { path: "src/one.ts" },
+        causalSequence: 1,
+      }),
+      createToolCallEvent({
+        eventId: "mp_e2",
+        sessionId: "sess-mp",
+        toolName: "read_file",
+        parameters: { path: "src/two.ts" },
+        causalSequence: 2,
+      }),
+      createToolCallEvent({
+        eventId: "mp_e3",
+        sessionId: "sess-mp",
+        toolName: "read_file",
+        parameters: { path: "src/three.ts" },
+        causalSequence: 3,
+      }),
+    ];
+    const episodes = segmenter.segmentEvents(events);
+    const [cluster] = clusterer.clusterEpisodes(episodes);
+    const classification = await classifier.classifyOpportunity("tenant-mp", cluster, "repeated_pattern");
+    // Force inferredInputs to have targetPaths array to exercise multi-path binding
+    classification.inferredInputs = [
+      { name: "targetPaths", type: "array", description: "Target file or directory paths to operate on.", required: true },
+    ];
+    const contract = extractWorkflowContract(cluster, events, classification);
+    // Every file operation should have per-operation path evidence, not fallback
+    for (const op of contract.operations) {
+      if (op.toolClass === "file_read" || op.name.toLowerCase().includes("read")) {
+        expect(op.filePath ?? op.targetPaths?.[0]).toBeDefined();
+        expect(op.filePath).not.toBe("./data.txt");
+        if (op.targetPaths) expect(op.targetPaths[0]).not.toBe("./data.txt");
+      }
+    }
+    // Required inputs must include targetPaths
+    expect(contract.requiredInputs.some((i) => i.name === "targetPaths")).toBe(true);
+    // No operation should have fallback commandProfile ./data.txt
+    for (const op of contract.operations) {
+      expect(op.commandProfile).not.toBe("./data.txt");
+    }
+  });
+
+  it("should keep composite command profiles on one operation without displacing later command", async () => {
+    const segmenter = new EpisodeSegmenter();
+    const clusterer = new StructuralClusterer();
+    const classifier = new OpportunityClassifier();
+    const t0 = new Date("2026-08-20T10:00:00.000Z").getTime();
+    const ts = (o: number) => new Date(t0 + o).toISOString();
+    // Composite `git status && git diff` as single originating event, followed by `npm test`
+    const events = [
+      createCommandExecEvent({
+        eventId: "comp_e1",
+        sessionId: "sess-comp",
+        command: "git status && git diff",
+        timestamp: ts(0),
+        causalSequence: 1,
+      }),
+      createCommandExecEvent({
+        eventId: "comp_e2",
+        sessionId: "sess-comp",
+        command: "npm test",
+        timestamp: ts(1000),
+        causalSequence: 2,
+      }),
+    ];
+    const episodes = segmenter.segmentEvents(events);
+    const [cluster] = clusterer.clusterEpisodes(episodes);
+    const classification = await classifier.classifyOpportunity("tenant-comp", cluster, "repeated_pattern");
+    const contract = extractWorkflowContract(cluster, events, classification);
+
+    expect(contract.operations.length).toBe(2);
+    expect(contract.operations.map((o) => o.id)).toEqual(["op_0", "op_1"]);
+    expect(contract.operations.map((o) => o.order)).toEqual([0, 1]);
+
+    const op0 = contract.operations[0]!;
+    const op1 = contract.operations[1]!;
+
+    // Composite stays on one operation as commandProfiles array
+    expect(op0.commandProfiles).toBeDefined();
+    expect(op0.commandProfiles).toEqual(expect.arrayContaining(["git status", "git diff"]));
+    expect(op0.commandProfiles).toHaveLength(2);
+    expect(op0.commandProfile).toBe("git status");
+    // Later command remains on its own operation, no cross-assignment
+    expect(op1.commandProfiles).toBeDefined();
+    expect(op1.commandProfiles).toEqual(["npm test"]);
+    expect(op1.commandProfile).toBe("npm test");
+    expect(op1.commandProfiles).not.toContain("git status");
+    expect(op0.commandProfiles).not.toContain("npm test");
+
+    // No profile loss: all three profiles accounted for across operations
+    const allProfiles = contract.operations.flatMap((o) => o.commandProfiles ?? (o.commandProfile ? [o.commandProfile] : []));
+    expect(allProfiles).toEqual(expect.arrayContaining(["git status", "git diff", "npm test"]));
+    expect(allProfiles).toHaveLength(3);
+
+    // Preserve order: first operation's profiles are git, second is npm
+    expect(allProfiles[0]).toBe("git status");
+    expect(allProfiles[1]).toBe("git diff");
+    expect(allProfiles[2]).toBe("npm test");
+
+    // Deterministic: second extraction yields same grouping
+    const contract2 = extractWorkflowContract(cluster, events, classification);
+    expect(contract2.operations[0]!.commandProfiles).toEqual(op0.commandProfiles);
+    expect(contract2.operations[1]!.commandProfiles).toEqual(op1.commandProfiles);
+
+    // No fallback paths
+    for (const op of contract.operations) {
+      expect(op.commandProfile).not.toBe("./data.txt");
+      if (op.commandProfiles) {
+        for (const p of op.commandProfiles) expect(p).not.toBe("./data.txt");
+      }
+    }
+  });
 });

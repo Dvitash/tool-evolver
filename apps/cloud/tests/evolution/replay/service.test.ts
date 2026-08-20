@@ -4,6 +4,10 @@ import {
   createHistoricalReplayService,
 } from "../../../src/evolution/replay/service.js";
 import type { TenantContext } from "../../../src/tenant.js";
+import {
+  MODEL_COST_SCHEDULE_ID_V1,
+  calculateWeightedModelCost,
+} from "../../../src/evolution/replay/types.js";
 import type {
   ModelUsageMetrics,
   WorkloadBenchmarkComparison,
@@ -155,11 +159,20 @@ describe("HistoricalReplayService (End-to-End Replay Engine)", () => {
       workloadSize: "small" | "medium" | "large",
       baselineOverrides: Partial<ModelUsageMetrics> = {},
       candidateOverrides: Partial<ModelUsageMetrics> = {},
+      evidenceOverrides: Partial<WorkloadBenchmarkComparison> = {},
     ): WorkloadBenchmarkComparison => {
       const baseline = makeMetrics({ ...baselineOverrides });
       const candidate = makeMetrics({ ...candidateOverrides, correct: true, redundantToolCalls: 0 });
-      const baselineCostUsd = calcCost(baseline);
-      const candidateCostUsd = calcCost(candidate);
+      const scheduleId = MODEL_COST_SCHEDULE_ID_V1;
+      const baselineCostUsd = calculateWeightedModelCost(baseline, scheduleId);
+      const candidateCostUsd = calculateWeightedModelCost(candidate, scheduleId);
+      const digestFor = (size: string): string => {
+        if (size === "small") return "a".repeat(64);
+        if (size === "medium") return "b".repeat(64);
+        return "c".repeat(64);
+      };
+      const rev = "rev_valid_01";
+      const art = "d".repeat(64);
       return {
         workloadSize,
         baseline,
@@ -170,7 +183,18 @@ describe("HistoricalReplayService (End-to-End Replay Engine)", () => {
           baselineCostUsd === 0 ? 0 : ((candidateCostUsd - baselineCostUsd) / baselineCostUsd) * 100,
         correctnessPassed: candidate.correct,
         redundantVerificationCalls: candidate.redundantToolCalls,
-      };
+        benchmarkId: `bench-${workloadSize}`,
+        baselineRunId: `baseline-${workloadSize}`,
+        candidateRunId: `candidate-${workloadSize}`,
+        workloadInputDigest: digestFor(workloadSize),
+        candidateRevisionId: rev,
+        artifactDigest: art,
+        modelProvider: "test-provider",
+        modelId: "test-model",
+        observedAt: "2026-08-20T12:00:00.000Z",
+        scheduleId,
+        ...evidenceOverrides,
+      } as WorkloadBenchmarkComparison;
     };
 
     it("valid external three-size benchmarks survive replay exactly and are sorted", async () => {
@@ -283,5 +307,248 @@ describe("HistoricalReplayService (End-to-End Replay Engine)", () => {
       expect(result.workloadBenchmarks!.length).toBe(1);
       expect(result.workloadBenchmarks![0]!.workloadSize).toBe("medium");
     });
+  describe("Immutable Benchmark Evidence & Pricing Integrity", () => {
+    it("rejects forged cheap costs (baselineCostUsd mismatch)", async () => {
+      const evidence = createMockResolvedEvidenceSet();
+      const candidate = createMockCandidateRevision(PURE_COMPUTE_CANDIDATE_SOURCE);
+      const bm = makeBenchmark("small");
+      // Forge cheap cost
+      const forged = { ...bm, baselineCostUsd: bm.baselineCostUsd * 0.1 };
+      await expect(
+        service.replayCandidate(tenant, {
+          candidate,
+          evidence,
+          options: { workloadBenchmarks: [forged] } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] },
+        }),
+      ).rejects.toThrow(/baselineCostUsd/);
+    });
+
+    it("rejects forged candidateCostUsd mismatch", async () => {
+      const evidence = createMockResolvedEvidenceSet();
+      const candidate = createMockCandidateRevision(PURE_COMPUTE_CANDIDATE_SOURCE);
+      const bm = makeBenchmark("small");
+      const forged = { ...bm, candidateCostUsd: bm.candidateCostUsd * 0.01, costDeltaPercent: -99 };
+      await expect(
+        service.replayCandidate(tenant, {
+          candidate,
+          evidence,
+          options: { workloadBenchmarks: [forged] } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] },
+        }),
+      ).rejects.toThrow(/candidateCostUsd|weighted cost/);
+    });
+
+    it("rejects costDeltaPercent mismatch", async () => {
+      const evidence = createMockResolvedEvidenceSet();
+      const candidate = createMockCandidateRevision(PURE_COMPUTE_CANDIDATE_SOURCE);
+      const bm = makeBenchmark("small");
+      const forged = { ...bm, costDeltaPercent: bm.costDeltaPercent + 50 };
+      await expect(
+        service.replayCandidate(tenant, {
+          candidate,
+          evidence,
+          options: { workloadBenchmarks: [forged] } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] },
+        }),
+      ).rejects.toThrow(/costDeltaPercent/);
+    });
+
+    it("rejects copied rows under new size labels (duplicate benchmarkId)", async () => {
+      const evidence = createMockResolvedEvidenceSet();
+      const candidate = createMockCandidateRevision(PURE_COMPUTE_CANDIDATE_SOURCE);
+      const base = makeBenchmark("small");
+      const copied = { ...base, workloadSize: "medium" as const };
+      // Keep same benchmarkId to simulate copy
+      await expect(
+        service.replayCandidate(tenant, {
+          candidate,
+          evidence,
+          options: { workloadBenchmarks: [base, copied] } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] },
+        }),
+      ).rejects.toThrow(/duplicate benchmarkId/i);
+    });
+
+    it("rejects duplicate baselineRunId across sizes", async () => {
+      const evidence = createMockResolvedEvidenceSet();
+      const candidate = createMockCandidateRevision(PURE_COMPUTE_CANDIDATE_SOURCE);
+      const a = makeBenchmark("small");
+      const b = makeBenchmark("medium", {}, {}, { baselineRunId: a.baselineRunId });
+      const c = makeBenchmark("large");
+      await expect(
+        service.replayCandidate(tenant, {
+          candidate,
+          evidence,
+          options: { workloadBenchmarks: [a, b, c] } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] },
+        }),
+      ).rejects.toThrow(/duplicate baselineRunId/i);
+    });
+
+    it("rejects duplicate workloadInputDigest", async () => {
+      const evidence = createMockResolvedEvidenceSet();
+      const candidate = createMockCandidateRevision(PURE_COMPUTE_CANDIDATE_SOURCE);
+      const a = makeBenchmark("small");
+      const b = makeBenchmark("medium", {}, {}, { workloadInputDigest: a.workloadInputDigest });
+      const c = makeBenchmark("large");
+      await expect(
+        service.replayCandidate(tenant, {
+          candidate,
+          evidence,
+          options: { workloadBenchmarks: [a, b, c] } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] },
+        }),
+      ).rejects.toThrow(/duplicate workloadInputDigest/i);
+    });
+
+    it("rejects duplicate candidateRunId", async () => {
+      const evidence = createMockResolvedEvidenceSet();
+      const candidate = createMockCandidateRevision(PURE_COMPUTE_CANDIDATE_SOURCE);
+      const a = makeBenchmark("small");
+      const b = makeBenchmark("medium", {}, {}, { candidateRunId: a.candidateRunId });
+      const c = makeBenchmark("large");
+      await expect(
+        service.replayCandidate(tenant, {
+          candidate,
+          evidence,
+          options: { workloadBenchmarks: [a, b, c] } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] },
+        }),
+      ).rejects.toThrow(/duplicate candidateRunId/i);
+    });
+
+    it("rejects wrong revision/digest formats", async () => {
+      const evidence = createMockResolvedEvidenceSet();
+      const candidate = createMockCandidateRevision(PURE_COMPUTE_CANDIDATE_SOURCE);
+      const badRev = makeBenchmark("small", {}, {}, { candidateRevisionId: "bad rev with spaces" });
+      await expect(
+        service.replayCandidate(tenant, {
+          candidate,
+          evidence,
+          options: { workloadBenchmarks: [badRev] } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] },
+        }),
+      ).rejects.toThrow(/candidateRevisionId/);
+
+      const badDigest = makeBenchmark("small", {}, {}, { artifactDigest: "not-a-digest" });
+      await expect(
+        service.replayCandidate(tenant, {
+          candidate,
+          evidence,
+          options: { workloadBenchmarks: [badDigest] } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] },
+        }),
+      ).rejects.toThrow(/artifactDigest/);
+
+      const badInput = makeBenchmark("small", {}, {}, { workloadInputDigest: "zzzz" });
+      await expect(
+        service.replayCandidate(tenant, {
+          candidate,
+          evidence,
+          options: { workloadBenchmarks: [badInput] } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] },
+        }),
+      ).rejects.toThrow(/workloadInputDigest/);
+    });
+
+    it("rejects invalid timestamps", async () => {
+      const evidence = createMockResolvedEvidenceSet();
+      const candidate = createMockCandidateRevision(PURE_COMPUTE_CANDIDATE_SOURCE);
+      const badTime = makeBenchmark("small", {}, {}, { observedAt: "not-a-timestamp" });
+      await expect(
+        service.replayCandidate(tenant, {
+          candidate,
+          evidence,
+          options: { workloadBenchmarks: [badTime] } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] },
+        }),
+      ).rejects.toThrow(/observedAt/);
+
+      const badTime2 = makeBenchmark("small", {}, {}, { observedAt: "2026-13-40T99:00:00Z" });
+      await expect(
+        service.replayCandidate(tenant, {
+          candidate,
+          evidence,
+          options: { workloadBenchmarks: [badTime2] } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] },
+        }),
+      ).rejects.toThrow(/observedAt/);
+    });
+
+    it("rejects empty model fields", async () => {
+      const evidence = createMockResolvedEvidenceSet();
+      const candidate = createMockCandidateRevision(PURE_COMPUTE_CANDIDATE_SOURCE);
+      const emptyProvider = makeBenchmark("small", {}, {}, { modelProvider: "" });
+      await expect(
+        service.replayCandidate(tenant, {
+          candidate,
+          evidence,
+          options: { workloadBenchmarks: [emptyProvider] } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] },
+        }),
+      ).rejects.toThrow(/modelProvider/);
+
+      const emptyModel = makeBenchmark("small", {}, {}, { modelId: "   " });
+      await expect(
+        service.replayCandidate(tenant, {
+          candidate,
+          evidence,
+          options: { workloadBenchmarks: [emptyModel] } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] },
+        }),
+      ).rejects.toThrow(/modelId/);
+    });
+
+    it("rejects mismatched candidateRevisionId/artifactDigest across rows (exact binding)", async () => {
+      const evidence = createMockResolvedEvidenceSet();
+      const candidate = createMockCandidateRevision(PURE_COMPUTE_CANDIDATE_SOURCE);
+      const a = makeBenchmark("small");
+      const b = makeBenchmark("medium", {}, {}, { candidateRevisionId: "rev_other_02" });
+      const c = makeBenchmark("large");
+      await expect(
+        service.replayCandidate(tenant, {
+          candidate,
+          evidence,
+          options: { workloadBenchmarks: [a, b, c] } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] },
+        }),
+      ).rejects.toThrow(/candidateRevisionId mismatch/);
+
+      const a2 = makeBenchmark("small");
+      const b2 = makeBenchmark("medium");
+      const c2 = makeBenchmark("large", {}, {}, { artifactDigest: "e".repeat(64) });
+      await expect(
+        service.replayCandidate(tenant, {
+          candidate,
+          evidence,
+          options: { workloadBenchmarks: [a2, b2, c2] } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] },
+        }),
+      ).rejects.toThrow(/artifactDigest mismatch/);
+    });
+
+    it("rejects duplicate workloadSize", async () => {
+      const evidence = createMockResolvedEvidenceSet();
+      const candidate = createMockCandidateRevision(PURE_COMPUTE_CANDIDATE_SOURCE);
+      const a = makeBenchmark("small");
+      const b = makeBenchmark("small");
+      await expect(
+        service.replayCandidate(tenant, {
+          candidate,
+          evidence,
+          options: { workloadBenchmarks: [a, b] } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] },
+        }),
+      ).rejects.toThrow(/duplicate workloadSize/i);
+    });
+
+    it("valid bound rows sort and survive (small→medium→large)", async () => {
+      const evidence = createMockResolvedEvidenceSet();
+      const candidate = createMockCandidateRevision(PURE_COMPUTE_CANDIDATE_SOURCE);
+      // Create unsorted: large, small, medium with correct distinct evidence and exact binding
+      const large = makeBenchmark("large");
+      const small = makeBenchmark("small");
+      const medium = makeBenchmark("medium");
+      const result = await service.replayCandidate(tenant, {
+        candidate,
+        evidence,
+        options: { workloadBenchmarks: [large, small, medium] } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] },
+      });
+      expect(result.workloadBenchmarks).toBeDefined();
+      expect(result.workloadBenchmarks!.map((b) => b.workloadSize)).toEqual(["small", "medium", "large"]);
+      // Verify recomputed costs survive with authoritative schedule
+      for (const bm of result.workloadBenchmarks!) {
+        const expectedBaseline = calculateWeightedModelCost(bm.baseline, bm.scheduleId);
+        const expectedCandidate = calculateWeightedModelCost(bm.candidate, bm.scheduleId);
+        expect(bm.baselineCostUsd).toBeCloseTo(expectedBaseline, 9);
+        expect(bm.candidateCostUsd).toBeCloseTo(expectedCandidate, 9);
+      }
+    });
+  });
+
   });
 });

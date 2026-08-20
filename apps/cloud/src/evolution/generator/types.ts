@@ -125,11 +125,12 @@ export interface ToolPlan {
 
 /**
  * Deterministic coverage of a WorkflowContract by a ToolPlan.
- * Complete only when every contract operation and required output is represented.
+ * Complete only when every contract operation and required output is represented
+ * by both schema and explicit step output declaration.
  */
 export interface WorkflowCoverage {
   operationCoverage: { operationId: string; stepIds: string[] }[];
-  outputCoverage: { outputName: string; schemaPaths: string[]; sourceOperationIds: string[] }[];
+  outputCoverage: { outputName: string; schemaPaths: string[]; sourceOperationIds: string[]; stepIds: string[] }[];
   uncoveredOperationIds: string[];
   uncoveredOutputNames: string[];
   complete: boolean;

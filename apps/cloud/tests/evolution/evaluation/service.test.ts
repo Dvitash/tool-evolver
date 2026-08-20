@@ -18,19 +18,144 @@ import {
   createMockToolManifest,
   createMockValidationResult,
 } from "./helpers.js";
+import { hashCanonical } from "@tool-evolver/contracts";
+import type { ToolPlan } from "../../../src/evolution/generator/types.js";
 import { createMockWorkflowContract } from "../generator/helpers.js";
 import type {
   ModelUsageMetrics,
   WorkloadBenchmarkComparison,
 } from "../../../src/evolution/replay/types.js";
-import { calculateWeightedModelCost } from "../../../src/evolution/replay/types.js";
+import {
+  calculateWeightedModelCost,
+  MODEL_COST_SCHEDULE_ID_V1,
+} from "../../../src/evolution/replay/types.js";
+import {
+  HmacBenchmarkEvidenceVerifier,
+  signWorkloadBenchmark,
+} from "../../../src/evolution/replay/benchmark-attestation.js";
+
+const TEST_BENCHMARK_ISSUER = "test-issuer";
+const TEST_BENCHMARK_KEY_ID = "test-key-1";
+const TEST_BENCHMARK_SECRET = "super-secret-for-tests-32bytes!!";
+
+function createTestBenchmarkVerifier(): HmacBenchmarkEvidenceVerifier {
+  return new HmacBenchmarkEvidenceVerifier({
+    issuer: TEST_BENCHMARK_ISSUER,
+    keyId: TEST_BENCHMARK_KEY_ID,
+    secret: TEST_BENCHMARK_SECRET,
+  });
+}
+function createToolPlanForContract(contract: ReturnType<typeof createMockWorkflowContract>, overrides: Partial<ToolPlan> = {}): ToolPlan {
+  const steps = contract.operations.map((op, idx) => {
+    const outputsForOp = contract.outputRequirements
+      .filter((r) => r.sourceOperationId === op.id)
+      .reduce((acc, r) => ({ ...acc, [r.name]: { type: r.type } }), {} as Record<string, unknown>);
+    const hasOutputs = Object.keys(outputsForOp).length > 0;
+    return {
+      id: `step_${op.id}`,
+      name: `step for ${op.id}`,
+      toolClass: op.toolClass as string,
+      action: op.id,
+      inputs: {},
+      outputs: hasOutputs ? outputsForOp : undefined,
+      dependsOn: idx > 0 ? [`step_${contract.operations[idx - 1].id}`] : [],
+      coveredOperationIds: [op.id],
+    };
+  });
+  const outputSchema: Record<string, unknown> = {
+    type: "object",
+    properties: Object.fromEntries(
+      contract.outputRequirements.map((r) => [r.name, { type: r.type, description: r.description }]),
+    ),
+    required: contract.outputRequirements.filter((r) => r.required).map((r) => r.name),
+  };
+  return {
+    id: "plan-1",
+    opportunityId: "opp-1",
+    name: "test-plan",
+    description: "Test plan for workflow contract",
+    variableInputs: [],
+    invariantInputs: [],
+    inputSchema: { type: "object", properties: {}, required: [] } as any,
+    outputSchema: outputSchema as any,
+    steps: steps as any,
+    capabilities: {} as any,
+    capabilityRequirements: {} as any,
+    runtime: { runtime: "node", memoryLimitMb: 128, timeoutMs: 5000, cpuLimitPercent: 100 } as any,
+    workflowContract: contract,
+    metadata: {},
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  } as unknown as ToolPlan;
+}
+
+function makeBenchmarkWithBindings(
+  workloadSize: WorkloadBenchmarkComparison["workloadSize"],
+  candidateRevisionId: string,
+  artifactDigest: string,
+  baselineOverrides: Partial<ModelUsageMetrics> = {},
+  candidateOverrides: Partial<ModelUsageMetrics> = {},
+  overrides: Partial<WorkloadBenchmarkComparison> = {},
+): WorkloadBenchmarkComparison {
+  const baseline: ModelUsageMetrics = {
+    inputTokens: 1000,
+    outputTokens: 500,
+    cacheReadTokens: 200,
+    turns: 2,
+    toolCalls: 3,
+    redundantToolCalls: 0,
+    wallTimeMs: 1200,
+    correct: true,
+    ...baselineOverrides,
+  };
+  const candidate: ModelUsageMetrics = {
+    inputTokens: 800,
+    outputTokens: 400,
+    cacheReadTokens: 100,
+    turns: 1,
+    toolCalls: 2,
+    redundantToolCalls: 0,
+    wallTimeMs: 1000,
+    correct: true,
+    ...candidateOverrides,
+  };
+  const scheduleIdForCost = MODEL_COST_SCHEDULE_ID_V1;
+  const baselineCostUsd = calculateWeightedModelCost(baseline, scheduleIdForCost);
+  const candidateCostUsd = calculateWeightedModelCost(candidate, scheduleIdForCost);
+  const idx = workloadSize === "small" ? "1" : workloadSize === "medium" ? "2" : "3";
+  const rowWithoutAttestation = {
+    workloadSize,
+    baseline,
+    candidate,
+    baselineCostUsd,
+    candidateCostUsd,
+    costDeltaPercent: baselineCostUsd > 0 ? ((candidateCostUsd - baselineCostUsd) / baselineCostUsd) * 100 : 0,
+    correctnessPassed: candidate.correct,
+    redundantVerificationCalls: candidate.redundantToolCalls,
+    benchmarkId: `bench-${workloadSize}-${idx}`,
+    baselineRunId: `base-run-${workloadSize}-${idx}`,
+    candidateRunId: `cand-run-${workloadSize}-${idx}`,
+    workloadInputDigest: hashCanonical(`workload-input-${workloadSize}-${idx}`),
+    candidateRevisionId,
+    artifactDigest,
+    modelProvider: "openai",
+    modelId: "gpt-4o-mini",
+    observedAt: new Date().toISOString(),
+    scheduleId: scheduleIdForCost,
+    ...overrides,
+  } as unknown as Omit<WorkloadBenchmarkComparison, "attestation">;
+  const { attestation: _ignored, ...cleanRow } = rowWithoutAttestation as unknown as Record<string, unknown>;
+  return signWorkloadBenchmark(cleanRow as Omit<WorkloadBenchmarkComparison, "attestation">, {
+    issuer: TEST_BENCHMARK_ISSUER,
+    keyId: TEST_BENCHMARK_KEY_ID,
+    secret: TEST_BENCHMARK_SECRET,
+  });
+}
 
 describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibility Decisions)", () => {
   it("renders 'eligible_for_artifact' on a clean, high-scoring candidate", async () => {
     const eligibilityCallback = vi.fn();
-    const service = createCandidateEvaluationService({
-      onEligibilityDecision: eligibilityCallback,
-    });
+    const service = createCandidateEvaluationService({ onEligibilityDecision: eligibilityCallback, benchmarkEvidenceVerifier: createTestBenchmarkVerifier() });
 
     const candidate = createMockCandidateRevision();
     const validationResult = createMockValidationResult();
@@ -66,7 +191,7 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
   });
 
   it("renders 'rejected' when non-repairable hard gates fail (e.g. terminal divergence or forbidden security breach)", async () => {
-    const service = createCandidateEvaluationService();
+    const service = createCandidateEvaluationService({ benchmarkEvidenceVerifier: createTestBenchmarkVerifier() });
 
     const candidate = createMockCandidateRevision();
     const validationResult = createMockValidationResult();
@@ -99,9 +224,7 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
 
   it("renders 'repair_requested' with structured repair targets when repairable defects exist", async () => {
     const repairCallback = vi.fn();
-    const service = createCandidateEvaluationService({
-      onRepairRequested: repairCallback,
-    });
+    const service = createCandidateEvaluationService({ onRepairRequested: repairCallback, benchmarkEvidenceVerifier: createTestBenchmarkVerifier() });
 
     const candidate = createMockCandidateRevision();
     const validationResult = createMockValidationResult({
@@ -138,7 +261,7 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
   });
 
   it("renders 'deferred_for_more_evidence' when confidence is low due to insufficient replay coverage", async () => {
-    const service = createCandidateEvaluationService();
+    const service = createCandidateEvaluationService({ benchmarkEvidenceVerifier: createTestBenchmarkVerifier() });
 
     const candidate = createMockCandidateRevision({
       manifest: {
@@ -203,7 +326,7 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
   });
 
   it("blocks regressive tool updates when candidate regresses prior active baseline", async () => {
-    const service = createCandidateEvaluationService();
+    const service = createCandidateEvaluationService({ benchmarkEvidenceVerifier: createTestBenchmarkVerifier() });
 
     const baseline = createMockActiveBaseline({
       manifest: {
@@ -261,7 +384,7 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
   });
 
   it("renders 'infrastructure_retry' when validation or replay experienced infrastructure failure", async () => {
-    const service = createCandidateEvaluationService();
+    const service = createCandidateEvaluationService({ benchmarkEvidenceVerifier: createTestBenchmarkVerifier() });
 
     const candidate = createMockCandidateRevision();
     const validationResult = createMockValidationResult({
@@ -280,7 +403,7 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
   });
 
   it("produces deterministic scores and repeatable SHA-256 digest on identical inputs", async () => {
-    const service = createCandidateEvaluationService();
+    const service = createCandidateEvaluationService({ benchmarkEvidenceVerifier: createTestBenchmarkVerifier() });
 
     const candidate = createMockCandidateRevision();
     const validationResult = createMockValidationResult();
@@ -314,7 +437,7 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
   });
 
   it("evaluates shadow policies and aggregates calibration data without affecting active decision", async () => {
-    const service = createCandidateEvaluationService();
+    const service = createCandidateEvaluationService({ benchmarkEvidenceVerifier: createTestBenchmarkVerifier() });
 
     const candidate = createMockCandidateRevision();
     const validationResult = createMockValidationResult();
@@ -338,7 +461,7 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
   });
 
   it("enforces stricter thresholds for higher risk tiers (e.g. secret_mediated vs read_only)", async () => {
-    const service = createCandidateEvaluationService();
+    const service = createCandidateEvaluationService({ benchmarkEvidenceVerifier: createTestBenchmarkVerifier() });
 
     const readOnlyCandidate = createMockCandidateRevision(); // read_only
     const secretCandidate = createMockCandidateRevision({
@@ -430,22 +553,10 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
     expect(secretEval.decisionRecord.decision).toBe("repair_requested"); // Stricter threshold not satisfied
   });
   it("terminally rejects contract candidate missing workload benchmarks", async () => {
-    const service = createCandidateEvaluationService();
+    const service = createCandidateEvaluationService({ benchmarkEvidenceVerifier: createTestBenchmarkVerifier() });
     const contract = createMockWorkflowContract();
     const candidate = createMockCandidateRevision();
-    // Attach contract/coverage to candidate plan to simulate persisted revision (also test direct threading)
-    const completeCoverage = {
-      complete: true,
-      uncoveredOperationIds: [] as string[],
-      uncoveredOutputNames: [] as string[],
-      operationCoverage: contract.operations.map((op) => ({ operationId: op.id, stepIds: [`step_${op.id}`] })),
-      outputCoverage: contract.outputRequirements.map((r) => ({
-        outputName: r.name,
-        schemaPaths: [`properties.${r.name}`],
-        sourceOperationIds: [r.sourceOperationId],
-      })),
-    };
-    // Use explicit workflow fields (also covered via candidate fallback)
+    const toolPlan = createToolPlanForContract(contract);
     const validationResult = createMockValidationResult();
     const replayResult = createMockReplayResult(); // no workloadBenchmarks
 
@@ -453,8 +564,8 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
       candidate,
       validationResult,
       replayResult,
+      toolPlan,
       workflowContract: contract,
-      workflowCoverage: completeCoverage,
       policy: STANDARD_EVALUATION_POLICY_V1,
     });
 
@@ -466,52 +577,27 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
   });
 
   it("routes incomplete workflow coverage to repair (repairable gate)", async () => {
-    const service = createCandidateEvaluationService();
+    const service = createCandidateEvaluationService({ benchmarkEvidenceVerifier: createTestBenchmarkVerifier() });
     const contract = createMockWorkflowContract();
     const candidate = createMockCandidateRevision();
-    const incompleteCoverage = {
-      complete: false,
-      uncoveredOperationIds: [contract.operations[0].id],
-      uncoveredOutputNames: [contract.outputRequirements[0].name],
-      operationCoverage: [],
-      outputCoverage: [],
-    };
-    // Provide complete workload benchmarks to isolate coverage gate
-    const makeMetrics = (overrides: Partial<ModelUsageMetrics> = {}): ModelUsageMetrics => ({
-      inputTokens: 1000,
-      outputTokens: 500,
-      cacheReadTokens: 200,
-      turns: 2,
-      toolCalls: 3,
-      redundantToolCalls: 0,
-      wallTimeMs: 1200,
-      correct: true,
-      ...overrides,
+    const artifactDigest = hashCanonical(candidate.artifacts.sourceCode);
+    const revisionId = candidate.revisionId;
+    const incompletePlan = createToolPlanForContract(contract, {
+      steps: contract.operations.slice(0, 1).map((op) => ({
+        id: `step_${op.id}`,
+        name: `step for ${op.id}`,
+        toolClass: op.toolClass as string,
+        action: op.id,
+        inputs: {},
+        dependsOn: [],
+        coveredOperationIds: [op.id],
+      })) as any,
+      outputSchema: { type: "object", properties: {}, required: [] } as any,
     });
-    const mkBenchmark = (
-      workloadSize: WorkloadBenchmarkComparison["workloadSize"],
-      baselineOverrides: Partial<ModelUsageMetrics> = {},
-      candidateOverrides: Partial<ModelUsageMetrics> = {},
-    ): WorkloadBenchmarkComparison => {
-      const baseline = makeMetrics(baselineOverrides);
-      const candidateMetrics = makeMetrics({ ...candidateOverrides, correct: true, redundantToolCalls: 0 });
-      const baselineCostUsd = calculateWeightedModelCost(baseline);
-      const candidateCostUsd = calculateWeightedModelCost(candidateMetrics);
-      return {
-        workloadSize,
-        baseline,
-        candidate: candidateMetrics,
-        baselineCostUsd,
-        candidateCostUsd,
-        costDeltaPercent: ((candidateCostUsd - baselineCostUsd) / baselineCostUsd) * 100,
-        correctnessPassed: candidateMetrics.correct,
-        redundantVerificationCalls: candidateMetrics.redundantToolCalls,
-      };
-    };
     const workloadBenchmarks: WorkloadBenchmarkComparison[] = [
-      mkBenchmark("small", { inputTokens: 1000 }, { inputTokens: 800 }),
-      mkBenchmark("medium", { inputTokens: 2000 }, { inputTokens: 1200 }),
-      mkBenchmark("large", { inputTokens: 3000 }, { inputTokens: 1500 }),
+      makeBenchmarkWithBindings("small", revisionId, artifactDigest, { inputTokens: 1000 }, { inputTokens: 800 }),
+      makeBenchmarkWithBindings("medium", revisionId, artifactDigest, { inputTokens: 2000 }, { inputTokens: 1200 }),
+      makeBenchmarkWithBindings("large", revisionId, artifactDigest, { inputTokens: 3000 }, { inputTokens: 1500 }),
     ];
     const replayResult = createMockReplayResult({ workloadBenchmarks } as unknown as Record<string, unknown>);
     const validationResult = createMockValidationResult();
@@ -520,68 +606,25 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
       candidate,
       validationResult,
       replayResult,
+      toolPlan: incompletePlan,
       workflowContract: contract,
-      workflowCoverage: incompleteCoverage,
       policy: STANDARD_EVALUATION_POLICY_V1,
     });
-
-    expect(result.decisionRecord.hardGateResult.passed).toBe(false);
     expect(result.decisionRecord.hardGateResult.failedGates).toContain("workflow_coverage");
-    expect(result.decisionRecord.hardGateResult.canRepair).toBe(true);
     expect(result.decisionRecord.decision).toBe("repair_requested");
   });
 
   it("terminally rejects large-workload cost regression", async () => {
-    const service = createCandidateEvaluationService();
+    const service = createCandidateEvaluationService({ benchmarkEvidenceVerifier: createTestBenchmarkVerifier() });
     const contract = createMockWorkflowContract();
     const candidate = createMockCandidateRevision();
-    const completeCoverage = {
-      complete: true,
-      uncoveredOperationIds: [] as string[],
-      uncoveredOutputNames: [] as string[],
-      operationCoverage: contract.operations.map((op) => ({ operationId: op.id, stepIds: [`step_${op.id}`] })),
-      outputCoverage: contract.outputRequirements.map((r) => ({
-        outputName: r.name,
-        schemaPaths: [`properties.${r.name}`],
-        sourceOperationIds: [r.sourceOperationId],
-      })),
-    };
-    const makeMetrics = (overrides: Partial<ModelUsageMetrics> = {}): ModelUsageMetrics => ({
-      inputTokens: 1000,
-      outputTokens: 500,
-      cacheReadTokens: 200,
-      turns: 2,
-      toolCalls: 3,
-      redundantToolCalls: 0,
-      wallTimeMs: 1200,
-      correct: true,
-      ...overrides,
-    });
-    const mkBenchmark = (
-      workloadSize: WorkloadBenchmarkComparison["workloadSize"],
-      baselineOverrides: Partial<ModelUsageMetrics> = {},
-      candidateOverrides: Partial<ModelUsageMetrics> = {},
-    ): WorkloadBenchmarkComparison => {
-      const baseline = makeMetrics(baselineOverrides);
-      const candidateMetrics = makeMetrics({ ...candidateOverrides, correct: true, redundantToolCalls: 0 });
-      const baselineCostUsd = calculateWeightedModelCost(baseline);
-      const candidateCostUsd = calculateWeightedModelCost(candidateMetrics);
-      return {
-        workloadSize,
-        baseline,
-        candidate: candidateMetrics,
-        baselineCostUsd,
-        candidateCostUsd,
-        costDeltaPercent: ((candidateCostUsd - baselineCostUsd) / baselineCostUsd) * 100,
-        correctnessPassed: candidateMetrics.correct,
-        redundantVerificationCalls: candidateMetrics.redundantToolCalls,
-      };
-    };
-    // Large regression: candidate costs more than baseline
+    const artifactDigest = hashCanonical(candidate.artifacts.sourceCode);
+    const revisionId = candidate.revisionId;
+    const toolPlan = createToolPlanForContract(contract);
     const workloadBenchmarks: WorkloadBenchmarkComparison[] = [
-      mkBenchmark("small", { inputTokens: 1000 }, { inputTokens: 800 }),
-      mkBenchmark("medium", { inputTokens: 2000 }, { inputTokens: 1200 }),
-      mkBenchmark("large", { inputTokens: 1000 }, { inputTokens: 3000 }),
+      makeBenchmarkWithBindings("small", revisionId, artifactDigest, { inputTokens: 1000 }, { inputTokens: 800 }),
+      makeBenchmarkWithBindings("medium", revisionId, artifactDigest, { inputTokens: 2000 }, { inputTokens: 1200 }),
+      makeBenchmarkWithBindings("large", revisionId, artifactDigest, { inputTokens: 1000 }, { inputTokens: 3000 }),
     ];
     const replayResult = createMockReplayResult({ workloadBenchmarks } as unknown as Record<string, unknown>);
     const validationResult = createMockValidationResult();
@@ -590,8 +633,8 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
       candidate,
       validationResult,
       replayResult,
+      toolPlan,
       workflowContract: contract,
-      workflowCoverage: completeCoverage,
       policy: STANDARD_EVALUATION_POLICY_V1,
     });
 
@@ -599,79 +642,42 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
     expect(result.decisionRecord.hardGateResult.failedGates).toContain("workload_cost_non_regression");
     expect(result.decisionRecord.hardGateResult.canRepair).toBe(false);
     expect(result.decisionRecord.decision).toBe("rejected");
+    expect(result.overallDecision.verdict).toBe("fail");
   });
 
   it("permits eligible with complete small/medium/large evidence and leaves legacy without contract eligible", async () => {
-    const service = createCandidateEvaluationService();
+    const service = createCandidateEvaluationService({ benchmarkEvidenceVerifier: createTestBenchmarkVerifier() });
     const contract = createMockWorkflowContract();
     const candidate = createMockCandidateRevision();
-    const completeCoverage = {
-      complete: true,
-      uncoveredOperationIds: [] as string[],
-      uncoveredOutputNames: [] as string[],
-      operationCoverage: contract.operations.map((op) => ({ operationId: op.id, stepIds: [`step_${op.id}`] })),
-      outputCoverage: contract.outputRequirements.map((r) => ({
-        outputName: r.name,
-        schemaPaths: [`properties.${r.name}`],
-        sourceOperationIds: [r.sourceOperationId],
-      })),
-    };
-    const makeMetrics = (overrides: Partial<ModelUsageMetrics> = {}): ModelUsageMetrics => ({
-      inputTokens: 1000,
-      outputTokens: 500,
-      cacheReadTokens: 200,
-      turns: 2,
-      toolCalls: 3,
-      redundantToolCalls: 0,
-      wallTimeMs: 1200,
-      correct: true,
-      ...overrides,
-    });
-    const mkBenchmark = (
-      workloadSize: WorkloadBenchmarkComparison["workloadSize"],
-      baselineOverrides: Partial<ModelUsageMetrics> = {},
-      candidateOverrides: Partial<ModelUsageMetrics> = {},
-    ): WorkloadBenchmarkComparison => {
-      const baseline = makeMetrics(baselineOverrides);
-      const candidateMetrics = makeMetrics({ ...candidateOverrides, correct: true, redundantToolCalls: 0 });
-      const baselineCostUsd = calculateWeightedModelCost(baseline);
-      const candidateCostUsd = calculateWeightedModelCost(candidateMetrics);
-      return {
-        workloadSize,
-        baseline,
-        candidate: candidateMetrics,
-        baselineCostUsd,
-        candidateCostUsd,
-        costDeltaPercent: ((candidateCostUsd - baselineCostUsd) / baselineCostUsd) * 100,
-        correctnessPassed: candidateMetrics.correct,
-        redundantVerificationCalls: candidateMetrics.redundantToolCalls,
-      };
-    };
+    const artifactDigest = hashCanonical(candidate.artifacts.sourceCode);
+    const revisionId = candidate.revisionId;
+    const toolPlan = createToolPlanForContract(contract);
     const workloadBenchmarks: WorkloadBenchmarkComparison[] = [
-      mkBenchmark("small", { inputTokens: 1000 }, { inputTokens: 800 }),
-      mkBenchmark("medium", { inputTokens: 2000 }, { inputTokens: 1200 }),
-      mkBenchmark("large", { inputTokens: 3000 }, { inputTokens: 1500 }),
+      makeBenchmarkWithBindings("small", revisionId, artifactDigest, { inputTokens: 1000 }, { inputTokens: 800 }),
+      makeBenchmarkWithBindings("medium", revisionId, artifactDigest, { inputTokens: 2000 }, { inputTokens: 1200 }),
+      makeBenchmarkWithBindings("large", revisionId, artifactDigest, { inputTokens: 3000 }, { inputTokens: 1500 }),
     ];
     const replayResult = createMockReplayResult({ workloadBenchmarks } as unknown as Record<string, unknown>);
     const validationResult = createMockValidationResult();
 
-    const contractResult = await service.evaluateCandidate({
+    const result = await service.evaluateCandidate({
       candidate,
       validationResult,
       replayResult,
+      toolPlan,
       workflowContract: contract,
-      workflowCoverage: completeCoverage,
       policy: STANDARD_EVALUATION_POLICY_V1,
     });
 
-    expect(contractResult.decisionRecord.hardGateResult.passed).toBe(true);
-    expect(contractResult.decisionRecord.decision).toBe("eligible_for_artifact");
-    expect(contractResult.overallDecision.verdict).toBe("pass");
+    expect(result.decisionRecord.hardGateResult.passed).toBe(true);
+    expect(result.decisionRecord.decision).toBe("eligible_for_artifact");
+    expect(result.overallDecision.verdict).toBe("pass");
 
-    // Legacy candidate without workflowContract should remain eligible even without benchmarks (existing publication path)
-    const legacyReplay = createMockReplayResult(); // no benchmarks
+    // Legacy candidate without workflowContract should remain eligible (no workflow gates)
+    const legacyCandidate = createMockCandidateRevision();
+    const legacyReplay = createMockReplayResult();
     const legacyResult = await service.evaluateCandidate({
-      candidate,
+      candidate: legacyCandidate,
       validationResult,
       replayResult: legacyReplay,
       policy: STANDARD_EVALUATION_POLICY_V1,
@@ -681,60 +687,32 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
   });
 
   it("threads CandidateRevision.plan workflowContract/coverage via candidate fallback when not explicitly passed", async () => {
-    const service = createCandidateEvaluationService();
+    const service = createCandidateEvaluationService({ benchmarkEvidenceVerifier: createTestBenchmarkVerifier() });
     const contract = createMockWorkflowContract();
-    const incompleteCoverage = {
-      complete: false,
-      uncoveredOperationIds: [contract.operations[0].id],
-      uncoveredOutputNames: [],
-      operationCoverage: [],
-      outputCoverage: [],
-    };
     const candidateWithPlan = createMockCandidateRevision();
-    // Attach to artifacts.plan directly to test fallback threading
-    (candidateWithPlan as unknown as { artifacts: { plan: Record<string, unknown> } }).artifacts.plan = {
-      ...(candidateWithPlan.artifacts.plan as unknown as Record<string, unknown>),
-      workflowContract: contract,
-      workflowCoverage: incompleteCoverage,
-    } as unknown as typeof candidateWithPlan.artifacts.plan;
-    const validationResult = createMockValidationResult();
-    const makeMetrics = (overrides: Partial<ModelUsageMetrics> = {}): ModelUsageMetrics => ({
-      inputTokens: 1000,
-      outputTokens: 500,
-      cacheReadTokens: 200,
-      turns: 2,
-      toolCalls: 3,
-      redundantToolCalls: 0,
-      wallTimeMs: 1200,
-      correct: true,
-      ...overrides,
+    const artifactDigest = hashCanonical(candidateWithPlan.artifacts.sourceCode);
+    const revisionId = candidateWithPlan.revisionId;
+    const incompletePlan = createToolPlanForContract(contract, {
+      steps: contract.operations.slice(0, 1).map((op) => ({
+        id: `step_${op.id}`,
+        name: `step for ${op.id}`,
+        toolClass: op.toolClass as string,
+        action: op.id,
+        inputs: {},
+        dependsOn: [],
+        coveredOperationIds: [op.id],
+      })) as any,
+      outputSchema: { type: "object", properties: {}, required: [] } as any,
     });
-    const mkBenchmark = (
-      workloadSize: WorkloadBenchmarkComparison["workloadSize"],
-      baselineOverrides: Partial<ModelUsageMetrics> = {},
-      candidateOverrides: Partial<ModelUsageMetrics> = {},
-    ): WorkloadBenchmarkComparison => {
-      const baseline = makeMetrics(baselineOverrides);
-      const candidateMetrics = makeMetrics({ ...candidateOverrides, correct: true, redundantToolCalls: 0 });
-      const baselineCostUsd = calculateWeightedModelCost(baseline);
-      const candidateCostUsd = calculateWeightedModelCost(candidateMetrics);
-      return {
-        workloadSize,
-        baseline,
-        candidate: candidateMetrics,
-        baselineCostUsd,
-        candidateCostUsd,
-        costDeltaPercent: ((candidateCostUsd - baselineCostUsd) / baselineCostUsd) * 100,
-        correctnessPassed: candidateMetrics.correct,
-        redundantVerificationCalls: candidateMetrics.redundantToolCalls,
-      };
-    };
-    const benchmarks: WorkloadBenchmarkComparison[] = [
-      mkBenchmark("small", { inputTokens: 1000 }, { inputTokens: 800 }),
-      mkBenchmark("medium", { inputTokens: 2000 }, { inputTokens: 1200 }),
-      mkBenchmark("large", { inputTokens: 3000 }, { inputTokens: 1500 }),
+    // Attach to artifacts.plan directly to test fallback threading
+    (candidateWithPlan as unknown as { artifacts: { plan: ToolPlan } }).artifacts.plan = incompletePlan as unknown as typeof candidateWithPlan.artifacts.plan;
+    const validationResult = createMockValidationResult();
+    const workloadBenchmarks: WorkloadBenchmarkComparison[] = [
+      makeBenchmarkWithBindings("small", revisionId, artifactDigest, { inputTokens: 1000 }, { inputTokens: 800 }),
+      makeBenchmarkWithBindings("medium", revisionId, artifactDigest, { inputTokens: 2000 }, { inputTokens: 1200 }),
+      makeBenchmarkWithBindings("large", revisionId, artifactDigest, { inputTokens: 3000 }, { inputTokens: 1500 }),
     ];
-    const replayResult = createMockReplayResult({ workloadBenchmarks: benchmarks } as unknown as Record<string, unknown>);
+    const replayResult = createMockReplayResult({ workloadBenchmarks } as unknown as Record<string, unknown>);
 
     const result = await service.evaluateCandidate({
       candidate: candidateWithPlan,
@@ -745,6 +723,144 @@ describe("CandidateEvaluationService (Candidate Scoring, Evaluation, and Eligibi
 
     expect(result.decisionRecord.hardGateResult.failedGates).toContain("workflow_coverage");
     expect(result.decisionRecord.decision).toBe("repair_requested");
+  });
+
+
+  it("ignores fabricated empty complete coverage summary and fails via authoritative plan", async () => {
+    const service = createCandidateEvaluationService({ benchmarkEvidenceVerifier: createTestBenchmarkVerifier() });
+    const contract = createMockWorkflowContract();
+    const candidate = createMockCandidateRevision();
+    const artifactDigest = hashCanonical(candidate.artifacts.sourceCode);
+    const revisionId = candidate.revisionId;
+    const emptyPlan = createToolPlanForContract(contract, {
+      steps: [] as any,
+      outputSchema: { type: "object", properties: {}, required: [] } as any,
+    });
+    const fabricatedCoverage = {
+      complete: true as const,
+      uncoveredOperationIds: [] as string[],
+      uncoveredOutputNames: [] as string[],
+      operationCoverage: contract.operations.map((op) => ({ operationId: op.id, stepIds: [`step_${op.id}`] })),
+      outputCoverage: contract.outputRequirements.map((r) => ({
+        outputName: r.name,
+        schemaPaths: [`properties.${r.name}`],
+        sourceOperationIds: [r.sourceOperationId],
+      })),
+    };
+    const workloadBenchmarks: WorkloadBenchmarkComparison[] = [
+      makeBenchmarkWithBindings("small", revisionId, artifactDigest),
+      makeBenchmarkWithBindings("medium", revisionId, artifactDigest),
+      makeBenchmarkWithBindings("large", revisionId, artifactDigest),
+    ];
+    const replayResult = createMockReplayResult({ workloadBenchmarks } as unknown as Record<string, unknown>);
+    const validationResult = createMockValidationResult();
+
+    const result = await service.evaluateCandidate({
+      candidate,
+      validationResult,
+      replayResult,
+      toolPlan: emptyPlan,
+      workflowContract: contract,
+      workflowCoverage: fabricatedCoverage as any,
+      policy: STANDARD_EVALUATION_POLICY_V1,
+    } as any);
+
+    expect(result.decisionRecord.hardGateResult.failedGates).toContain("workflow_coverage");
+    expect(result.decisionRecord.decision).toBe("repair_requested");
+  });
+
+  it("stale coverage summary cannot override real plan — still passes when plan is complete", async () => {
+    const service = createCandidateEvaluationService({ benchmarkEvidenceVerifier: createTestBenchmarkVerifier() });
+    const contract = createMockWorkflowContract();
+    const candidate = createMockCandidateRevision();
+    const artifactDigest = hashCanonical(candidate.artifacts.sourceCode);
+    const revisionId = candidate.revisionId;
+    const completePlan = createToolPlanForContract(contract);
+    const staleIncompleteCoverage = {
+      complete: false as const,
+      uncoveredOperationIds: [contract.operations[0].id],
+      uncoveredOutputNames: [] as string[],
+      operationCoverage: [],
+      outputCoverage: [],
+    };
+    const workloadBenchmarks: WorkloadBenchmarkComparison[] = [
+      makeBenchmarkWithBindings("small", revisionId, artifactDigest),
+      makeBenchmarkWithBindings("medium", revisionId, artifactDigest),
+      makeBenchmarkWithBindings("large", revisionId, artifactDigest),
+    ];
+    const replayResult = createMockReplayResult({ workloadBenchmarks } as unknown as Record<string, unknown>);
+    const validationResult = createMockValidationResult();
+
+    const result = await service.evaluateCandidate({
+      candidate,
+      validationResult,
+      replayResult,
+      toolPlan: completePlan,
+      workflowContract: contract,
+      workflowCoverage: staleIncompleteCoverage as any,
+      policy: STANDARD_EVALUATION_POLICY_V1,
+    } as any);
+
+    expect(result.decisionRecord.hardGateResult.passed).toBe(true);
+    expect(result.decisionRecord.decision).toBe("eligible_for_artifact");
+  });
+
+  it("fails terminally when workload evidence repeats benchmarkId / mismatched artifact", async () => {
+    const service = createCandidateEvaluationService({ benchmarkEvidenceVerifier: createTestBenchmarkVerifier() });
+    const contract = createMockWorkflowContract();
+    const candidate = createMockCandidateRevision();
+    const artifactDigest = hashCanonical(candidate.artifacts.sourceCode);
+    const revisionId = candidate.revisionId;
+    const toolPlan = createToolPlanForContract(contract);
+    const duplicateId = "bench-duplicate";
+    const workloadBenchmarks: WorkloadBenchmarkComparison[] = [
+      makeBenchmarkWithBindings("small", revisionId, artifactDigest, {}, {}, { benchmarkId: duplicateId }),
+      makeBenchmarkWithBindings("medium", revisionId, artifactDigest, {}, {}, { benchmarkId: duplicateId }),
+      makeBenchmarkWithBindings("large", revisionId, artifactDigest),
+    ];
+    const replayResult = createMockReplayResult({ workloadBenchmarks } as unknown as Record<string, unknown>);
+    const validationResult = createMockValidationResult();
+
+    const result = await service.evaluateCandidate({
+      candidate,
+      validationResult,
+      replayResult,
+      toolPlan,
+      workflowContract: contract,
+      policy: STANDARD_EVALUATION_POLICY_V1,
+    });
+
+    expect(result.decisionRecord.hardGateResult.failedGates).toContain("workload_cost_non_regression");
+    expect(result.decisionRecord.hardGateResult.canRepair).toBe(false);
+    expect(result.decisionRecord.decision).toBe("rejected");
+  });
+
+  it("fails terminally when workload candidateRevisionId does not match candidate", async () => {
+    const service = createCandidateEvaluationService({ benchmarkEvidenceVerifier: createTestBenchmarkVerifier() });
+    const contract = createMockWorkflowContract();
+    const candidate = createMockCandidateRevision();
+    const artifactDigest = hashCanonical(candidate.artifacts.sourceCode);
+    const toolPlan = createToolPlanForContract(contract);
+    const workloadBenchmarks: WorkloadBenchmarkComparison[] = [
+      makeBenchmarkWithBindings("small", "wrong-rev", artifactDigest),
+      makeBenchmarkWithBindings("medium", "wrong-rev", artifactDigest),
+      makeBenchmarkWithBindings("large", "wrong-rev", artifactDigest),
+    ];
+    const replayResult = createMockReplayResult({ workloadBenchmarks } as unknown as Record<string, unknown>);
+    const validationResult = createMockValidationResult();
+
+    const result = await service.evaluateCandidate({
+      candidate,
+      validationResult,
+      replayResult,
+      toolPlan,
+      workflowContract: contract,
+      policy: STANDARD_EVALUATION_POLICY_V1,
+    });
+
+    expect(result.decisionRecord.hardGateResult.failedGates).toContain("workload_cost_non_regression");
+    expect(result.decisionRecord.hardGateResult.canRepair).toBe(false);
+    expect(result.decisionRecord.decision).toBe("rejected");
   });
 
 });

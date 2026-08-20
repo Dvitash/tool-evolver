@@ -9,7 +9,7 @@
 
 import fs from "node:fs";
 import process from "node:process";
-import { OpenAiCompatibleProvider, createCloudService } from "@tool-evolver/cloud";
+import { HmacBenchmarkEvidenceVerifier, OpenAiCompatibleProvider, createCloudService } from "@tool-evolver/cloud";
 
 function parseArgs(args: string[]): {
   port: number;
@@ -45,6 +45,14 @@ async function main(): Promise<void> {
     fs.mkdirSync(options.storageDir, { recursive: true });
   }
 
+  // Deterministic benchmark attestation verifier for E2E (secret never logged)
+  const e2eBenchmarkSecret =
+    process.env.E2E_BENCHMARK_SECRET ?? "e2e-deterministic-hmac-secret-32-bytes-long-2024!!";
+  const e2eBenchmarkVerifier = new HmacBenchmarkEvidenceVerifier({
+    issuer: "e2e-test-issuer",
+    keyId: "e2e-test-key-1",
+    secret: e2eBenchmarkSecret,
+  });
   const cloudService = createCloudService({
     config: {
       server: {
@@ -59,6 +67,7 @@ async function main(): Promise<void> {
         url: options.dbUrl ?? "memory://e2e-cloud-db",
       },
     },
+    benchmarkEvidenceVerifier: e2eBenchmarkVerifier,
   });
 
   // If mock inference URL is provided, register OpenAiCompatibleProvider in the model router

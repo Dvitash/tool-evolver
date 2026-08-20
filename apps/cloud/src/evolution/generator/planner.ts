@@ -308,7 +308,7 @@ export class CandidatePlanner {
       taskClass === "multi_step_workflow" ||
       classification.pattern.includes("->") ||
       classification.pattern.includes("chained") ||
-      (contract !== undefined && contract.operations.length > 1);
+      contract !== undefined;
 
     const targetType: "single_tool" | "workflow" = isMultiStep ? "workflow" : "single_tool";
 
@@ -909,7 +909,14 @@ export class CandidatePlanner {
         taskClass === "file_edit"
           ? "fs.writeFile"
           : "fs.readFile";
-      inputs.path = inputs.path || "./data.txt";
+      if (!inputs.path) {
+        const pathVar = variableInputs.find((v) => ["targetPaths","target_paths","targetPath","path","filePath","filePaths","paths"].includes(v.name) || v.name.toLowerCase().includes("path") || v.name.toLowerCase().includes("target"));
+        if (pathVar) {
+          inputs.path = `\${input.${pathVar.name}}` as unknown as string;
+        } else {
+          throw new Error("Missing required file path for file operation: no path variable or targetPaths found");
+        }
+      }
       inputs.toolClass = "filesystem";
     }
 
@@ -938,14 +945,23 @@ export class CandidatePlanner {
 
     for (let idx = 0; idx < sortedOps.length; idx++) {
       const op = sortedOps[idx]!;
-      const stepId = `step_${op.id}`;
-      const previousId = idx > 0 ? `step_${sortedOps[idx - 1]!.id}` : undefined;
+      // Per-origin composite profiles are kept on the originating operation as commandProfiles: string[]
+      // Planner executes one originating operation deterministically without displacing later commands.
+      // Batching same-origin profiles is handled via commandProfiles array in the single step's inputs;
+      // code-generator will emit sequential cmd.exec for each profile deterministically.
+
+      const previousId = steps.length > 0 ? steps[steps.length - 1]!.id : undefined;
       const dependsOn = previousId ? [previousId] : [];
 
       const { toolClass, action, service, inputs } = this.mapOperationToStepDetails(op, variableInputs, envelope);
 
+      const outputsForOp = contract.outputRequirements
+        .filter((req) => req.sourceOperationId === op.id)
+        .map((req) => req.name)
+        .sort();
+
       steps.push({
-        id: stepId,
+        id: `step_${op.id}`,
         name: op.name,
         description: `Execute ${op.name} (${op.id})`,
         toolClass,
@@ -955,6 +971,7 @@ export class CandidatePlanner {
         dependsOn,
         outputVar: `result_${op.id}`,
         coveredOperationIds: [op.id],
+        ...(outputsForOp.length > 0 ? { outputs: outputsForOp } : {}),
       });
     }
 
@@ -968,9 +985,32 @@ export class CandidatePlanner {
   ): { toolClass: string; action: string; service: WorkflowStep["service"]; inputs: Record<string, unknown> } {
     const inputs: Record<string, unknown> = {};
 
-    // Prefer explicit commandProfile
+    // Prefer explicit commandProfiles array (per-origin composite) with per-operation args evidence
+    // A composite `git status && git diff` stays on one operation as commandProfiles: string[]
+    // Later operations cannot consume those segments.
+    const profilesForMap = (op as unknown as { commandProfiles?: string[] }).commandProfiles;
+    if (profilesForMap && profilesForMap.length > 0) {
+      const profile = profilesForMap[0]!;
+      const [executable, ...profileArgs] = profile.trim().split(/\s+/);
+      const args = op.args && op.args.length > 0 ? [...op.args] : profileArgs;
+      return {
+        toolClass: op.toolClass || "command",
+        action: "cmd.exec",
+        service: "cmd",
+        inputs: {
+          command: executable,
+          args,
+          commandProfile: profile,
+          commandProfiles: [...profilesForMap],
+          toolClass: op.toolClass || "command",
+        },
+      };
+    }
+
+    // Fallback to legacy singular commandProfile (kept for compatibility)
     if (op.commandProfile) {
-      const [executable, ...args] = op.commandProfile.trim().split(/\s+/);
+      const [executable, ...profileArgs] = op.commandProfile.trim().split(/\s+/);
+      const args = op.args && op.args.length > 0 ? [...op.args] : profileArgs;
       return {
         toolClass: op.toolClass || "command",
         action: "cmd.exec",
@@ -987,28 +1027,122 @@ export class CandidatePlanner {
     const toolClassFromOp = op.toolClass || "compute";
     const lowerName = op.name.toLowerCase();
 
-    // File read / edit
+    const findFileVariable = (): VariableInputDefinition | undefined => {
+      const byLower = new Map(variableInputs.map((v) => [v.name.toLowerCase(), v] as const));
+      for (const cand of ["targetpaths", "target_paths", "targetpath", "path", "filepath", "filepaths", "paths"]) {
+        const found = byLower.get(cand);
+        if (found) return found;
+      }
+      return variableInputs.find((v) => v.name.toLowerCase().includes("path"));
+    };
+
+    // File read / edit - bind required targetPaths correctly for scalar and array, no fallback to ./data.txt
     if (toolClassFromOp === "file_read" || toolClassFromOp === "file_edit" || (toolClassFromOp as string) === "filesystem" || (toolClassFromOp as string) === "fs") {
       const isWrite = toolClassFromOp === "file_edit" || lowerName.includes("edit") || lowerName.includes("write") || lowerName.includes("file_edit");
+      const fileVar = findFileVariable();
+      let placeholder: string;
+      let isArray = false;
+      if (fileVar) {
+        placeholder = `\${input.${fileVar.name}}`;
+        isArray = fileVar.type === "array";
+      } else if (op.targetPaths && op.targetPaths.length > 0) {
+        placeholder = op.targetPaths.length === 1 ? op.targetPaths[0]! : `\${input.targetPaths}`;
+        isArray = op.targetPaths.length > 1;
+      } else if (op.filePath) {
+        placeholder = op.filePath;
+      } else {
+        const fallbackVar = variableInputs.find((v) => v.name.toLowerCase().includes("path")) ?? variableInputs.find((v) => v.name.toLowerCase() === "input") ?? variableInputs[0];
+        if (fallbackVar) {
+          placeholder = `\${input.${fallbackVar.name}}`;
+          isArray = fallbackVar.type === "array";
+        } else {
+          throw new Error(`Missing required file path for operation ${op.id} (${op.name}): no targetPaths, filePath, or path variable found`);
+        }
+      }
       if (isWrite) {
-        // Prefer variableInputs for path/content
-        const pathVar = variableInputs.find((v) => v.name === "path") ? "${input.path}" : "./data.txt";
-        const contentVar = variableInputs.find((v) => v.name === "content") ? "${input.content}" : "${input.input}";
-        inputs.path = pathVar;
-        inputs.content = contentVar;
+        const contentVar = variableInputs.find((v) => ["content", "data", "body", "text"].includes(v.name.toLowerCase()));
+        const contentPlaceholder = contentVar ? `\${input.${contentVar.name}}` : `\${input.content}`;
+        if (isArray) {
+          inputs.targetPaths = placeholder;
+          inputs.path = placeholder;
+        } else {
+          inputs.path = placeholder;
+          if (op.targetPaths) inputs.targetPaths = placeholder;
+        }
+        inputs.content = contentPlaceholder;
         inputs.toolClass = "filesystem";
         return { toolClass: "filesystem", action: "fs.writeFile", service: "fs", inputs };
       } else {
-        const pathVar = variableInputs.find((v) => v.name === "path") ? "${input.path}" : "./data.txt";
-        inputs.path = pathVar;
+        if (isArray) {
+          inputs.targetPaths = placeholder;
+          inputs.path = placeholder;
+        } else {
+          inputs.path = placeholder;
+        }
         inputs.toolClass = "filesystem";
         return { toolClass: "filesystem", action: "fs.readFile", service: "fs", inputs };
       }
     }
 
     if (toolClassFromOp === "search") {
-      inputs.query = variableInputs.find((v) => v.name === "query") ? "${input.query}" : "${input.input}";
-      return { toolClass: "search", action: "search.query", service: "compute", inputs };
+      // Prefer originating allowlisted command profile via early return above; otherwise use fs traversal with content filtering
+      const fileVar = findFileVariable();
+      const queryVar =
+        variableInputs.find((v) => ["query", "pattern", "searchquery", "search_query", "keyword", "term", "text", "q"].includes(v.name.toLowerCase())) ??
+        variableInputs.find((v) => v.name.toLowerCase().includes("query") || v.name.toLowerCase().includes("pattern"));
+      let searchPath: string;
+      let isSearchArray = false;
+      if (fileVar) {
+        searchPath = `\${input.${fileVar.name}}`;
+        isSearchArray = fileVar.type === "array";
+      } else if (op.targetPaths && op.targetPaths.length > 0) {
+        const expectsArray = variableInputs.some((v) => v.name.toLowerCase().includes("targetpaths") && v.type === "array");
+        if (op.targetPaths.length === 1 && !expectsArray) {
+          searchPath = op.targetPaths[0]!;
+        } else {
+          const targetVar = variableInputs.find((v) => v.name.toLowerCase().includes("targetpaths") || v.name.toLowerCase().includes("target")) ?? fileVar;
+          if (targetVar) {
+            searchPath = `\${input.${targetVar.name}}`;
+            isSearchArray = targetVar.type === "array";
+          } else {
+            searchPath = op.targetPaths.length === 1 ? op.targetPaths[0]! : `\${input.targetPaths}`;
+            isSearchArray = op.targetPaths.length > 1;
+          }
+        }
+      } else if (op.filePath) {
+        searchPath = op.filePath;
+      } else {
+        const fallbackVar = variableInputs.find((v) => v.name.toLowerCase().includes("path") || v.name.toLowerCase().includes("target"));
+        if (fallbackVar) {
+          searchPath = `\${input.${fallbackVar.name}}`;
+          isSearchArray = fallbackVar.type === "array";
+        } else {
+          throw new Error(`Missing required search path for operation ${op.id} (${op.name}): no targetPaths, filePath, or path variable found`);
+        }
+      }
+      if (!searchPath || (typeof searchPath === "string" && searchPath.trim() === "")) {
+        throw new Error(`Missing required search path for operation ${op.id}`);
+      }
+      const inputsSearch: Record<string, unknown> = { path: searchPath, recursive: true, toolClass: "search" };
+      if (queryVar) {
+        inputsSearch.query = `\${input.${queryVar.name}}`;
+        inputsSearch.pattern = `\${input.${queryVar.name}}`;
+      } else {
+        const fallbackQuery = variableInputs.find((v) => ["q", "query", "pattern"].includes(v.name.toLowerCase()));
+        if (fallbackQuery) {
+          inputsSearch.query = `\${input.${fallbackQuery.name}}`;
+          inputsSearch.pattern = `\${input.${fallbackQuery.name}}`;
+        } else {
+          const needsQuery = variableInputs.some((v) => ["query", "pattern", "searchquery"].includes(v.name.toLowerCase()));
+          if (needsQuery) throw new Error(`Missing required search query/pattern for operation ${op.id} (${op.name}): no query variable found`);
+        }
+      }
+      return {
+        toolClass: "search",
+        action: "fs.listDirectory",
+        service: "fs",
+        inputs: inputsSearch,
+      };
     }
 
     if (toolClassFromOp === "test_runner") {
@@ -1020,12 +1154,11 @@ export class CandidatePlanner {
     }
 
     if (toolClassFromOp === "vcs") {
-      // Fallback vcs without profile -> git status
       return { toolClass: "vcs", action: "cmd.exec", service: "cmd", inputs: { command: "git", args: ["status"], toolClass: "vcs" } };
     }
 
     if (toolClassFromOp === "network" || (toolClassFromOp as string) === "http" || (toolClassFromOp as string) === "api") {
-      inputs.url = variableInputs.find((v) => v.name === "url") ? "${input.url}" : "https://api.example.com";
+      inputs.url = variableInputs.some((v) => v.name === "url") ? "${input.url}" : "https://api.example.com";
       inputs.toolClass = "network";
       return { toolClass: "network", action: "net.fetch", service: "net", inputs };
     }
@@ -1034,19 +1167,40 @@ export class CandidatePlanner {
       return { toolClass: "command", action: "cmd.exec", service: "cmd", inputs: { command: "echo", args: ["hello"], toolClass: "command" } };
     }
 
-    // Fallback based on operation name
+    // Fallback based on operation name - also honor targetPaths and route search via supported brokers
     if (lowerName.includes("read") || lowerName.includes("fs.read")) {
-      inputs.path = "${input.path}";
+      const fileVar = findFileVariable();
+      const p = fileVar ? `\${input.${fileVar.name}}` : (op.filePath ?? op.targetPaths?.[0] ?? "${input.targetPaths}");
+      inputs.path = p;
+      if (op.targetPaths) inputs.targetPaths = p;
       return { toolClass: "filesystem", action: "fs.readFile", service: "fs", inputs };
     }
     if (lowerName.includes("edit") || lowerName.includes("write") || lowerName.includes("file_edit")) {
-      inputs.path = "${input.path}";
-      inputs.content = "${input.content}";
+      const fileVar = findFileVariable();
+      const p = fileVar ? `\${input.${fileVar.name}}` : (op.filePath ?? op.targetPaths?.[0] ?? "${input.targetPaths}");
+      const cVar = variableInputs.find((v) => v.name.toLowerCase() === "content");
+      const c = cVar ? `\${input.${cVar.name}}` : "${input.content}";
+      inputs.path = p;
+      inputs.content = c;
+      if (op.targetPaths) inputs.targetPaths = p;
       return { toolClass: "filesystem", action: "fs.writeFile", service: "fs", inputs };
     }
     if (lowerName.includes("search")) {
-      inputs.query = "${input.query}";
-      return { toolClass: "search", action: "search.query", service: "compute", inputs };
+      const fileVar = findFileVariable();
+      const queryVar = variableInputs.find((v) => v.name.toLowerCase() === "query");
+      let searchPath: string;
+      if (fileVar) {
+        searchPath = `\${input.${fileVar.name}}`;
+      } else if (queryVar) {
+        searchPath = `\${input.${queryVar.name}}`;
+      } else {
+        searchPath = ".";
+      }
+      const inputs: Record<string, unknown> = { path: searchPath, recursive: true, toolClass: "search" };
+      if (queryVar) {
+        inputs.query = `\${input.${queryVar.name}}`;
+      }
+      return { toolClass: "search", action: "fs.listDirectory", service: "fs", inputs };
     }
     if (lowerName.includes("test")) {
       return { toolClass: "test_runner", action: "cmd.exec", service: "cmd", inputs: { command: "pnpm", args: ["test"] } };
@@ -1064,7 +1218,6 @@ export class CandidatePlanner {
       return { toolClass: "network", action: "net.fetch", service: "net", inputs };
     }
 
-    // Generic compute fallback
     return { toolClass: toolClassFromOp, action: "compute.transform", service: "compute", inputs: { data: "${input.input}" } };
   }
 

@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { HistoricalReplayRunner } from "../../../src/evolution/replay/runner.js";
+import { ValidationSandbox } from "../../../src/evolution/testing/validation-sandbox.js";
+import { ReplayTraceComparator } from "../../../src/evolution/replay/comparator.js";
+import {
+  MODEL_COST_SCHEDULE_ID_V1,
+  calculateWeightedModelCost,
+} from "../../../src/evolution/replay/types.js";
 import type {
   ModelUsageMetrics,
   ReplayScenario,
   WorkloadBenchmarkComparison,
+  WorkloadBenchmarkEvidence,
 } from "../../../src/evolution/replay/types.js";
 import {
   CMD_RUN_CANDIDATE_SOURCE,
@@ -16,6 +23,23 @@ import {
 
 describe("HistoricalReplayRunner", () => {
   const runner = new HistoricalReplayRunner();
+
+  function makeEvidence(size: "small" | "medium" | "large", overrides: Partial<WorkloadBenchmarkEvidence> = {}): WorkloadBenchmarkEvidence {
+    const digest = size === "small" ? "a".repeat(64) : size === "medium" ? "b".repeat(64) : "c".repeat(64);
+    return {
+      benchmarkId: `bench-${size}`,
+      baselineRunId: `baseline-${size}`,
+      candidateRunId: `candidate-${size}`,
+      workloadInputDigest: digest,
+      candidateRevisionId: "rev_valid_01",
+      artifactDigest: "d".repeat(64),
+      modelProvider: "test-provider",
+      modelId: "test-model",
+      observedAt: "2026-08-20T12:00:00.000Z",
+      scheduleId: MODEL_COST_SCHEDULE_ID_V1,
+      ...overrides,
+    };
+  }
 
   describe("Candidate Execution Across Categories", () => {
     it("executes pure compute candidate in sandbox and verifies output invariants", async () => {
@@ -413,18 +437,17 @@ describe("HistoricalReplayRunner", () => {
       ...overrides,
     });
 
-    const calcCost = (m: ModelUsageMetrics): number =>
-      (m.inputTokens * 1 + m.outputTokens * 4 + m.cacheReadTokens * 0.25) / 1_000_000;
-
     const makeBenchmark = (
       workloadSize: "small" | "medium" | "large",
       baselineOverrides: Partial<ModelUsageMetrics> = {},
       candidateOverrides: Partial<ModelUsageMetrics> = {},
+      evidenceOverrides: Partial<WorkloadBenchmarkEvidence> = {},
     ): WorkloadBenchmarkComparison => {
       const baseline = makeMetrics({ ...baselineOverrides });
       const candidate = makeMetrics({ ...candidateOverrides, correct: true, redundantToolCalls: 0 });
-      const baselineCostUsd = calcCost(baseline);
-      const candidateCostUsd = calcCost(candidate);
+      const evidence = makeEvidence(workloadSize, evidenceOverrides);
+      const baselineCostUsd = calculateWeightedModelCost(baseline, evidence.scheduleId);
+      const candidateCostUsd = calculateWeightedModelCost(candidate, evidence.scheduleId);
       return {
         workloadSize,
         baseline,
@@ -435,6 +458,16 @@ describe("HistoricalReplayRunner", () => {
           baselineCostUsd === 0 ? 0 : ((candidateCostUsd - baselineCostUsd) / baselineCostUsd) * 100,
         correctnessPassed: candidate.correct,
         redundantVerificationCalls: candidate.redundantToolCalls,
+        benchmarkId: evidence.benchmarkId,
+        baselineRunId: evidence.baselineRunId,
+        candidateRunId: evidence.candidateRunId,
+        workloadInputDigest: evidence.workloadInputDigest,
+        candidateRevisionId: evidence.candidateRevisionId,
+        artifactDigest: evidence.artifactDigest,
+        modelProvider: evidence.modelProvider,
+        modelId: evidence.modelId,
+        observedAt: evidence.observedAt,
+        scheduleId: evidence.scheduleId,
       };
     };
 
@@ -484,14 +517,21 @@ describe("HistoricalReplayRunner", () => {
       expect(result.workloadBenchmarks![1]!.baseline.inputTokens).toBe(2000);
       expect(result.workloadBenchmarks![2]!.baseline.inputTokens).toBe(3000);
       expect(result.workloadBenchmarks![0]!.candidate.inputTokens).toBe(800);
+      // Evidence fields must be fully bound
+      expect(result.workloadBenchmarks![0]!.benchmarkId).toBe("bench-small");
+      expect(result.workloadBenchmarks![1]!.benchmarkId).toBe("bench-medium");
+      expect(result.workloadBenchmarks![2]!.benchmarkId).toBe("bench-large");
+      expect(result.workloadBenchmarks!.every(b => b.workloadInputDigest.length === 64)).toBe(true);
       // No extra fabrication: length stays 3
     });
 
-    it("scenario-derived metrics produce comparisons via workloadSize/baselineModelUsage and trace modelUsage", async () => {
+    it("scenario-derived metrics produce comparisons via workloadSize/baselineModelUsage, benchmarkEvidence and trace modelUsage", async () => {
       const candidate = createMockCandidateRevision(PURE_COMPUTE_CANDIDATE_SOURCE);
       const baselineSmall = makeMetrics({ inputTokens: 2000, outputTokens: 1000, wallTimeMs: 2000 });
       const baselineMedium = makeMetrics({ inputTokens: 4000, outputTokens: 2000, wallTimeMs: 3000 });
       const candidateUsage = makeMetrics({ inputTokens: 800, outputTokens: 400, wallTimeMs: 900, toolCalls: 2, redundantToolCalls: 0 });
+      const evidenceSmall = makeEvidence("small");
+      const evidenceMedium = makeEvidence("medium");
       const scenarios: ReplayScenario[] = [
         {
           id: "sc-derived-small",
@@ -512,6 +552,7 @@ describe("HistoricalReplayRunner", () => {
           },
           workloadSize: "small",
           baselineModelUsage: baselineSmall,
+          benchmarkEvidence: evidenceSmall,
         },
         {
           id: "sc-derived-medium",
@@ -532,11 +573,11 @@ describe("HistoricalReplayRunner", () => {
           },
           workloadSize: "medium",
           baselineModelUsage: baselineMedium,
+          benchmarkEvidence: evidenceMedium,
         },
       ];
 
       // Inject canonical trace.modelUsage via stubbed sandbox (explicit executor telemetry, no synthesis)
-      const { ValidationSandbox } = await import("../../../src/evolution/testing/validation-sandbox.js");
       const realSandbox = new ValidationSandbox();
       const stubSandbox = {
         executeCandidate: async (...args: Parameters<ValidationSandbox["executeCandidate"]>) => {
@@ -544,7 +585,6 @@ describe("HistoricalReplayRunner", () => {
           return { ...res, modelUsage: candidateUsage } as typeof res & { modelUsage: ModelUsageMetrics };
         },
       } as unknown as ValidationSandbox;
-      const { ReplayTraceComparator } = await import("../../../src/evolution/replay/comparator.js");
       const stubRunner = new HistoricalReplayRunner({ sandbox: stubSandbox, comparator: new ReplayTraceComparator() });
 
       const result = await stubRunner.runScenarios(candidate, scenarios, {});
@@ -562,7 +602,52 @@ describe("HistoricalReplayRunner", () => {
         expect(Number.isFinite(bench.candidateCostUsd)).toBe(true);
         expect(typeof bench.correctnessPassed).toBe("boolean");
         expect(typeof bench.redundantVerificationCalls).toBe("number");
+        // fully bound evidence
+        expect(bench.benchmarkId).toBeDefined();
+        expect(bench.workloadInputDigest).toMatch(/^[a-f0-9]{64}$/);
+        expect(bench.candidateRevisionId).toBe("rev_valid_01");
       }
+      // Check binding: candidateRevisionId same across
+      expect(result.workloadBenchmarks![0]!.candidateRevisionId).toBe(result.workloadBenchmarks![1]!.candidateRevisionId);
+    });
+
+    it("scenario-derived without explicit benchmarkEvidence yields no benchmark (tokens alone cannot)", async () => {
+      const candidate = createMockCandidateRevision(PURE_COMPUTE_CANDIDATE_SOURCE);
+      const baseline = makeMetrics({ inputTokens: 2000 });
+      const candidateUsage = makeMetrics({ inputTokens: 800 });
+      const scenarios: ReplayScenario[] = [
+        {
+          id: "sc-no-evidence",
+          name: "No Evidence",
+          description: "missing benchmarkEvidence",
+          type: "observed_episode",
+          evidenceEventIds: ["ev-01"],
+          input: { a: 1, b: 1 },
+          virtualState: {},
+          invariants: [],
+          allowedBrokerOperations: [],
+          baselineMetrics: {
+            stepCount: 2,
+            totalTokens: 100,
+            totalDurationMs: 300,
+            toolCallsCount: 2,
+            estimatedCostUsd: 0.0003,
+          },
+          workloadSize: "small",
+          baselineModelUsage: baseline,
+          // benchmarkEvidence absent -> should not derive
+        },
+      ];
+      const realSandbox = new ValidationSandbox();
+      const stubSandbox = {
+        executeCandidate: async (...args: Parameters<ValidationSandbox["executeCandidate"]>) => {
+          const res = await realSandbox.executeCandidate(...args);
+          return { ...res, modelUsage: candidateUsage } as typeof res & { modelUsage: ModelUsageMetrics };
+        },
+      } as unknown as ValidationSandbox;
+      const stubRunner = new HistoricalReplayRunner({ sandbox: stubSandbox, comparator: new ReplayTraceComparator() });
+      const result = await stubRunner.runScenarios(candidate, scenarios, {});
+      expect(result.workloadBenchmarks).toBeUndefined();
     });
 
     it("invalid rows fail closed (negative tokens)", async () => {
@@ -629,6 +714,39 @@ describe("HistoricalReplayRunner", () => {
       ).rejects.toThrow(/baselineCostUsd/);
     });
 
+    it("invalid rows fail closed (missing evidence fields)", async () => {
+      const candidate = createMockCandidateRevision(PURE_COMPUTE_CANDIDATE_SOURCE);
+      const scenarios: ReplayScenario[] = [
+        {
+          id: "sc-invalid-evidence",
+          name: "InvalidEvidence",
+          description: "missing evidence",
+          type: "observed_episode",
+          evidenceEventIds: ["ev-01"],
+          input: { a: 1, b: 1 },
+          virtualState: {},
+          invariants: [],
+          allowedBrokerOperations: [],
+          baselineMetrics: {
+            stepCount: 2,
+            totalTokens: 100,
+            totalDurationMs: 300,
+            toolCallsCount: 2,
+            estimatedCostUsd: 0.0003,
+          },
+        },
+      ];
+      const invalid = makeBenchmark("small");
+      // @ts-expect-error delete required field to test validation
+      delete (invalid as unknown as Record<string, unknown>).benchmarkId;
+
+      await expect(
+        runner.runScenarios(candidate, scenarios, {
+          workloadBenchmarks: [invalid],
+        } as unknown as { workloadBenchmarks: WorkloadBenchmarkComparison[] }),
+      ).rejects.toThrow(/benchmarkId/);
+    });
+
     it("duplicate rows fail closed within external", async () => {
       const candidate = createMockCandidateRevision(PURE_COMPUTE_CANDIDATE_SOURCE);
       const scenarios: ReplayScenario[] = [
@@ -665,6 +783,7 @@ describe("HistoricalReplayRunner", () => {
       const candidate = createMockCandidateRevision(PURE_COMPUTE_CANDIDATE_SOURCE);
       const baseline = makeMetrics({ inputTokens: 2000 });
       const candidateUsage = makeMetrics({ inputTokens: 800, outputTokens: 400, wallTimeMs: 900 });
+      const evidenceSmall = makeEvidence("small");
       const scenarios: ReplayScenario[] = [
         {
           id: "sc-dup-cross-01",
@@ -685,11 +804,11 @@ describe("HistoricalReplayRunner", () => {
           },
           workloadSize: "small",
           baselineModelUsage: baseline,
+          benchmarkEvidence: evidenceSmall,
         },
       ];
       const externalSmall = makeBenchmark("small", { inputTokens: 9999 }, { inputTokens: 1111 });
 
-      const { ValidationSandbox } = await import("../../../src/evolution/testing/validation-sandbox.js");
       const realSandbox = new ValidationSandbox();
       const stubSandbox = {
         executeCandidate: async (...args: Parameters<ValidationSandbox["executeCandidate"]>) => {
@@ -697,7 +816,6 @@ describe("HistoricalReplayRunner", () => {
           return { ...res, modelUsage: candidateUsage } as typeof res & { modelUsage: ModelUsageMetrics };
         },
       } as unknown as ValidationSandbox;
-      const { ReplayTraceComparator } = await import("../../../src/evolution/replay/comparator.js");
       const stubRunner = new HistoricalReplayRunner({ sandbox: stubSandbox, comparator: new ReplayTraceComparator() });
 
       await expect(

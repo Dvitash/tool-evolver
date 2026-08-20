@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { HardGateEvaluator } from "../../../src/evolution/evaluation/hard-gates.js";
+import { hashCanonical } from "@tool-evolver/contracts";
+import { MODEL_COST_SCHEDULE_ID_V1, calculateWeightedModelCost } from "../../../src/evolution/replay/types.js";
 import {
   STANDARD_EVALUATION_POLICY_V1,
   STRICT_EVALUATION_POLICY_V1,
@@ -701,4 +703,168 @@ describe("HardGateEvaluator (Non-Negotiable Hard Safety Gates)", () => {
       expect(result.gateResults.every((g) => g.passed)).toBe(true);
     });
   });
+  describe("Gate 10: Workload Cost Non-Regression (scheduleId)", () => {
+    function makeWorkloadBenchmark(
+      workloadSize: "small" | "medium" | "large",
+      candidateRevisionId: string,
+      artifactDigest: string,
+      overrides: Record<string, unknown> = {},
+    ) {
+      const baseline = {
+        inputTokens: 1000,
+        outputTokens: 500,
+        cacheReadTokens: 200,
+        turns: 2,
+        toolCalls: 3,
+        redundantToolCalls: 0,
+        wallTimeMs: 1200,
+        correct: true,
+      };
+      const candidate = {
+        inputTokens: 800,
+        outputTokens: 400,
+        cacheReadTokens: 100,
+        turns: 1,
+        toolCalls: 2,
+        redundantToolCalls: 0,
+        wallTimeMs: 1000,
+        correct: true,
+      };
+      const scheduleId = (overrides.scheduleId as string | undefined) ?? MODEL_COST_SCHEDULE_ID_V1;
+      const baselineCostUsd = calculateWeightedModelCost(baseline as any, scheduleId);
+      const candidateCostUsd = calculateWeightedModelCost(candidate as any, scheduleId);
+      const idx = workloadSize === "small" ? "1" : workloadSize === "medium" ? "2" : "3";
+      return {
+        workloadSize,
+        baseline,
+        candidate,
+        baselineCostUsd,
+        candidateCostUsd,
+        costDeltaPercent: baselineCostUsd > 0 ? ((candidateCostUsd - baselineCostUsd) / baselineCostUsd) * 100 : 0,
+        correctnessPassed: true,
+        redundantVerificationCalls: 0,
+        benchmarkId: `bench-` + workloadSize + `-` + idx,
+        baselineRunId: `base-run-` + workloadSize + `-` + idx,
+        candidateRunId: `cand-run-` + workloadSize + `-` + idx,
+        workloadInputDigest: hashCanonical(`workload-input-` + workloadSize + `-` + idx),
+        candidateRevisionId,
+        artifactDigest,
+        modelProvider: "openai",
+        modelId: "gpt-4o-mini",
+        observedAt: new Date().toISOString(),
+        scheduleId,
+        ...overrides,
+      } as any;
+    }
+
+    function createMockWorkflowContract(): any {
+      return {
+        version: 1,
+        operations: [
+          { id: "op-1", service: "fs", operation: "readFile", targetPath: "/workspace/src/index.ts" },
+          { id: "op-2", service: "fs", operation: "writeFile", targetPath: "/workspace/src/out.ts" },
+        ],
+        requiredInputs: [],
+        outputRequirements: [],
+        invariants: [],
+        expensiveOperationIds: [],
+        repeatedOperationIds: [],
+      };
+    }
+
+    function createToolPlanForContract(contract: any): any {
+      return {
+        workflowContract: contract,
+        steps: contract.operations.map((op: any) => ({ operationId: op.id, kind: op.service })),
+      };
+    }
+
+    it("known schedule recomputes correct costs (weighted formula preserved)", () => {
+      const baseline: any = { inputTokens: 1_000_000, outputTokens: 500_000, cacheReadTokens: 2_000_000, turns: 5, toolCalls: 6, redundantToolCalls: 0, wallTimeMs: 3000, correct: true };
+      const cost = calculateWeightedModelCost(baseline, MODEL_COST_SCHEDULE_ID_V1);
+      // (1M*1 + 500k*4 + 2M*0.25)/1M = 3.5
+      expect(cost).toBe(3.5);
+      expect(cost).toBeCloseTo(3.5, 10);
+    });
+
+    it("terminally rejects unknown scheduleId", () => {
+      const contract = createMockWorkflowContract();
+      const candidate = createMockCandidateRevision({ revisionId: "rev-123" } as any);
+      const validationResult = createMockValidationResult();
+      const artifactDigest = hashCanonical(candidate.artifacts.sourceCode);
+      const plan = createToolPlanForContract(contract);
+      const bad: any = { ...makeWorkloadBenchmark("small", "rev-123", artifactDigest), scheduleId: "unknown-schedule-v999", benchmarkId: "bench-unknown", baselineRunId: "base-unknown", candidateRunId: "cand-unknown", workloadInputDigest: "f".repeat(64) };
+      const benchmarks = [bad, makeWorkloadBenchmark("medium", "rev-123", artifactDigest), makeWorkloadBenchmark("large", "rev-123", artifactDigest)];
+      const replayResult = createMockReplayResult({ workloadBenchmarks: benchmarks } as any);
+      const result = evaluator.evaluate({
+        manifest: candidate.artifacts.manifest,
+        sourceCode: candidate.artifacts.sourceCode,
+        requiredCapabilities: candidate.artifacts.capabilities,
+        validationResult,
+        replayResult,
+        policy,
+        workflowContract: contract,
+        toolPlan: plan,
+        candidateRevisionId: "rev-123",
+        artifactDigest,
+      } as any);
+      expect(result.passed).toBe(false);
+      expect(result.failedGates).toContain("workload_cost_non_regression");
+      expect(result.canRepair).toBe(false);
+    });
+
+    it("all-zero/custom prices cannot pass (zero-price forgery impossible)", () => {
+      const contract = createMockWorkflowContract();
+      const candidate = createMockCandidateRevision({ revisionId: "rev-123" } as any);
+      const validationResult = createMockValidationResult();
+      const artifactDigest = hashCanonical(candidate.artifacts.sourceCode);
+      const plan = createToolPlanForContract(contract);
+      const bm: any = makeWorkloadBenchmark("small", "rev-123", artifactDigest);
+      bm.baselineCostUsd = 0;
+      bm.candidateCostUsd = 0;
+      const benchmarks = [bm, makeWorkloadBenchmark("medium", "rev-123", artifactDigest), makeWorkloadBenchmark("large", "rev-123", artifactDigest)];
+      const replayResult = createMockReplayResult({ workloadBenchmarks: benchmarks } as any);
+      const result = evaluator.evaluate({
+        manifest: candidate.artifacts.manifest,
+        sourceCode: candidate.artifacts.sourceCode,
+        requiredCapabilities: candidate.artifacts.capabilities,
+        validationResult,
+        replayResult,
+        policy,
+        workflowContract: contract,
+        toolPlan: plan,
+        candidateRevisionId: "rev-123",
+        artifactDigest,
+      } as any);
+      expect(result.passed).toBe(false);
+      expect(result.failedGates).toContain("workload_cost_non_regression");
+    });
+
+    it("fails when scheduleId missing", () => {
+      const contract = createMockWorkflowContract();
+      const candidate = createMockCandidateRevision({ revisionId: "rev-123" } as any);
+      const validationResult = createMockValidationResult();
+      const artifactDigest = hashCanonical(candidate.artifacts.sourceCode);
+      const plan = createToolPlanForContract(contract);
+      const bm: any = makeWorkloadBenchmark("small", "rev-123", artifactDigest);
+      delete bm.scheduleId;
+      const benchmarks = [bm, makeWorkloadBenchmark("medium", "rev-123", artifactDigest), makeWorkloadBenchmark("large", "rev-123", artifactDigest)];
+      const replayResult = createMockReplayResult({ workloadBenchmarks: benchmarks } as any);
+      const result = evaluator.evaluate({
+        manifest: candidate.artifacts.manifest,
+        sourceCode: candidate.artifacts.sourceCode,
+        requiredCapabilities: candidate.artifacts.capabilities,
+        validationResult,
+        replayResult,
+        policy,
+        workflowContract: contract,
+        toolPlan: plan,
+        candidateRevisionId: "rev-123",
+        artifactDigest,
+      } as any);
+      expect(result.passed).toBe(false);
+      expect(result.failedGates).toContain("workload_cost_non_regression");
+    });
+  });
+
 });
