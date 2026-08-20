@@ -1331,9 +1331,9 @@ def production_report(rows: list, prices: dict) -> tuple[str, str]:
     kept = primary_rows(rows)
     excluded = [r for r in rows if row_excluded(r)[0]]
     metrics = [
-        "bashCalls", "realToolCalls", "turns", "wallSeconds", "inputTokens",
-        "outputTokens", "cacheReadTokens", "totalObservedTokens",
-        "costDollars", "firstCacheReadTokens",
+        "bashCalls", "realToolCalls", "toolErrors", "turns", "wallSeconds",
+        "inputTokens", "outputTokens", "cacheReadTokens",
+        "totalObservedTokens", "costDollars", "firstCacheReadTokens",
     ]
     # Detect per-workload filtered input to avoid empty sections
     distinct_workloads = sorted({r.get("workload") for r in kept if r.get("workload") is not None})
@@ -1375,10 +1375,13 @@ def production_report(rows: list, prices: dict) -> tuple[str, str]:
     lines.append("")
     lines.append("## Aggregate by cell")
     lines.append(
-        "| cell | n | adopt | wilson_lo | wilson_hi | bash_mean | cache_mean | "
-        "firstCache_mean | total_mean | cost_mean | cost_median | cost_iqr | cost_sd |"
+        "| cell | n | attempt | adopt | failed_calls | wilson_lo | wilson_hi | "
+        "bash_mean | errors_mean | cache_mean | firstCache_mean | total_mean | "
+        "cost_mean | cost_median | cost_iqr | cost_sd |"
     )
-    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    lines.append(
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+    )
 
     def cell_rows(cell, subset=None):
         src = subset if subset is not None else kept
@@ -1392,16 +1395,26 @@ def production_report(rows: list, prices: dict) -> tuple[str, str]:
         if n == 0:
             continue
         adopt = sum(1 for r in rs if (r.get("metrics") or {}).get("evolvedCalls", 0) > 0)
+        attempts = sum(
+            1 for r in rs
+            if (r.get("metrics") or {}).get("evolvedAttempts", 0) > 0
+        )
+        failed_calls = sum(
+            (r.get("metrics") or {}).get("evolvedFailures", 0) for r in rs
+        )
         lo, hi = wilson_interval(adopt, n)
         bash = metric_stats(cohort_metric_values(rs, "bashCalls"))
+        errors = metric_stats(cohort_metric_values(rs, "toolErrors"))
         cache = metric_stats(cohort_metric_values(rs, "cacheReadTokens"))
         first = metric_stats(cohort_metric_values(rs, "firstCacheReadTokens"))
         total = metric_stats(cohort_metric_values(rs, "totalObservedTokens"))
         cost = metric_stats(cohort_metric_values(rs, "costDollars"))
         lines.append(
-            f"| {cell} | {n} | {adopt}/{n} | {_fmt_num(lo, 3)} | {_fmt_num(hi, 3)} | "
-            f"{_fmt_num(bash['mean'])} | {_fmt_num(cache['mean'], 1)} | "
-            f"{_fmt_num(first['mean'], 1)} | {_fmt_num(total['mean'], 1)} | {_fmt_num(cost['mean'], 4)} | "
+            f"| {cell} | {n} | {attempts}/{n} | {adopt}/{n} | "
+            f"{failed_calls} | {_fmt_num(lo, 3)} | {_fmt_num(hi, 3)} | "
+            f"{_fmt_num(bash['mean'])} | {_fmt_num(errors['mean'])} | "
+            f"{_fmt_num(cache['mean'], 1)} | {_fmt_num(first['mean'], 1)} | "
+            f"{_fmt_num(total['mean'], 1)} | {_fmt_num(cost['mean'], 4)} | "
             f"{_fmt_num(cost['median'], 4)} | {_fmt_num(cost['iqr'], 4)} | "
             f"{_fmt_num(cost['sd'], 4)} |"
         )
