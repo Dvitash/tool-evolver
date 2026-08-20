@@ -434,4 +434,69 @@ describe("WorkflowContract - Deterministic End-to-End Workflow Retention", () =>
       }
     }
   });
+  it("should bind operations from one deterministic representative episode for five identical 11-command sessions", async () => {
+    const segmenter = new EpisodeSegmenter();
+    const clusterer = new StructuralClusterer();
+    const classifier = new OpportunityClassifier();
+    const t0 = new Date("2026-08-20T10:00:00.000Z").getTime();
+    const ts = (offsetMs: number) => new Date(t0 + offsetMs).toISOString();
+    const gitCommands = [
+      "git log --oneline -10",
+      "git status --porcelain",
+      "git diff --stat",
+      "git branch --all",
+      "git rev-parse HEAD",
+    ];
+    const findCommands = [
+      "find ./src -name \"*.ts\" -type f",
+      "find ./src -name \"*.js\" -type f",
+      "find ./tests -name \"*.spec.ts\" -type f",
+      "find ./apps -name \"*.json\" -type f",
+      "find ./packages -name \"*.md\" -type f",
+      "find . -maxdepth 2 -name \"README.md\"",
+    ];
+    const allCommands = [...gitCommands, ...findCommands];
+    function makeSessionEvents(sessionId: string, sessionIdx: number) {
+      const base = sessionIdx * 200_000;
+      return allCommands.map((cmd, idx) =>
+        createCommandExecEvent({
+          eventId: `rep_${sessionId}_${idx}`,
+          sessionId,
+          command: cmd,
+          timestamp: ts(base + idx * 1000),
+          causalSequence: idx + 1,
+        }),
+      );
+    }
+    const sessions = ["sess-01", "sess-02", "sess-03", "sess-04", "sess-05"];
+    const allEvents = sessions.flatMap((sid, idx) => makeSessionEvents(sid, idx));
+    const episodes = segmenter.segmentEvents(allEvents);
+    expect(episodes.length).toBe(5);
+    const clusters = clusterer.clusterEpisodes(episodes);
+    expect(clusters.length).toBe(1);
+    const cluster = clusters[0]!;
+    expect(cluster.representativeSignature.operationSequence.length).toBe(11);
+    const classification = await classifier.classifyOpportunity("tenant-test", cluster, "repeated_pattern");
+    const contract = extractWorkflowContract(cluster, allEvents, classification);
+    expect(contract.operations.length).toBe(11);
+    const profiles = contract.operations.map((op) => op.commandProfile!);
+    expect(profiles[0]).toContain("log");
+    expect(profiles[1]).toContain("status");
+    expect(profiles[2]).toContain("diff");
+    expect(profiles[3]).toContain("branch");
+    expect(profiles[4]).toContain("rev-parse");
+    const flat = contract.operations.flatMap((op) => op.commandProfiles ?? (op.commandProfile ? [op.commandProfile] : []));
+    const findProfiles = flat.filter((p) => p.startsWith("find"));
+    expect(findProfiles.length).toBe(6);
+    expect(new Set(findProfiles).size).toBe(6);
+    expect(profiles.slice(0, 5).every((p) => p.includes("log"))).toBe(false);
+    const contract2 = extractWorkflowContract(cluster, allEvents, classification);
+    expect(contract2).toEqual(contract);
+    const shuffled = [...allEvents].sort(() => Math.random() - 0.5);
+    const contractShuffled = extractWorkflowContract(cluster, shuffled, classification);
+    expect(contractShuffled).toEqual(contract);
+    const reversed = [...allEvents].reverse();
+    const contractReversed = extractWorkflowContract(cluster, reversed, classification);
+    expect(contractReversed).toEqual(contract);
+  });
 });

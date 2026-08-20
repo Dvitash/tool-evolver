@@ -537,4 +537,125 @@ describe("OpportunityDetectionService (End-to-End)", () => {
     );
     expect(outboxRes.rows).toHaveLength(1);
   });
+
+  it("should bind workflow contract to one representative full session for five identical 11-command sessions with distinct command sequence", async () => {
+    const service = createOpportunityDetectionService({
+      triggers: { minOccurrencesNormal: 3 },
+    });
+
+    // 11 distinct commands ensuring per-operation binding is verifiable
+    const distinctCommands = [
+      "git log --oneline -5",
+      "git status --porcelain",
+      "find src -type f -name *.ts",
+      "grep -r TODO src",
+      "pnpm install",
+      "pnpm build",
+      "pnpm test",
+      "git diff --stat",
+      "ls -la",
+      "cat README.md",
+      "npm run lint",
+    ];
+
+    const baseTime = Date.now();
+    const makeSessionEvents = (sessionIdx: number) => {
+      const sessionId = `sess-rep-${String(sessionIdx).padStart(2, "0")}`;
+      // Use distinct timestamps per session to avoid cross-session sorting mingling, but same relative ordering within session
+      return distinctCommands.map((cmd, cmdIdx) =>
+        createCommandExecEvent({
+          eventId: `rep${sessionIdx}_cmd${String(cmdIdx).padStart(2, "0")}`,
+          sessionId,
+          command: cmd,
+          timestamp: new Date(baseTime + sessionIdx * 10000 + cmdIdx * 100).toISOString(),
+          causalSequence: cmdIdx + 1,
+        }),
+      );
+    };
+
+    const events = [
+      ...makeSessionEvents(1),
+      ...makeSessionEvents(2),
+      ...makeSessionEvents(3),
+      ...makeSessionEvents(4),
+      ...makeSessionEvents(5),
+    ];
+
+    const result = await service.detectOpportunities({
+      accountId: "acct-1",
+      workspaceId: "ws-1",
+      events,
+    });
+
+    expect(result.clusters).toHaveLength(1);
+    expect(result.episodes).toHaveLength(5);
+    expect(result.eligibleCount).toBe(1);
+    expect(result.opportunities).toHaveLength(1);
+    const opp = result.opportunities[0]!;
+    expect(opp.occurrenceCount).toBe(5);
+    expect(opp.distinctSessionCount).toBe(5);
+    // evidenceEventIds still contains all 55 events across 5 sessions
+    expect(opp.evidenceEventIds).toHaveLength(55);
+
+    const contract = opp.classification.workflowContract!;
+    expect(contract.version).toBe(1);
+    expect(contract.operations).toHaveLength(11);
+
+    // Contract must match one representative full session (lexicographically smallest sess-rep-01), not cross-session duplicates
+    // First five operations should be distinct (git log vs git status vs find vs grep vs pnpm install), not five copies of git log
+    const firstProfile = contract.operations[0]!.commandProfile ?? "";
+    const secondProfile = contract.operations[1]!.commandProfile ?? "";
+    const thirdProfile = contract.operations[2]!.commandProfile ?? "";
+    // Ensure distinct binding
+    expect(firstProfile).toMatch(/git log/);
+    expect(secondProfile).toMatch(/git status/);
+    expect(thirdProfile).toMatch(/find/);
+    // Ensure first five are not all identical
+    const firstFive = contract.operations.slice(0, 5).map((o) => o.commandProfile);
+    const uniqueFirstFive = new Set(firstFive);
+    expect(uniqueFirstFive.size).toBe(5);
+
+    // Full ordered sequence must correspond to distinctCommands in representative session order
+    // Normalized profiles preserve executable and flags; check that each operation's profile contains expected executable token
+    const expectedTokens = ["git", "git", "find", "grep", "pnpm", "pnpm", "pnpm", "git", "ls", "cat", "npm"];
+    for (let i = 0; i < expectedTokens.length; i++) {
+      const profile = contract.operations[i]!.commandProfile ?? "";
+      expect(profile).toMatch(new RegExp(`^${expectedTokens[i]}(\\s|$)`));
+    }
+
+    // Ensure per-operation composite profiles retained and not flattened globally
+    for (const op of contract.operations) {
+      if (op.commandProfiles) {
+        expect(op.commandProfiles.length).toBeGreaterThanOrEqual(1);
+      }
+    }
+
+    // Deterministic across repeated detection
+    const result2 = await service.detectOpportunities({
+      accountId: "acct-1",
+      workspaceId: "ws-1",
+      events: [...events].reverse(),
+    });
+    expect(result2.opportunities[0]!.classification.workflowContract).toEqual(contract);
+
+    // Persisted contract also matches representative (verify via repository round-trip)
+    const env = await createTestOpportunityEnvironment();
+    const persistedService = createOpportunityDetectionService({ pool: env.pool });
+    const persistedResult = await persistedService.detectOpportunities({
+      accountId: TEST_ACCOUNT_ID,
+      workspaceId: TEST_WORKSPACE_ID,
+      events,
+    });
+    const persistedOpp = persistedResult.opportunities[0]!;
+    expect(persistedOpp.occurrenceCount).toBe(5);
+    const persistedContract = persistedOpp.classification.workflowContract!;
+    expect(persistedContract.operations).toHaveLength(11);
+    expect(persistedContract.operations.map((o) => o.commandProfile)).toEqual(
+      contract.operations.map((o) => o.commandProfile),
+    );
+    // Fetch from DB and verify persistence
+    const fetched = await persistedService.getOpportunityById(TEST_TENANT, persistedOpp.id);
+    expect(fetched?.classification.workflowContract).toEqual(persistedContract);
+  });
+
 });

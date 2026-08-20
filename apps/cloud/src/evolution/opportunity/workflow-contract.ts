@@ -40,6 +40,23 @@ function sortEventsDeterministically(events: NormalizedSessionEvent[]): Normaliz
   });
 }
 
+function selectRepresentativeEpisode(
+  cluster: WorkflowCluster,
+): WorkflowCluster["episodes"][number] | undefined {
+  if (!cluster.episodes || cluster.episodes.length === 0) return undefined;
+  const sorted = [...cluster.episodes].sort((a, b) => {
+    const sa = a.sessionId.localeCompare(b.sessionId);
+    if (sa !== 0) return sa;
+    const ida = a.id.localeCompare(b.id);
+    if (ida !== 0) return ida;
+    const ta = Date.parse(a.startedAt) || 0;
+    const tb = Date.parse(b.startedAt) || 0;
+    if (ta !== tb) return ta - tb;
+    return a.turnIndex - b.turnIndex;
+  });
+  return sorted[0];
+}
+
 function isCommandOperation(op: WorkflowOperation): boolean {
   const lower = op.name.toLowerCase();
   const tc = op.toolClass;
@@ -84,8 +101,29 @@ export function extractWorkflowContract(
   const opSeq: string[] = sig.operationSequence ?? [];
   const toolClasses: ToolClass[] = sig.toolClasses ?? [];
 
-  // Deterministically ordered events for evidence binding
-  const orderedEvents = sortEventsDeterministically(events);
+  // Deterministically ordered events for evidence binding - filter to representative episode/session
+  // to prevent cross-session duplicate binding (e.g., 5 identical sessions with 11 commands should bind 11 operations to 1 session, not 5 copies of first commands).
+  const orderedEventsAll = sortEventsDeterministically(events);
+  let orderedEvents: NormalizedSessionEvent[] = orderedEventsAll;
+  const repEpisode = selectRepresentativeEpisode(cluster);
+  if (repEpisode) {
+    const repIds = new Set(repEpisode.events.map((e) => e.eventId));
+    let filtered = orderedEventsAll.filter((e) => repIds.has(e.eventId));
+    if (filtered.length === 0) {
+      filtered = orderedEventsAll.filter((e) => e.sessionId === repEpisode.sessionId);
+    }
+    if (filtered.length === 0 && repEpisode.events.length > 0) {
+      filtered = sortEventsDeterministically([...repEpisode.events]);
+    }
+    if (filtered.length > 0) {
+      orderedEvents = filtered;
+    }
+  } else if (cluster.episodes.length > 0) {
+    const fallback = [...cluster.episodes].sort((a, b) => a.sessionId.localeCompare(b.sessionId))[0]!;
+    const repIds2 = new Set(fallback.events.map((e) => e.eventId));
+    const filtered2 = orderedEventsAll.filter((e) => repIds2.has(e.eventId));
+    if (filtered2.length > 0) orderedEvents = filtered2;
+  }
 
   // Build per-event evidence queues in causal order
 

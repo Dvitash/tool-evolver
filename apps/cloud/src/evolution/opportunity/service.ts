@@ -171,7 +171,29 @@ export class OpportunityDetectionService {
       // 10. Workflow Contract Extraction (deterministic, JSON-safe, version 1)
       // Persisted as classification.workflowContract; hashes incorporate enriched classification
       // via the existing canonical hash path (no second hash).
-      const workflowEvents = events.length > 0 ? events : cluster.episodes.flatMap((e) => e.events);
+      // Supply extractor with deterministic representative episode's events to prevent cross-session duplicate binding.
+      // Do not pre-flatten all events losing episode membership; filter to representative session/event IDs.
+      const sortedEpisodes = [...cluster.episodes].sort((a, b) => {
+        const sa = a.sessionId.localeCompare(b.sessionId);
+        if (sa !== 0) return sa;
+        const ida = a.id.localeCompare(b.id);
+        if (ida !== 0) return ida;
+        return Date.parse(a.startedAt) - Date.parse(b.startedAt);
+      });
+      const representativeEpisode = sortedEpisodes[0];
+      let workflowEvents: typeof events = [];
+      if (representativeEpisode) {
+        const repIds = new Set(representativeEpisode.events.map((e) => e.eventId));
+        workflowEvents = events.filter((e) => repIds.has(e.eventId));
+        if (workflowEvents.length === 0) {
+          workflowEvents = events.filter((e) => e.sessionId === representativeEpisode.sessionId);
+        }
+        if (workflowEvents.length === 0) {
+          workflowEvents = [...representativeEpisode.events] as unknown as typeof events;
+        }
+      } else {
+        workflowEvents = events.length > 0 ? events : cluster.episodes.flatMap((e) => e.events) as unknown as typeof events;
+      }
       classification.workflowContract = extractWorkflowContract(cluster, workflowEvents, classification);
 
       // 11. Derive deterministic idempotency key and opportunityId (enriched classification incorporated)
