@@ -29,6 +29,14 @@ const SHELL_BUILTINS = new Set([
   "false",
 ]);
 
+const COMMANDS_REQUIRING_GLOB_ENUMERATION: Record<string, true> = {
+  cat: true,
+  grep: true,
+  head: true,
+  tail: true,
+  wc: true,
+};
+
 /**
  * Maps required broker operations and workflow steps to minimal CapabilityManifests.
  */
@@ -236,6 +244,16 @@ export class CapabilityMapper {
             }
             if (!cmdCap.allowedCommands.includes(segment)) {
               cmdCap.allowedCommands.push(segment);
+            }
+            if (
+              COMMANDS_REQUIRING_GLOB_ENUMERATION[binary] &&
+              ["*", "?", "["].some((marker) => segment.includes(marker)) &&
+              !cmdCap.allowedBinaries.includes("find")
+            ) {
+              // Command broker args are execFile-style literals. `find` is the
+              // minimal non-shell helper for enumerating observed wildcard
+              // file operands before passing concrete paths to wc/grep/etc.
+              cmdCap.allowedBinaries.push("find");
             }
           }
         }

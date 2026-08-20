@@ -249,6 +249,7 @@ export class StaticAnalyzer {
       // Detect broker calls
       if (ts.isCallExpression(node)) {
         this.inspectPotentialBrokerCall(node, sourceFile, brokerCalls);
+        this.inspectLiteralCommandBinary(node, sourceFile, pos, effectiveCaps, findings);
         this.inspectLiteralCommandGlobs(node, sourceFile, pos, findings);
       }
 
@@ -392,6 +393,44 @@ export class StaticAnalyzer {
       fixHint:
         "Enumerate concrete file paths before execution, or use an allowed command " +
         "that interprets its own pattern argument (for example, find -name).",
+    });
+  }
+
+  /**
+   * Literal executables must stay inside the synthesized command allowlist.
+   */
+  private inspectLiteralCommandBinary(
+    node: ts.CallExpression,
+    sourceFile: ts.SourceFile,
+    pos: { line: number; column: number },
+    capabilities: Partial<CapabilityManifest> | undefined,
+    findings: StaticAnalysisFinding[],
+  ): void {
+    const callee = node.expression.getText(sourceFile);
+    if (!/(?:context\.)?broker\.cmd\.exec$/.test(callee)) return;
+
+    const commandNode = node.arguments[0];
+    const commandCapability = capabilities?.command;
+    if (
+      !commandNode ||
+      !ts.isStringLiteralLike(commandNode) ||
+      !commandCapability ||
+      commandCapability.allowShellExecution ||
+      !commandCapability.allowedBinaries?.length ||
+      commandCapability.allowedBinaries.includes(commandNode.text)
+    ) {
+      return;
+    }
+
+    findings.push({
+      severity: "error",
+      category: "undeclared_capability",
+      message:
+        `broker.cmd.exec executable '${commandNode.text}' is not listed in ` +
+        "command.allowedBinaries.",
+      location: pos,
+      fixHint:
+        "Use an allowed executable or add the required binary during capability mapping.",
     });
   }
 

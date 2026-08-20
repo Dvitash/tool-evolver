@@ -594,6 +594,28 @@ describe("StaticAnalyzer (AST & Security Analysis)", () => {
       );
     });
 
+    it("should reject literal executables outside command allowedBinaries", () => {
+      const shellCode = `
+        import { defineTool } from "@tool-evolver/runtime";
+        export default defineTool(async (context) => {
+          await context.broker.cmd.exec("sh", ["-c", "wc -l module_*.txt"]);
+          return { success: true };
+        });
+      `;
+      const manifest = createMockManifest();
+      manifest.capabilities!.command.allowedBinaries = ["git", "grep", "wc"];
+      manifest.capabilities!.command.allowedCommands = ["git status --porcelain"];
+
+      const findings = analyzer.analyze(shellCode, manifest, manifest.capabilities);
+      const binaryFinding = findings.find(
+        (finding) =>
+          finding.category === "undeclared_capability" &&
+          finding.message.includes("executable 'sh'"),
+      );
+      expect(binaryFinding).toBeDefined();
+      expect(binaryFinding?.severity).toBe("error");
+    });
+
     it("should warn on top-level mutable collections accumulating state across runs", () => {
       const leakCode = `
         import { defineTool } from "@tool-evolver/runtime";

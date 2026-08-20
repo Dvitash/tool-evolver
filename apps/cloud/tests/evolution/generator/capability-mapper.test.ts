@@ -192,6 +192,34 @@ describe("CapabilityMapper composite command derivation", () => {
     );
   });
 
+  it("allows find when literal file globs require non-shell enumeration", () => {
+    const mapper = new CapabilityMapper();
+    const steps: WorkflowStep[] = [
+      {
+        id: "step_glob",
+        name: "Audit modules",
+        toolClass: "command",
+        action: "cmd.exec",
+        service: "cmd",
+        inputs: {
+          command: "wc",
+          args: ["-l", "module_*.txt"],
+          commandProfiles: [
+            "wc -l module_*.txt",
+            'grep -o "TODO" module_*.txt',
+          ],
+        },
+        dependsOn: [],
+      },
+    ];
+
+    const manifest = mapper.mapRequiredCapabilities(steps);
+
+    expect(manifest.command.allowedBinaries).toEqual(
+      expect.arrayContaining(["wc", "grep", "find"]),
+    );
+  });
+
   it("skips shell builtin segments when deriving capabilities", () => {
     const mapper = new CapabilityMapper();
     const steps: WorkflowStep[] = [
