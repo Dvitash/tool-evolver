@@ -9,6 +9,7 @@ import { runMigrations } from "../../db/migrations.js";
 import type { InferenceService } from "../../models/service.js";
 import { type TenantContext, TenantGuard } from "../../tenant.js";
 import { OpportunityClassifier } from "./classifier.js";
+import { extractWorkflowContract } from "./workflow-contract.js";
 import { StructuralClusterer } from "./clustering.js";
 import { CoverageEngine } from "./coverage.js";
 import { EpisodeSegmenter } from "./episode.js";
@@ -149,29 +150,7 @@ export class OpportunityDetectionService {
         status = "eligible";
       }
 
-      // 9. Derive deterministic idempotency key and opportunityId
-      const idempotencyKey = `opp_ik_${hashCanonicalContent(
-        {
-          workspaceId,
-          structuralHash: cluster.structuralHash,
-          triggerType: triggerResult.triggerType,
-          triggerReason: triggerResult.reason,
-          evidenceEventIds: [...cluster.evidenceEventIds].sort(),
-        },
-        { prefix: false },
-      )}`;
-
-      const opportunityId = `opp_${hashCanonicalContent(
-        {
-          workspaceId,
-          structuralHash: cluster.structuralHash,
-          triggerReason: triggerResult.reason,
-          idempotencyKey,
-        },
-        { prefix: false },
-      ).slice(0, 32)}`;
-
-      // 10. Intent Classification & Summarization (LLM + Heuristic Fallback)
+      // 9. Intent Classification & Summarization (LLM + Heuristic Fallback)
       const classification = await this.classifier.classifyOpportunity(
         accountId,
         cluster,
@@ -189,7 +168,36 @@ export class OpportunityDetectionService {
         ).replace(/^_+|_+$/g, "")}`;
       }
 
-      // 11. Construct OpportunityDetection domain entity
+      // 10. Workflow Contract Extraction (deterministic, JSON-safe, version 1)
+      // Persisted as classification.workflowContract; hashes incorporate enriched classification
+      // via the existing canonical hash path (no second hash).
+      const workflowEvents = events.length > 0 ? events : cluster.episodes.flatMap((e) => e.events);
+      classification.workflowContract = extractWorkflowContract(cluster, workflowEvents, classification);
+
+      // 11. Derive deterministic idempotency key and opportunityId (enriched classification incorporated)
+      const idempotencyKey = `opp_ik_${hashCanonicalContent(
+        {
+          workspaceId,
+          structuralHash: cluster.structuralHash,
+          triggerType: triggerResult.triggerType,
+          triggerReason: triggerResult.reason,
+          evidenceEventIds: [...cluster.evidenceEventIds].sort(),
+          classification,
+        },
+        { prefix: false },
+      )}`;
+
+      const opportunityId = `opp_${hashCanonicalContent(
+        {
+          workspaceId,
+          structuralHash: cluster.structuralHash,
+          triggerReason: triggerResult.reason,
+          idempotencyKey,
+        },
+        { prefix: false },
+      ).slice(0, 32)}`
+
+      // 12. Construct OpportunityDetection domain entity
       // Invariant: Deterministic values (id, accountId, workspaceId, clusterId, structuralHash,
       // idempotencyKey, occurrenceCount, distinctSessionCount, evidenceEventIds, metrics, triggerReason)
       // are strictly preserved and cannot be overwritten by LLM.
@@ -220,7 +228,7 @@ export class OpportunityDetectionService {
         updatedAt: timestamp,
       };
 
-      // 12. Save transactionally to PostgreSQL with outbox enqueue
+      // 13. Save transactionally to PostgreSQL with outbox enqueue
       const saved = await this.repository.saveOpportunity(tenant, opportunity, params.db);
 
       if (saved.status === "eligible") {

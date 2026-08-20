@@ -199,6 +199,44 @@ export interface OpportunityInferredInput {
 }
 
 /**
+ * A single ordered operation in the retained representative workflow.
+ */
+export interface WorkflowOperation {
+  id: string;
+  order: number;
+  name: string;
+  toolClass?: ToolClass;
+  commandProfile?: string;
+}
+
+/**
+ * Required structured output with explicit source operation.
+ */
+export interface WorkflowOutputRequirement {
+  name: string;
+  sourceOperationId: string;
+  type: string;
+  required: boolean;
+  description?: string;
+}
+
+/**
+ * Deterministic end-to-end workflow contract retained on every generated-tool opportunity.
+ * Version 1 retains the ordered representative workflow (not only the first command),
+ * stable operation IDs/order, required inputs, required structured outputs with source
+ * operation IDs, explicit invariants, and expensive/repeated operation IDs.
+ */
+export interface WorkflowContract {
+  version: 1;
+  operations: WorkflowOperation[];
+  requiredInputs: OpportunityInferredInput[];
+  outputRequirements: WorkflowOutputRequirement[];
+  invariants: string[];
+  expensiveOperationIds: string[];
+  repeatedOperationIds: string[];
+}
+
+/**
  * Model or rule-generated classification metadata for an opportunity.
  */
 export interface OpportunityClassification {
@@ -213,6 +251,7 @@ export interface OpportunityClassification {
   suggestedToolName?: string;
   commandProfiles?: string[];
   provenance?: Record<string, unknown>;
+  workflowContract?: WorkflowContract;
 }
 
 /**

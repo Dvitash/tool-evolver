@@ -21,20 +21,29 @@ describe("OpportunityDetectionService (End-to-End)", () => {
       triggers: { minOccurrencesNormal: 3 },
     });
 
+    // Realistic multi-operation workflow: search -> read -> edit -> command
     const createOccurrence = (sessionId: string, prefix: string) => [
       createToolCallEvent({
         eventId: `${prefix}_1`,
+        sessionId,
+        toolName: "search",
+        parameters: { query: "TODO", path: `src/${prefix}` },
+      }),
+      createToolCallEvent({
+        eventId: `${prefix}_2`,
         sessionId,
         toolName: "read_file",
         parameters: { path: `src/${prefix}.ts` },
       }),
       createToolResultEvent({
-        eventId: `${prefix}_2`,
+        eventId: `${prefix}_2r`,
         sessionId,
-        toolCallId: `${prefix}_1`,
+        toolCallId: `${prefix}_2`,
         result: "content",
       }),
-      createFileEditEvent({ eventId: `${prefix}_3`, sessionId, filePath: `src/${prefix}.ts` }),
+      createFileEditEvent({ eventId: `${prefix}_3`, sessionId, filePath: `src/${prefix}.ts`, operation: "update" }),
+      createCommandExecEvent({ eventId: `${prefix}_4`, sessionId, command: "pnpm build" }),
+      createCommandExecEvent({ eventId: `${prefix}_5`, sessionId, command: "pnpm test" }),
     ];
 
     const events = [
@@ -53,14 +62,51 @@ describe("OpportunityDetectionService (End-to-End)", () => {
     expect(result.clusters).toHaveLength(1);
     expect(result.eligibleCount).toBe(1);
     expect(result.opportunities).toHaveLength(1);
+    const opp = result.opportunities[0]!;
+    // Workflow contract: version 1, full ordered workflow
+    expect(opp.classification.workflowContract).toBeDefined();
+    expect(opp.classification.workflowContract!.version).toBe(1);
+    const contract = opp.classification.workflowContract!;
+    // Must retain full ordered workflow, not only first command
+    expect(contract.operations.length).toBeGreaterThanOrEqual(4);
+    expect(contract.operations[0]!.order).toBe(0);
+    expect(contract.operations.map((o) => o.order)).toEqual(contract.operations.map((_, i) => i));
+    // Stable operation IDs
+    expect(contract.operations.map((o) => o.id)).toEqual(contract.operations.map((_, i) => `op_${i}`));
+    // Required inputs / outputs with source operation IDs
+    expect(Array.isArray(contract.requiredInputs)).toBe(true);
+    expect(Array.isArray(contract.outputRequirements)).toBe(true);
+    expect(contract.outputRequirements.length).toBeGreaterThanOrEqual(1);
+    for (const req of contract.outputRequirements) {
+      expect(typeof req.name).toBe("string");
+      expect(typeof req.sourceOperationId).toBe("string");
+      expect(contract.operations.some((o) => o.id === req.sourceOperationId)).toBe(true);
+    }
+    // Explicit invariants and expensive/repeated IDs
+    expect(Array.isArray(contract.invariants)).toBe(true);
+    expect(contract.invariants.length).toBeGreaterThanOrEqual(1);
+    expect(Array.isArray(contract.expensiveOperationIds)).toBe(true);
+    expect(Array.isArray(contract.repeatedOperationIds)).toBe(true);
+    // JSON-safe
+    expect(() => JSON.stringify(contract)).not.toThrow();
+    const reparsed = JSON.parse(JSON.stringify(contract));
+    expect(reparsed).toEqual(contract);
+    // Deterministic: second detection yields same contract
+    const result2 = await service.detectOpportunities({
+      accountId: "acct-1",
+      workspaceId: "ws-1",
+      events,
+    });
+    // Idempotent per hash incorporating workflowContract – duplicate within same service run yields same opportunity structure
+    // Repository not used in this path, so eligibleCount reflects trigger again (no DB cooldown)
+    expect(result2.opportunities[0]!.classification.workflowContract).toEqual(contract);
 
-    const opp = result.opportunities[0];
     expect(opp.status).toBe("eligible");
     expect(opp.triggerType).toBe("normal_frequency");
     expect(opp.triggerReason).toBe("repeated_pattern");
     expect(opp.occurrenceCount).toBe(3);
     expect(opp.distinctSessionCount).toBe(3);
-    expect(opp.evidenceEventIds).toHaveLength(9);
+    expect(opp.evidenceEventIds.length).toBe(events.length);
   });
 
   it("should trigger only on exceptional waste for 1 occurrence", async () => {

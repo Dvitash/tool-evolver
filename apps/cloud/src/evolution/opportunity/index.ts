@@ -13,5 +13,6 @@ export * from "./triggers.js";
 export * from "./coverage.js";
 export * from "./suppression.js";
 export * from "./classifier.js";
+export * from "./workflow-contract.js";
 export * from "./service.js";
 export * from "./repositories/index.js";
