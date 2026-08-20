@@ -2,10 +2,11 @@
 """Factorial adoption probe (shim × instructions) with cold prompt-cache.
 
 omp 17.3.8 has no --no-cache. Isolation:
-  * unique --profile per run (local caches; OMP_HOME is ignored)
+  * unique --profile per run (local caches, mcp.json, APPEND_SYSTEM.md)
   * --config omp_overlay.yml  (providers.cacheRetention: none)
   * --no-session
   * unique HTML-comment nonce prefix on the user prompt
+  * unique bench workdir copy so --jobs > 1 cannot clobber cwd
 
 Does not patch ~/.omp/agent. Does not call `omp models` (hangs).
 Writes artifacts under /tmp/te-omp-runs/e2e/probe/.
@@ -17,9 +18,11 @@ import json
 import os
 import shutil
 import statistics
+import subprocess
 import sys
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -103,7 +106,6 @@ def catalog_instructions() -> str:
                 )
                 + "<!-- tool-evolver:catalog:end -->\n"
             )
-        return block
     return fallback_instructions()
 
 
@@ -139,6 +141,15 @@ def prepare_profile(name: str, shim: bool, instr: bool, instructions: str) -> Pa
     return dest
 
 
+def prepare_workdir(run_id: str) -> Path:
+    """Copy the mock bench so parallel omp processes do not share cwd."""
+    dest = OUT / "work" / run_id
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(H.BENCH, dest)
+    return dest
+
+
 def mean(xs):
     return round(statistics.mean(xs), 1) if xs else None
 
@@ -168,6 +179,7 @@ def run_one(cell, shim, instr, prompt_name, model, rep, instructions):
     run_id = f"{cell}-{model.replace('/', '_')}-r{rep}-{uuid.uuid4().hex[:8]}"
     profile = f"te-probe-{run_id}"
     prepare_profile(profile, shim, instr, instructions)
+    work = prepare_workdir(run_id)
     prompt_path = PROMPT4 if prompt_name == "prompt4" else PROMPT3
     nonce = f"<!-- probe-nonce:{run_id} -->\n"
     prompt = nonce + prompt_path.read_text()
@@ -176,11 +188,10 @@ def run_one(cell, shim, instr, prompt_name, model, rep, instructions):
     err = OUT / f"{run_id}.err"
     H.log(f"{run_id}: shim={shim} instr={instr} model={model}")
     t0 = time.time()
-    import subprocess
     with open(out, "w") as fo, open(err, "w") as fe:
         p = subprocess.run(
             H.omp_argv(prompt, model=model, profile=profile),
-            cwd=H.BENCH, stdout=fo, stderr=fe, timeout=1500)
+            cwd=str(work), stdout=fo, stderr=fe, timeout=1500)
     dur = round(time.time() - t0, 1)
     m = H.run_metrics(out)
     m["wallSeconds"] = dur
@@ -188,7 +199,7 @@ def run_one(cell, shim, instr, prompt_name, model, rep, instructions):
     row = {
         "id": run_id, "cell": cell, "shim": shim, "instructions": instr,
         "prompt": prompt_name, "model": model, "rep": rep,
-        "profile": profile, "metrics": m,
+        "profile": profile, "workdir": str(work), "metrics": m,
     }
     (OUT / f"{run_id}.json").write_text(json.dumps(row, indent=2))
     H.log(f"{run_id}: exit={p.returncode} dur={dur}s evolved={m['evolvedCalls']} "
@@ -206,21 +217,31 @@ def main():
     ap.add_argument("--skip-hostile", action="store_true")
     ap.add_argument("--cells", default="ctrl,shim,instr,both",
                     help="Comma subset of factorial cell names")
+    ap.add_argument("--jobs", type=int, default=6,
+                    help="Parallel omp processes. Isolated via --profile + per-run cwd.")
     args = ap.parse_args()
     wanted = {c.strip() for c in args.cells.split(",") if c.strip()}
     instructions = catalog_instructions()
-    rows = []
+    jobs = []
     for name, shim, instr, prompt in FACTORIAL:
         if name not in wanted:
             continue
         for rep in range(1, args.n + 1):
-            rows.append(run_one(name, shim, instr, prompt, args.model, rep, instructions))
+            jobs.append((name, shim, instr, prompt, args.model, rep, instructions))
     if not args.skip_hostile:
         for rep in range(1, args.n + 1):
-            rows.append(run_one("hostile", True, True, "prompt3", args.model, rep, instructions))
+            jobs.append(("hostile", True, True, "prompt3", args.model, rep, instructions))
     if args.replicate_model:
         for rep in range(1, args.n + 1):
-            rows.append(run_one("both", True, True, "prompt4", args.replicate_model, rep, instructions))
+            jobs.append(("both", True, True, "prompt4", args.replicate_model, rep, instructions))
+    H.log(f"dispatch {len(jobs)} runs jobs={args.jobs}")
+    rows = []
+    workers = max(1, args.jobs)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = [pool.submit(run_one, *job) for job in jobs]
+        for fut in as_completed(futs):
+            rows.append(fut.result())
+    rows.sort(key=lambda r: (r["cell"], r["model"], r["prompt"], r["rep"]))
     table = summarize(rows)
     (OUT / "summary.md").write_text(table + "\n")
     (OUT / "results.json").write_text(json.dumps(rows, indent=2))
