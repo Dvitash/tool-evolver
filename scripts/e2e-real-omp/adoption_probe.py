@@ -40,7 +40,6 @@ PROMPT3 = Path("/tmp/te-omp-bench2-prompt3.txt")
 # (JSON Parse error kills the turn). Baseline for Muse factorial runs.
 PROMPT4Q = Path("/tmp/te-omp-bench2-prompt4q.txt")
 TEMPLATE = Path(os.path.expanduser("~/.omp/profiles/te-spark-e2e"))
-PROFILES_ROOT = Path(os.path.expanduser("~/.omp/profiles"))
 DEFAULT_AGENT = Path(os.path.expanduser("~/.omp/agent"))
 SERVER = "tool-evolver-gateway"
 TOOL = "git_operation_helper"
@@ -182,8 +181,11 @@ def inject_proxy_provider(agent: Path) -> None:
         pass
 
 
-def prepare_profile(name: str, shim: bool, instr: bool, instructions: str) -> Path:
-    dest = PROFILES_ROOT / name
+def prepare_profile(cfg_root: str, shim: bool, instr: bool, instructions: str) -> Path:
+    """Build a per-run config root under $HOME (PI_CONFIG_DIR is
+    HOME-relative in omp 17.3.8). MCP servers load from the config root's
+    agent/mcp.json, so this is the isolation unit instead of --profile."""
+    dest = Path.home() / cfg_root
     if dest.exists():
         shutil.rmtree(dest)
     if TEMPLATE.is_dir():
@@ -193,8 +195,8 @@ def prepare_profile(name: str, shim: bool, instr: bool, instructions: str) -> Pa
         (dest / "agent").mkdir(parents=True)
     agent = dest / "agent"
     agent.mkdir(parents=True, exist_ok=True)
-    # Isolated --profile does not inherit default auth. Muse/OpenCode-Go
-    # keys live in ~/.omp/agent/agent.db; copy them plus the model catalog.
+    # Config roots do not inherit default auth. Muse/OpenCode-Go keys live in
+    # ~/.omp/agent/agent.db; copy them plus the model catalog.
     for name in ("agent.db", "agent.db-wal", "agent.db-shm", "models.yml", "models.db"):
         src = DEFAULT_AGENT / name
         if src.is_file():
@@ -243,8 +245,11 @@ def summarize(rows):
 
 def run_one(cell, shim, instr, prompt_name, model, rep, instructions):
     run_id = f"{cell}-{model.replace('/', '_')}-r{rep}-{uuid.uuid4().hex[:8]}"
-    profile = f"te-pr-{uuid.uuid4().hex[:12]}"
-    prepare_profile(profile, shim, instr, instructions)
+    # omp 17.3.8 ignores profile agent/mcp.json (MCP loads from the config
+    # root agent dir only), so isolate per run via PI_CONFIG_DIR (resolved
+    # HOME-relative) instead of --profile.
+    cfg_root = f"tmp/te-omp-runs/cfg/{uuid.uuid4().hex[:12]}"
+    prepare_profile(cfg_root, shim, instr, instructions)
     work = prepare_workdir(run_id)
     prompt_path = {"prompt4": PROMPT4, "prompt3": PROMPT3}.get(
         prompt_name, PROMPT4Q)
@@ -255,10 +260,12 @@ def run_one(cell, shim, instr, prompt_name, model, rep, instructions):
     err = OUT / f"{run_id}.err"
     H.log(f"{run_id}: shim={shim} instr={instr} model={model}")
     t0 = time.time()
+    env = dict(os.environ)
+    env["PI_CONFIG_DIR"] = cfg_root
     with open(out, "w") as fo, open(err, "w") as fe:
         p = subprocess.run(
-            H.omp_argv(prompt, model=model, profile=profile),
-            cwd=str(work), stdout=fo, stderr=fe, timeout=1500)
+            H.omp_argv(prompt, model=model),
+            cwd=str(work), stdout=fo, stderr=fe, timeout=1500, env=env)
     dur = round(time.time() - t0, 1)
     m = H.run_metrics(out)
     m["wallSeconds"] = dur
@@ -266,7 +273,7 @@ def run_one(cell, shim, instr, prompt_name, model, rep, instructions):
     row = {
         "id": run_id, "cell": cell, "shim": shim, "instructions": instr,
         "prompt": prompt_name, "model": model, "rep": rep,
-        "profile": profile, "workdir": str(work), "metrics": m,
+        "profile": cfg_root, "workdir": str(work), "metrics": m,
     }
     (OUT / f"{run_id}.json").write_text(json.dumps(row, indent=2))
     H.log(f"{run_id}: exit={p.returncode} dur={dur}s evolved={m['evolvedCalls']} "
