@@ -3,6 +3,9 @@
 // Loads /tmp/te-omp-runs/e2e/tools/manifest.json; each entry points at a
 // generated tool module (TS) with a default export from defineTool({...}).
 
+import { appendFileSync } from "node:fs";
+const rpcLog = (m) => { try { appendFileSync("/tmp/te-proxy/rpc.log", new Date().toISOString() + " " + JSON.stringify(m && {id:m.id, method:m.method}) + "\n"); } catch {} };
+appendFileSync("/tmp/te-proxy/spawned.log", new Date().toISOString() + " shim spawned\n");
 import { createInterface } from "node:readline";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -143,6 +146,7 @@ rl.on("line", async (line) => {
   if (!line.trim()) return;
   let req;
   try { req = JSON.parse(line); } catch { return; }
+  rpcLog(req);
   const { id, method, params } = req;
   try {
     if (method === "initialize") {
@@ -156,11 +160,11 @@ rl.on("line", async (line) => {
     } else if (method === "ping") {
       send({ jsonrpc: "2.0", id, result: {} });
     } else if (method === "tools/list") {
-      send({ jsonrpc: "2.0", id, result: {
-        tools: [...tools.values()].map((t) => ({
-          name: t.name, description: t.description, inputSchema: t.inputSchema,
-        })),
-      }});
+      const listed = [...tools.values()].map((t) => ({
+        name: t.name, description: t.description, inputSchema: t.inputSchema,
+      }));
+      try { appendFileSync("/tmp/te-proxy/rpc.log", new Date().toISOString() + " tools/list resp: " + JSON.stringify(listed.map(t => t.name)) + "\n"); } catch {}
+      send({ jsonrpc: "2.0", id, result: { tools: listed } });
     } else if (method === "tools/call") {
       if (!tools.has(params?.name)) {
         send({ jsonrpc: "2.0", id, error: { code: -32602, message: `unknown tool ${params?.name}` } });

@@ -39,6 +39,8 @@ PROMPT3 = Path("/tmp/te-omp-bench2-prompt3.txt")
 # forced first tool call Muse frequently emits with malformed JSON args
 # (JSON Parse error kills the turn). Baseline for Muse factorial runs.
 PROMPT4Q = Path("/tmp/te-omp-bench2-prompt4q.txt")
+# prompt4q + explicit xd:// MCP tool-use nudge in the user prompt
+PROMPT5 = Path("/tmp/te-omp-bench2-prompt5.txt")
 TEMPLATE = Path(os.path.expanduser("~/.omp/profiles/te-spark-e2e"))
 DEFAULT_AGENT = Path(os.path.expanduser("~/.omp/agent"))
 SERVER = "tool-evolver-gateway"
@@ -46,10 +48,10 @@ TOOL = "git_operation_helper"
 XD = f"xd://mcp__{SERVER.replace('-', '_')}_{TOOL}"
 
 FACTORIAL = [
-    ("ctrl", False, False, "prompt4q"),
-    ("shim", True, False, "prompt4q"),
-    ("instr", False, True, "prompt4q"),
-    ("both", True, True, "prompt4q"),
+    ("ctrl", False, False, "prompt5"),
+    ("shim", True, False, "prompt5"),
+    ("instr", False, True, "prompt5"),
+    ("both", True, True, "prompt5"),
 ]
 
 
@@ -252,7 +254,7 @@ def run_one(cell, shim, instr, prompt_name, model, rep, instructions):
     prepare_profile(cfg_root, shim, instr, instructions)
     work = prepare_workdir(run_id)
     prompt_path = {"prompt4": PROMPT4, "prompt3": PROMPT3}.get(
-        prompt_name, PROMPT4Q)
+        prompt_name, PROMPT5 if prompt_name == "prompt5" else PROMPT4Q)
     nonce = f"<!-- probe-nonce:{run_id} -->\n"
     prompt = nonce + prompt_path.read_text()
     OUT.mkdir(parents=True, exist_ok=True)
