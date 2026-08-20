@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Regenerate a full-coverage evolved tool from dense OMP transcripts.
 
-Uses run4/run5/run1 jsonl (wc/grep/head/tail + git) on a fresh tenant.
-Does not launch OMP. Backend must be on 8090.
+Uses b2 transcripts (git + wc/grep families). run4/run5 explode G1 into
+~30 per-file profiles and fail evidence-coverage; do not use them here.
 """
 import json
 import sys
@@ -13,10 +13,11 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import harness as H  # noqa: E402
 
+# b2: git log/status + wc/grep on modules without 30 per-file commands.
 TRANSCRIPTS = [
-    "/tmp/te-omp-runs/e2e/run4.jsonl",
-    "/tmp/te-omp-runs/e2e/run5.jsonl",
-    "/tmp/te-omp-runs/e2e/run1.jsonl",
+    "/tmp/te-omp-runs/b2-run1.jsonl",
+    "/tmp/te-omp-runs/b2-run2.jsonl",
+    "/tmp/te-omp-runs/b2-run3.jsonl",
 ]
 
 
@@ -81,7 +82,10 @@ def main():
         H.log("NO_CANDIDATE")
         sys.exit(4)
     H.log(f"candidate {cand['id']} state={cand.get('state')} tool={cand.get('toolName')}")
-    json.dump({"tenant": ten, "candidate": cand},
+    st, full = H.req("GET", f"/v1/evolution/candidates/{cand['id']}", headers=HDR)
+    if st == 200 and isinstance(full, dict):
+        cand = full.get("candidate") or full
+    json.dump({"tenant": ten, "acc": ACC, "ws": WS, "candidate": cand},
               open("/tmp/te-omp-runs/e2e/fullcov_candidate.json", "w"), indent=2)
 
     st, body = H.req("POST", "/v1/evolution/candidates/validate",
@@ -105,6 +109,15 @@ def main():
           {"rolloutId": rid, "reason": "fullcov"}, headers=HDR)
     st, body = H.req("GET", "/v1/evolution/catalog", headers=HDR)
     H.log(f"catalog: {json.dumps(body)[:800] if body else ''}")
+    st, full = H.req("GET", f"/v1/evolution/candidates/{cand['id']}", headers=HDR)
+    if st == 200 and isinstance(full, dict):
+        cand = full.get("candidate") or full
+    injected = {}
+    H.inject_tool(cand, injected)
+    H.log(f"inject: {injected}")
+    json.dump({"tenant": ten, "acc": ACC, "ws": WS, "candidateId": cand.get("id"),
+               "injected": injected},
+              open("/tmp/te-omp-runs/e2e/fullcov_tenant.json", "w"), indent=2)
     print(ten)
     H.log("FULLCOV COMPLETE")
 

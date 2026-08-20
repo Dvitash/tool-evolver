@@ -66,12 +66,24 @@ def fallback_instructions() -> str:
     )
 
 
-def catalog_instructions() -> str:
-    st, body = H.req("GET", "/v1/evolution/catalog/instructions", headers={
+def catalog_headers() -> dict:
+    ten = Path("/tmp/te-omp-runs/e2e/fullcov_tenant.json")
+    if ten.is_file():
+        d = json.loads(ten.read_text())
+        return {
+            "Content-Type": "application/json",
+            "x-account-id": d.get("acc") or "acc-e2e-d3probe",
+            "x-workspace-id": d.get("ws") or "ws-e2e-d3probe",
+        }
+    return {
         "Content-Type": "application/json",
         "x-account-id": "acc-e2e-d3probe",
         "x-workspace-id": "ws-e2e-d3probe",
-    })
+    }
+
+
+def catalog_instructions() -> str:
+    st, body = H.req("GET", "/v1/evolution/catalog/instructions", headers=catalog_headers())
     if st == 200 and isinstance(body, dict):
         md = body.get("markdown") or body.get("instructionsMarkdown") or ""
         names = body.get("toolNames") or [TOOL]
