@@ -302,9 +302,12 @@ def run_one(cell, shim, instr, prompt_name, model, rep, instructions, xdev=True)
         overlay = Path.home() / cfg_root / "overlay.yml"
         overlay.write_text(yaml.safe_dump(ov))
     with open(out, "w") as fo, open(err, "w") as fe:
+        # stdin=DEVNULL: omp -p hangs in readPipedInput when it inherits an
+        # open-but-empty stdin pipe (e.g. under hub process supervision).
         p = subprocess.run(
             H.omp_argv(prompt, model=model, overlay=overlay),
-            cwd=str(work), stdout=fo, stderr=fe, timeout=1500, env=env)
+            cwd=str(work), stdout=fo, stderr=fe, timeout=1500, env=env,
+            stdin=subprocess.DEVNULL)
     dur = round(time.time() - t0, 1)
     m = H.run_metrics(out)
     m["wallSeconds"] = dur

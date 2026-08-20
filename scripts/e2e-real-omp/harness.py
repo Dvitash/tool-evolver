@@ -358,7 +358,8 @@ def run_omp(i):
     t0 = time.time()
     with open(out, "w") as fo, open(err, "w") as fe:
         p = subprocess.run(omp_argv(prompt, profile=profile),
-                           cwd=BENCH, stdout=fo, stderr=fe, timeout=1500)
+                           cwd=BENCH, stdout=fo, stderr=fe, timeout=1500,
+                           stdin=subprocess.DEVNULL)
     dur = round(time.time() - t0, 1)
     m = run_metrics(out)
     m["wallSeconds"] = dur
