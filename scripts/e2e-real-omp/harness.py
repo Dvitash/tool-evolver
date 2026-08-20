@@ -249,34 +249,32 @@ def run_metrics(path):
             cache_read += cr
             if first_cache_read is None:
                 first_cache_read = cr
-    # --- post-pass fallback detection (second pass over file if needed) ---
-    # We need to know whether the transcript fell back from te-ocg to cursor.
-    # Do a lightweight second scan only when usage_in == 0 (rare, vanilla).
+    # --- post-pass fallback detection ---
+    # Scan every transcript: fallback responses can report non-zero usage and
+    # must still be excluded from real-model savings calculations.
     fallback_model = None
     saw_te_ocg_error = False
-    saw_te_ocg_success = False
-    if usage_in == 0 and usage_out > 0:
-        try:
-            for line in open(path):
-                try:
-                    je = json.loads(line)
-                except Exception:
-                    continue
-                if je.get("type") == "message_end":
-                    msg = je.get("message", {}) or {}
-                    prov = msg.get("provider") or ""
-                    mdl = msg.get("model") or ""
-                    err = msg.get("errorMessage") or ""
-                    if "muse-spark-1.2" in err and "not supported" in err:
-                        saw_te_ocg_error = True
-                    if prov == "te-ocg" and (msg.get("usage") or {}).get("input", 0):
-                        saw_te_ocg_success = True
-                    if prov == "cursor" or "cursor" in str(mdl):
-                        fallback_model = mdl or prov
-                if je.get("type") == "retry_fallback_applied":
-                    fallback_model = je.get("model") or fallback_model
-        except Exception:
-            pass
+    try:
+        for line in open(path):
+            try:
+                je = json.loads(line)
+            except Exception:
+                continue
+            if je.get("type") == "message_end":
+                msg = je.get("message", {}) or {}
+                provider = msg.get("provider") or ""
+                model = msg.get("model") or ""
+                error = msg.get("errorMessage") or ""
+                if "muse-spark-1.2" in error and "not supported" in error:
+                    saw_te_ocg_error = True
+                if provider == "cursor" or "cursor" in str(model):
+                    fallback_model = model or provider
+            if je.get("type") == "retry_fallback_applied":
+                fallback_model = (
+                    je.get("to") or je.get("model") or fallback_model
+                )
+    except Exception:
+        pass
     # Decide whether to synthesize an estimated input for the vanilla
     # fallback case. Contributor and other providers already report real
     # input (>0) so they are untouched. Estimate is deliberately conservative

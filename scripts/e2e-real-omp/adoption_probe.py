@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time
 import uuid
+import re
 import yaml
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -60,19 +61,19 @@ def fallback_instructions() -> str:
     md = (
         f"### `{TOOL}`\n\n"
         "Runs the observed git/module audit workflow in one call. "
-        "Prefer this over separate bash git/wc/grep commands.\n"
+        "Use the evolved tool before running individual git, wc, or grep commands — prefer this over separate bash git/wc/grep commands.\n"
     )
     return (
         "<!-- tool-evolver:catalog:start -->\n\n"
         f"{md}\n"
         "These tools are exposed over MCP. Invoke them through the `xd://` "
         "tool-device surface rather than re-running the underlying shell "
-        "commands manually.\n\n"
+        "commands manually. Use the evolved tool before running individual git, wc, or grep commands.\n\n"
         f"#### Invocation: `{TOOL}`\n"
         f"- **Invoke**: write the JSON arguments to `{XD}` "
         f"(e.g. `write` `{{\"path\": \"{XD}\", \"content\": \"{{}}\"}}` "
         "when the tool takes no inputs).\n"
-        f"- **Docs**: `read` `{XD}` returns the tool's documentation.\n\n"
+        f"- **Docs**: `read` `{XD}` returns the tool's documentation.\n"
         "<!-- tool-evolver:catalog:end -->\n"
     )
 
@@ -97,19 +98,24 @@ def catalog_instructions() -> str:
     st, body = H.req("GET", "/v1/evolution/catalog/instructions", headers=catalog_headers())
     if st == 200 and isinstance(body, dict):
         md = body.get("markdown") or body.get("instructionsMarkdown") or ""
-        names = body.get("toolNames") or [TOOL]
         if md:
+            # Backend returns only markdown; parse tool names from ### `name` headings
+            names = re.findall(r"^### `([^`]+)`$", md, flags=re.MULTILINE)
+            if not names:
+                names = [TOOL]
             return (
                 "<!-- tool-evolver:catalog:start -->\n\n"
                 f"{md.strip()}\n\n"
                 "These tools are exposed over MCP. Invoke them through the "
-                "`xd://` tool-device surface rather than re-running the "
-                "underlying shell commands manually.\n\n"
+                "`xd://` tool-device surface rather than re-running the underlying shell "
+                "commands manually. Use the evolved tool before running individual git, wc, or grep commands.\n\n"
                 + "".join(
                     f"#### Invocation: `{n}`\n"
-                    f"- **Invoke**: write JSON args to "
-                    f"`xd://mcp__{SERVER.replace('-', '_')}_{n}`.\n"
-                    f"- **Docs**: `read` that path.\n\n"
+                    f"- **Invoke**: write the JSON arguments to "
+                    f"`xd://mcp__{SERVER.replace('-', '_')}_{n}` "
+                    f"(e.g. `write` `{{\"path\": \"xd://mcp__{SERVER.replace('-', '_')}_{n}\", \"content\": \"{{}}\"}}` "
+                    "when the tool takes no inputs).\n"
+                    f"- **Docs**: `read` `xd://mcp__{SERVER.replace('-', '_')}_{n}` returns the tool's documentation.\n\n"
                     for n in names
                 )
                 + "<!-- tool-evolver:catalog:end -->\n"
@@ -273,6 +279,114 @@ def summarize(rows):
     return "\n".join(lines)
 
 
+def _percent_savings(baseline, treatment):
+    if baseline is None or treatment is None or baseline == 0:
+        return None
+    return 100.0 * (baseline - treatment) / baseline
+
+
+def _cohort_means(rows, cell, model, prompt, xdev):
+    all_rows = [
+        r for r in rows
+        if r["cell"] == cell
+        and r["model"] == model
+        and r["prompt"] == prompt
+        and r.get("xdev", True) == xdev
+    ]
+    successful = [r for r in all_rows if r["metrics"].get("exitCode") == 0]
+    token_rows = [
+        r for r in successful
+        if not r["metrics"].get("inputTokensIsEstimated")
+        and not r["metrics"].get("fallbackModel")
+    ]
+
+    def average(source, metric):
+        values = [r["metrics"].get(metric) for r in source]
+        values = [value for value in values if value is not None]
+        return statistics.mean(values) if values else None
+
+    return {
+        "bashCalls": average(successful, "bashCalls"),
+        "turns": average(successful, "turns"),
+        "wallSeconds": average(successful, "wallSeconds"),
+        "inputTokens": average(token_rows, "inputTokens"),
+        "outputTokens": average(token_rows, "outputTokens"),
+        "n_total": len(all_rows),
+        "n": len(successful),
+        "n_failed": len(all_rows) - len(successful),
+        "n_token": len(token_rows),
+    }
+
+
+def _format(value):
+    return "n/a" if value is None else f"{value:.1f}"
+
+
+def savings_table(rows):
+    comparisons = [
+        ("availability", "ctrl", "prompt5", "shim", "prompt5"),
+        ("instructions_only", "ctrl", "prompt5", "instr", "prompt5"),
+        ("deployed", "ctrl", "prompt5", "both", "prompt5"),
+        ("user_nudge", "shim4q", "prompt4q", "shim", "prompt5"),
+        ("catalog_instructions", "shim", "prompt5", "both", "prompt5"),
+    ]
+    metrics = ["bashCalls", "turns", "wallSeconds", "inputTokens", "outputTokens"]
+    model_xdev = sorted({(r["model"], r.get("xdev", True)) for r in rows})
+    lines = [
+        "| effect | model | xdev | baseline | treatment | bash_savings | "
+        "turns_savings | wall_savings | input_savings | output_savings | "
+        "baseline_ok/total | treatment_ok/total | baseline_token | treatment_token |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for effect, base_cell, base_prompt, treat_cell, treat_prompt in comparisons:
+        for model, xdev in model_xdev:
+            base = _cohort_means(rows, base_cell, model, base_prompt, xdev)
+            treatment = _cohort_means(rows, treat_cell, model, treat_prompt, xdev)
+            if not base["n_total"] or not treatment["n_total"]:
+                continue
+            values = [
+                _percent_savings(base[metric], treatment[metric])
+                for metric in metrics
+            ]
+            savings = ["n/a" if value is None else f"{value:.1f}%" for value in values]
+            lines.append(
+                f"| {effect} | {model} | {xdev} | "
+                f"{base_cell}/{base_prompt} | {treat_cell}/{treat_prompt} | "
+                f"{' | '.join(savings)} | "
+                f"{base['n']}/{base['n_total']} | "
+                f"{treatment['n']}/{treatment['n_total']} | "
+                f"{base['n_token']} | {treatment['n_token']} |"
+            )
+
+    lines.extend([
+        "",
+        "Cohort means:",
+        "| cell | model | prompt | xdev | bash | turns | wall | input | output | "
+        "ok/total | failed | token_n |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ])
+    cohort_keys = sorted({
+        (r["cell"], r["model"], r["prompt"], r.get("xdev", True))
+        for r in rows
+    })
+    for cell, model, prompt, xdev in cohort_keys:
+        values = _cohort_means(rows, cell, model, prompt, xdev)
+        lines.append(
+            f"| {cell} | {model} | {prompt} | {xdev} | "
+            f"{_format(values['bashCalls'])} | {_format(values['turns'])} | "
+            f"{_format(values['wallSeconds'])} | {_format(values['inputTokens'])} | "
+            f"{_format(values['outputTokens'])} | "
+            f"{values['n']}/{values['n_total']} | {values['n_failed']} | "
+            f"{values['n_token']} |"
+        )
+    lines.extend([
+        "",
+        "Savings = 100 × (baseline mean − treatment mean) / baseline mean.",
+        "All means exclude failed runs. Token means also exclude estimated or fallback runs.",
+    ])
+    return "\n".join(lines)
+
+
 def run_one(cell, shim, instr, prompt_name, model, rep, instructions, xdev=True):
     tag = "" if xdev else "-xdevfalse"
     run_id = f"{cell}{tag}-{model.replace('/', '_')}-r{rep}-{uuid.uuid4().hex[:8]}"
@@ -366,6 +480,9 @@ def main():
     table = summarize(rows)
     (OUT / "summary.md").write_text(table + "\n")
     (OUT / "results.json").write_text(json.dumps(rows, indent=2))
+    savings = savings_table(rows)
+    (OUT / "savings.md").write_text(savings + "\n")
+    print(savings)
     print(table)
     H.log("PROBE COMPLETE")
 
