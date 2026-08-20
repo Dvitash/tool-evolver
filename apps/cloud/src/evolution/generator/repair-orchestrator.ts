@@ -54,6 +54,17 @@ export class RepairOrchestrator {
     let currentArtifacts = { ...initialArtifacts };
     let reviewVerdict = this.selfReviewer.review(currentArtifacts, envelope);
 
+    // L1: callers may seed externally-derived error issues (e.g. validation
+    // findings) so the repair loop runs even when self-review alone passes.
+    const seededIssues = (options.initialIssues ?? []).filter((i) => i.severity === "error");
+    if (seededIssues.length > 0) {
+      reviewVerdict = {
+        ...reviewVerdict,
+        passed: false,
+        issues: [...reviewVerdict.issues, ...seededIssues],
+      };
+    }
+
     let currentRevision: CandidateRevision = {
       revisionId: `rev_${hashCanonical({ candidateId, revisionNumber: 1 }).slice(0, 16)}`,
       candidateId,

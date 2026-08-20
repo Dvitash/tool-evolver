@@ -285,6 +285,8 @@ export interface CandidateGenerationOptions {
   version?: string;
   strictReview?: boolean;
   inferenceService?: InferenceService;
+  /** External error-severity issues (e.g. validation findings) seeding the repair loop. */
+  initialIssues?: SelfReviewIssue[];
 }
 
 /**

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import net from "node:net";
 import { getDaemonPaths } from "@tool-evolver/observer";
 import { createSystemMetaTools } from "../meta/index.js";
+import { createDefaultUtilityTools } from "../meta/utility-tools.js";
 import { ToolRegistry } from "../registry/registry.js";
 import { LocalMcpGateway } from "../gateway.js";
 import { FakeGatewayRouter, type GatewayRouter, createRegistryGatewayRouter } from "../router.js";
@@ -234,6 +235,11 @@ export class McpStdioShim {
       const registry = new ToolRegistry({ db });
       const systemMetaTools = createSystemMetaTools(registry);
       for (const tool of systemMetaTools) {
+        registry.registerToolSync(tool);
+      }
+      // Baseline workspace utility tools (echo, workspace_info, fail_tool,
+      // slow_tool) so harnesses always see the default tool surface.
+      for (const tool of createDefaultUtilityTools()) {
         registry.registerToolSync(tool);
       }
       await registry.hydrateFromStore();

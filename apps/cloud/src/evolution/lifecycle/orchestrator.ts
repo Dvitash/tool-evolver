@@ -22,7 +22,14 @@ import { ToolArtifactRegistryService } from "../artifacts/service.js";
 import { CandidateEvaluationService } from "../evaluation/service.js";
 import type { CandidateEvaluationOptions } from "../evaluation/types.js";
 import { CandidateRepository } from "../generator/repositories/candidate-repository.js";
-import type { CandidateRevision } from "../generator/types.js";
+import { RepairOrchestrator } from "../generator/repair-orchestrator.js";
+import type { RepairOrchestrationResult } from "../generator/repair-orchestrator.js";
+import type {
+  CandidateGenerationOptions,
+  CandidateRevision,
+  SelfReviewIssue,
+} from "../generator/types.js";
+import type { InferenceService } from "../../models/service.js";
 import { HistoricalReplayService } from "../replay/service.js";
 import type {
   EvidenceSource,
@@ -69,6 +76,9 @@ export interface CandidateLifecycleOrchestratorOptions {
   replayEvidencePollMs?: number;
   evidenceMaxAgeMs?: number;
   maxRepairAttempts?: number;
+  /** Enables the validation repairable_fail -> repair loop route (L1). */
+  inferenceService?: InferenceService;
+  repairOrchestrator?: RepairOrchestrator;
 }
 
 /**
@@ -111,6 +121,8 @@ export class CandidateLifecycleOrchestrator {
   readonly replayEvidencePollMs: number;
   readonly evidenceMaxAgeMs: number;
   readonly maxRepairAttempts: number;
+  readonly inferenceService?: InferenceService;
+  readonly repairOrchestrator: RepairOrchestrator;
 
   constructor(
     pool: DatabasePool,
@@ -165,6 +177,8 @@ export class CandidateLifecycleOrchestrator {
     this.replayEvidencePollMs = Math.max(1, opts.replayEvidencePollMs ?? 25);
     this.evidenceMaxAgeMs = opts.evidenceMaxAgeMs ?? 24 * 60 * 60 * 1000;
     this.maxRepairAttempts = opts.maxRepairAttempts ?? 3;
+    this.inferenceService = opts.inferenceService;
+    this.repairOrchestrator = opts.repairOrchestrator ?? new RepairOrchestrator();
   }
 
   private enforceTenant(tenant: TenantContext): void {
@@ -502,6 +516,27 @@ export class CandidateLifecycleOrchestrator {
         }
 
         return updated;
+      }
+
+      // L1: route repairable validation failures through the bounded repair
+      // loop before going terminal. Each attempt produces a child revision and
+      // re-enters validation; at most 2 validation-driven repairs per candidate.
+      if (isRepairable && attemptNumber <= 2 && activeRevision) {
+        const repaired = await this.attemptValidationRepair(
+          tenant,
+          candidate.id,
+          record,
+          activeRevision,
+          validationResult,
+          options,
+          attemptNumber,
+        );
+        if (repaired) {
+          return this.stepValidate(tenant, candidateId, {
+            ...options,
+            attempt: attemptNumber + 1,
+          });
+        }
       }
 
       // Handle Validation Failure
@@ -1577,6 +1612,115 @@ export class CandidateLifecycleOrchestrator {
       });
 
       throw err;
+    }
+  }
+
+  /**
+   * Maps validation findings to self-review issues and runs the bounded repair
+   * loop (L1). Returns true when a repaired child revision was created and the
+   * caller should re-validate; false when repair is unavailable or exhausted.
+   */
+  private async attemptValidationRepair(
+    tenant: TenantContext,
+    candidateId: string,
+    record: CandidateLifecycleRecord,
+    activeRevision: CandidateRevision,
+    validationResult: CandidateValidationResult,
+    options: LifecycleStepOptions,
+    attemptNumber: number,
+  ): Promise<boolean> {
+    const issues: SelfReviewIssue[] = [];
+
+    for (const finding of validationResult.staticFindings ?? []) {
+      if (finding.severity !== "error") continue;
+      issues.push({
+        severity: "error",
+        category: this.mapFindingCategory(finding.category),
+        message: finding.message,
+        fixHint: finding.fixHint,
+      });
+    }
+    for (const test of validationResult.testReport?.results ?? []) {
+      if (test.passed) continue;
+      issues.push({
+        severity: "error",
+        category: "general",
+        message: `Validation test '${test.name}' failed${test.error ? `: ${test.error}` : ""}`,
+        fixHint: "Fix the implementation so this scenario passes.",
+      });
+    }
+    for (const tcError of validationResult.typecheckErrors ?? []) {
+      issues.push({
+        severity: "error",
+        category: "syntax",
+        message: `Typecheck error: ${tcError}`,
+        fixHint: "Resolve the type error.",
+      });
+    }
+    if (issues.length === 0) return false;
+
+    // Seed the repair loop's first review with validation findings so the LLM
+    // repair prompt sees them even when self-review alone would pass.
+    const repairOptions: CandidateGenerationOptions & { tenantId?: string } = {
+      envelope: options.envelope,
+      maxRepairIterations: 2,
+      inferenceService: this.inferenceService,
+      tenantId: tenant.workspaceId,
+      initialIssues: issues,
+    };
+
+    let repairResult: RepairOrchestrationResult;
+    try {
+      repairResult = await this.repairOrchestrator.orchestrateAsync(
+        activeRevision.artifacts,
+        candidateId,
+        repairOptions,
+      );
+    } catch {
+      return false;
+    }
+    if (!repairResult.success) return false;
+
+    const repaired = repairResult.activeRevision.artifacts;
+    const fixSummary = issues
+      .map((i) => i.message)
+      .join("; ")
+      .slice(0, 500);
+
+    // Delegate child-revision creation, capability monotonicity, and validation
+    // re-enqueue to the existing bounded repair transition.
+    await this.repairCandidate(tenant, candidateId, {
+      envelope: options.envelope,
+      maxRepairAttempts: options.maxRepairAttempts,
+      repairHint: `Validation repair (attempt ${attemptNumber}): ${fixSummary}`,
+      modifiedArtifacts: {
+        sourceCode: repaired.sourceCode,
+        manifest: repaired.manifest,
+        capabilities: repaired.capabilities,
+        workflowDefinition: repaired.workflowDefinition,
+      },
+    });
+    return true;
+  }
+
+  /**
+   * Maps validation finding categories onto self-review issue categories.
+   */
+  private mapFindingCategory(category: string): SelfReviewIssue["category"] {
+    switch (category) {
+      case "forbidden_import":
+        return "imports";
+      case "forbidden_api":
+      case "broker_manifest_mismatch":
+        return "broker";
+      case "undeclared_capability":
+        return "capabilities";
+      case "schema_mismatch":
+        return "schema";
+      case "syntax_error":
+        return "syntax";
+      default:
+        return "general";
     }
   }
 

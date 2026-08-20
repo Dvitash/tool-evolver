@@ -355,6 +355,7 @@ export class CloudService {
       requirePersistedReplayEvidence: true,
       replayEvidenceWaitMs: 5_000,
       replayEvidencePollMs: 25,
+      inferenceService: this.inferenceService,
     });
     this.worker.registerHandler("opportunity.detect", async (job) => {
       const tenant = job.tenantContext;
