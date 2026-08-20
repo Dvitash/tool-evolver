@@ -347,6 +347,9 @@ def run_metrics(path):
                     "(~159k, contributor median) and labeled via "
                     "inputTokensIsEstimated.").format(fallback_model)
     bash = tools.get("bash", 0)
+    real_tool_calls = sum(
+        count for name, count in tools.items() if name != "xd-mcp-invoke"
+    )
     # Adoption is a completed evolved-tool invocation, not merely an attempted
     # call. Instruction-only cells can hallucinate an unmounted xd:// device;
     # retain those separately as attempts/failures.
@@ -356,7 +359,8 @@ def run_metrics(path):
             "cacheReadTokens": cache_read, "firstCacheReadTokens": first,
             "turnCacheReadTokens": list(turn_cache_read_tokens),
             "coldCache": first == 0, "turns": turns,
-            "toolCalls": dict(tools), "bashCalls": bash,
+            "toolCalls": dict(tools), "realToolCalls": real_tool_calls,
+            "bashCalls": bash,
             "evolvedCalls": evolved_successes,
             "evolvedAttempts": evolved_attempts,
             "evolvedFailures": evolved_failures, "toolErrors": errors,

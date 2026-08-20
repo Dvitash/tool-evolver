@@ -1312,6 +1312,14 @@ def cohort_metric_values(rows: list, metric: str) -> list[float]:
             v = m.get("costDollars")
         elif metric == "totalObservedTokens":
             v = m.get("totalObservedTokens")
+        elif metric == "realToolCalls":
+            v = m.get("realToolCalls")
+            if v is None:
+                v = sum(
+                    count
+                    for name, count in (m.get("toolCalls") or {}).items()
+                    if name != "xd-mcp-invoke"
+                )
         else:
             v = m.get(metric)
         if v is not None:
@@ -1323,8 +1331,9 @@ def production_report(rows: list, prices: dict) -> tuple[str, str]:
     kept = primary_rows(rows)
     excluded = [r for r in rows if row_excluded(r)[0]]
     metrics = [
-        "bashCalls", "turns", "wallSeconds", "inputTokens", "outputTokens",
-        "cacheReadTokens", "totalObservedTokens", "costDollars", "firstCacheReadTokens",
+        "bashCalls", "realToolCalls", "turns", "wallSeconds", "inputTokens",
+        "outputTokens", "cacheReadTokens", "totalObservedTokens",
+        "costDollars", "firstCacheReadTokens",
     ]
     # Detect per-workload filtered input to avoid empty sections
     distinct_workloads = sorted({r.get("workload") for r in kept if r.get("workload") is not None})
