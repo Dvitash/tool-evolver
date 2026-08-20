@@ -26,6 +26,11 @@ MCP_JSON = Path(os.path.expanduser("~/.omp/agent/mcp.json"))
 REDACT = {"isRedacted": True, "redactedFields": [], "redactionStrategy": "mask",
           "scrubbedPatterns": []}
 RUNS = 5
+OVERLAY_YML = Path(__file__).resolve().parent / "omp_overlay.yml"
+# Isolated OMP profile (auth/settings/caches). Do not use OMP_HOME — omp 17.3.8
+# ignores it. Do not call `omp models` — that subcommand hangs.
+TEMPLATE_PROFILE = Path(os.path.expanduser("~/.omp/profiles/te-spark-e2e"))
+LAUNCH = str(int(time.time()))
 
 
 def log(msg):
@@ -129,8 +134,10 @@ def drain(label, timeout_s=180, headers=None):
 
 def run_metrics(path):
     usage_in = usage_out = cache_read = 0
+    first_cache_read = None
     tools = Counter()
     errors = 0
+    turns = 0
     for line in open(path):
         try:
             e = json.loads(line)
@@ -139,49 +146,66 @@ def run_metrics(path):
         t = e.get("type")
         if t == "tool_execution_start":
             tools[e.get("toolName")] += 1
-            # MCP-evolved tools are invoked by writing JSON args to their xd:// path
             args = e.get("args") or {}
-            # invocation = write of JSON args; read of the same path is doc inspection
             if e.get("toolName") == "write" and isinstance(args, dict) \
                     and str(args.get("path", "")).startswith("xd://mcp__"):
                 tools["xd-mcp-invoke"] += 1
         elif t == "tool_execution_end":
             if e.get("isError"):
                 errors += 1
+        elif t == "turn_end":
+            turns += 1
         elif t == "message_end":
             u = (e.get("message", {}) or {}).get("usage") or {}
             usage_in += u.get("input", 0) or 0
             usage_out += u.get("output", 0) or 0
-            cache_read += u.get("cacheRead", 0) or 0
+            cr = u.get("cacheRead", 0) or 0
+            cache_read += cr
+            if first_cache_read is None:
+                first_cache_read = cr
     bash = tools.get("bash", 0)
     evolved = sum(v for k, v in tools.items() if k and "evolved" in k) + tools.get("xd-mcp-invoke", 0)
+    first = 0 if first_cache_read is None else first_cache_read
     return {"inputTokens": usage_in, "outputTokens": usage_out,
-            "cacheReadTokens": cache_read, "toolCalls": dict(tools),
-            "bashCalls": bash, "evolvedCalls": evolved, "toolErrors": errors}
+            "cacheReadTokens": cache_read, "firstCacheReadTokens": first,
+            "coldCache": first == 0, "turns": turns,
+            "toolCalls": dict(tools), "bashCalls": bash,
+            "evolvedCalls": evolved, "toolErrors": errors}
+
+
+def omp_argv(prompt, model="gemini-3.7-flash", profile=None):
+    """Headless argv with prompt-cache isolation (no --no-cache exists)."""
+    argv = ["omp", "-p", "--mode", "json", "--model", model,
+            "--approval-mode=yolo", "--no-session", "--no-title"]
+    if profile:
+        argv.extend(["--profile", profile])
+    if OVERLAY_YML.is_file():
+        argv.extend(["--config", str(OVERLAY_YML)])
+    argv.append(prompt)
+    return argv
 
 
 def run_omp(i):
-    prompt = open(PROMPT_FILE).read()
+    nonce = f"<!-- probe-nonce:{LAUNCH}-r{i} -->\n"
+    prompt = nonce + open(PROMPT_FILE).read()
     out = E2E / f"run{i}.jsonl"
     err = E2E / f"run{i}.err"
-    log(f"RUN {i}: launching omp session")
+    profile = f"te-e2e-r{i}-{LAUNCH}"
+    log(f"RUN {i}: launching omp session profile={profile}")
     t0 = time.time()
     with open(out, "w") as fo, open(err, "w") as fe:
-        p = subprocess.run(
-            ["omp", "-p", "--mode", "json", "--model", "gemini-3.7-flash",
-             "--approval-mode=yolo", prompt],
-            cwd=BENCH, stdout=fo, stderr=fe, timeout=1500)
+        p = subprocess.run(omp_argv(prompt, profile=profile),
+                           cwd=BENCH, stdout=fo, stderr=fe, timeout=1500)
     dur = round(time.time() - t0, 1)
     m = run_metrics(out)
     m["wallSeconds"] = dur
     m["exitCode"] = p.returncode
+    m["profile"] = profile
     log(f"RUN {i}: done in {dur}s exit={p.returncode} "
-        f"in={m['inputTokens']} out={m['outputTokens']} bash={m['bashCalls']} "
-        f"evolved={m['evolvedCalls']} tools={m['toolCalls']}")
+        f"in={m['inputTokens']} cacheRead={m['cacheReadTokens']} "
+        f"firstCache={m['firstCacheReadTokens']} cold={m['coldCache']} "
+        f"bash={m['bashCalls']} evolved={m['evolvedCalls']} tools={m['toolCalls']}")
     return m
-
-
-LAUNCH = str(int(time.time()))
 
 
 def mutate(idx, tag=""):

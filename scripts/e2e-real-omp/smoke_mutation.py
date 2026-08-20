@@ -4,7 +4,7 @@ Fresh tenant acc-e2e-smoke; skips OMP run and injection. Verifies:
 ingest -> detect -> generate -> validate -> replay -> evaluate -> publish ->
 promote -> catalog."""
 import sys, json, time
-sys.path.insert(0, "/tmp/te-omp-runs/e2e")
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
 import harness as H
 
 # Point extractor at b2 transcripts with 3 sessions (meets occurrence threshold).

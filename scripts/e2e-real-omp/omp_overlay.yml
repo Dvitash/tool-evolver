@@ -1,0 +1,19 @@
+# Per-run OMP config overlay. omp 17.3.8 has no --no-cache flag;
+# providers.cacheRetention=none is the supported prompt-cache disable
+# (pi-ai CacheRetention: none | short | long). Compaction off so token
+# totals are not rewritten mid-session.
+providers:
+  cacheRetention: none
+compaction:
+  enabled: false
+  midTurnEnabled: false
+  remoteEnabled: false
+memory:
+  backend: "off"
+autolearn:
+  enabled: false
+advisor:
+  enabled: false
+github:
+  cache:
+    enabled: false
