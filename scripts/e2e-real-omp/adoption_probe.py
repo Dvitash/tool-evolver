@@ -1716,6 +1716,8 @@ def main():
                          "first-class functions.")
     ap.add_argument("--production", action="store_true",
                     help="80-run production experiment (4 cells x 4 workloads x 5 reps).")
+    ap.add_argument("--resume-invalid", action="store_true",
+                    help="Resume production repairing fallback/invalid rows (requires --production).")
     ap.add_argument("--price-in", type=float, default=1.0,
                     help="USD per million input tokens (default 1).")
     ap.add_argument("--price-out", type=float, default=4.0,
@@ -1723,6 +1725,8 @@ def main():
     ap.add_argument("--price-cache", type=float, default=0.25,
                     help="USD per million cache-read tokens (default 0.25).")
     args = ap.parse_args()
+    if args.resume_invalid and not args.production:
+        raise SystemExit("--resume-invalid requires --production")
     prices = {"in": args.price_in, "out": args.price_out, "cache": args.price_cache}
     xdev = args.xdev == "true"
     instructions = catalog_instructions(fail_closed=args.production)
@@ -1767,10 +1771,234 @@ def main():
     jobs_n = 6 if args.jobs == 12 else args.jobs
     if jobs_n != 6:
         raise SystemExit("production mode requires --jobs 6")
+    if args.resume_invalid:
+        # Resume: load results and provenance before archiving report artifacts
+        results_path = PROD_OUT / "results.json"
+        lock_path = PROD_OUT / "provenance.lock.json"
+        if not results_path.is_file():
+            raise SystemExit(f"resume requires existing {results_path}")
+        if not lock_path.is_file():
+            raise SystemExit(f"resume requires existing {lock_path}")
+        rows_orig = json.loads(results_path.read_text())
+        lock = json.loads(lock_path.read_text())
+        if not isinstance(rows_orig, list):
+            raise SystemExit("resume results must be a JSON array")
+        seen_ids = set()
+        seen_slots = set()
+        for row in rows_orig:
+            row_id = row.get("id")
+            slot = (row.get("cell"), row.get("workload"), row.get("rep"))
+            if not row_id or row_id in seen_ids:
+                raise SystemExit(f"resume duplicate or missing row id: {row_id}")
+            if slot in seen_slots:
+                raise SystemExit(f"resume duplicate block/rep slot: {slot}")
+            if row.get("cell") not in PRIMARY_CELLS:
+                raise SystemExit(f"resume unexpected cell: {row.get('cell')}")
+            if row.get("workload") not in WORKLOADS:
+                raise SystemExit(
+                    f"resume unexpected workload: {row.get('workload')}"
+                )
+            if row.get("model") != lock.get("model") or row.get("xdev") is not True:
+                raise SystemExit(f"resume row treatment drifted: {row_id}")
+            expected_phase = "cold" if row.get("rep") == 1 else "warm"
+            if (row.get("metrics") or {}).get("cachePhase") != expected_phase:
+                raise SystemExit(f"resume cache phase drifted: {row_id}")
+            row_provenance = row.get("toolProvenance") or {}
+            for key in (
+                "candidateId", "manifestSha256", "sourceSha256",
+                "catalogWorkspaceId",
+            ):
+                if row_provenance.get(key) != lock.get(key):
+                    raise SystemExit(
+                        f"resume row {key} drifted: {row_id}"
+                    )
+            seen_ids.add(row_id)
+            seen_slots.add(slot)
+        # Verify exact current model/xdev/cells/jobs
+        if args.model != lock.get("model"):
+            raise SystemExit(f"resume model mismatch: args {args.model} vs lock {lock.get('model')}")
+        if lock.get("model") != "te-ocg/muse-spark-1.2-contributor":
+            raise SystemExit(f"resume lock model unexpected: {lock.get('model')}")
+        if not xdev or lock.get("xdev") is not True:
+            raise SystemExit(f"resume requires xdev true: xdev={xdev} lock xdev={lock.get('xdev')}")
+        cell_map = {name: (name, shim, instr, prompt) for name, shim, instr, prompt in FACTORIAL
+                    if name in PRIMARY_CELLS}
+        wanted = (
+            set(PRIMARY_CELLS)
+            if args.cells == "ctrl,shim,instr,both"
+            else {cell.strip() for cell in args.cells.split(",") if cell.strip()}
+        )
+        if wanted != set(PRIMARY_CELLS):
+            raise SystemExit(
+                f"production mode requires cells {list(PRIMARY_CELLS)}, "
+                f"got {sorted(wanted)}"
+            )
+        if lock.get("cells") != list(PRIMARY_CELLS):
+            raise SystemExit(f"resume lock cells mismatch: {lock.get('cells')} vs {list(PRIMARY_CELLS)}")
+        if lock.get("workloads") != list(WORKLOADS):
+            raise SystemExit(f"resume lock workloads mismatch: {lock.get('workloads')} vs {list(WORKLOADS)}")
+        if lock.get("reps") != PROD_REPS:
+            raise SystemExit(f"resume lock reps mismatch: {lock.get('reps')} vs {PROD_REPS}")
+        # Verify current tool candidate/manifest/source/workspace
+        tp = tool_provenance()
+        if not tp:
+            raise SystemExit("resume tool provenance missing")
+        for key in ("candidateId", "manifestSha256", "sourceSha256", "sourcePath", "catalogWorkspaceId"):
+            if tp.get(key) != lock.get(key):
+                raise SystemExit(f"resume {key} drifted: current {tp.get(key)!r} vs lock {lock.get(key)!r}")
+        if lock.get("manifestPath") != str(H.MANIFEST):
+            raise SystemExit(f"resume manifestPath drifted: {lock.get('manifestPath')} vs {H.MANIFEST}")
+        # Verify catalog instructions SHA
+        cur_sha = hashlib.sha256(instructions.encode()).hexdigest()
+        if cur_sha != lock.get("instructionsSha256"):
+            raise SystemExit(f"resume instructions SHA drifted: {cur_sha} vs {lock.get('instructionsSha256')}")
+        # Verify existing block workdir/prompt/overlay/profile treatment and live fixture provenance
+        cells = list(PRIMARY_CELLS)
+        blocks = []
+        for cell in cells:
+            name, shim, instr, prompt = cell_map[cell]
+            for n in WORKLOADS:
+                cfg = block_cfg_root(cell, n)
+                work = block_workdir(cell, n)
+                prompt_path = PROD_PROMPT_DIR / f"{cell}-w{n}.txt"
+                overlay_path = Path.home() / cfg / "overlay.yml"
+                agent_path = Path.home() / cfg / "agent"
+                if not (Path.home() / cfg).is_dir():
+                    raise SystemExit(f"resume missing cfg {cfg}")
+                if not work.is_dir():
+                    raise SystemExit(f"resume missing workdir {work}")
+                if not prompt_path.is_file():
+                    raise SystemExit(f"resume missing prompt {prompt_path}")
+                if not overlay_path.is_file():
+                    raise SystemExit(f"resume missing overlay {overlay_path}")
+                if not (agent_path / "mcp.json").is_file():
+                    raise SystemExit(f"resume missing mcp.json for {cell}-w{n}")
+                if not (agent_path / "APPEND_SYSTEM.md").is_file():
+                    raise SystemExit(f"resume missing APPEND_SYSTEM.md for {cell}-w{n}")
+                expected_git_head = (lock.get("fixtures") or {}).get(str(n), {}).get("gitHead")
+                if not expected_git_head:
+                    raise SystemExit(f"resume lock missing gitHead for w{n}")
+                expected_nonce = block_nonce(cell, n, expected_git_head)
+                prompt_text = prompt_path.read_text()
+                expected_body = expected_nonce + _prompt_body(n, str(work), nudge=(prompt == "prompt5"))
+                if prompt_text != expected_body:
+                    raise SystemExit(f"resume prompt drifted for {cell}-w{n}")
+                try:
+                    expected_overlay = yaml.safe_load(PROD_OVERLAY)
+                    actual_overlay = yaml.safe_load(overlay_path.read_text())
+                except Exception as exc:
+                    raise SystemExit(f"resume overlay unreadable for {cell}-w{n}: {exc}") from exc
+                if actual_overlay != expected_overlay:
+                    raise SystemExit(f"resume overlay drifted for {cell}-w{n}: {actual_overlay!r} vs {expected_overlay!r}")
+                expected_mcp = mcp_payload(shim)
+                try:
+                    actual_mcp = json.loads((agent_path / "mcp.json").read_text())
+                except Exception as exc:
+                    raise SystemExit(f"resume mcp.json unreadable for {cell}-w{n}: {exc}") from exc
+                if actual_mcp != expected_mcp:
+                    raise SystemExit(f"resume profile MCP drifted for {cell}-w{n}: {actual_mcp!r} vs {expected_mcp!r}")
+                expected_append = instructions if instr else ""
+                actual_append = (agent_path / "APPEND_SYSTEM.md").read_text()
+                if actual_append != expected_append:
+                    raise SystemExit(f"resume profile APPEND_SYSTEM.md drifted for {cell}-w{n}")
+                live, drift, why = live_provenance(lock, n, work)
+                if drift:
+                    raise SystemExit(f"resume live provenance drifted for {cell}-w{n}: {why}")
+                blocks.append({
+                    "cell": cell, "shim": shim, "instr": instr, "prompt": prompt,
+                    "workload": n, "cfg": cfg, "work": work, "overlay": overlay_path,
+                    "prompt_path": prompt_path,
+                })
+        if len(blocks) != len(PRIMARY_CELLS) * len(WORKLOADS):
+            raise SystemExit(f"production matrix incomplete: {len(blocks)} blocks")
+        # Count valid rows using row_excluded per (cell,workload). Target PROD_REPS valid each.
+        valid_counts = {}
+        for cell in cells:
+            for n in WORKLOADS:
+                cnt = sum(1 for r in rows_orig if r.get("cell") == cell and r.get("workload") == n and not row_excluded(r)[0])
+                valid_counts[(cell, n)] = cnt
+                if cnt > PROD_REPS:
+                    raise SystemExit(f"resume block {cell}-w{n} has >{PROD_REPS} valid rows: {cnt}")
+        deficits = {k: PROD_REPS - v for k, v in valid_counts.items()}
+        total_deficit = sum(deficits.values())
+        expected_kept = len(PRIMARY_CELLS) * len(WORKLOADS) * PROD_REPS
+        current_kept = len(primary_rows(rows_orig))
+        # cross-check sum
+        if sum(valid_counts.values()) != current_kept:
+            raise SystemExit(f"resume valid count mismatch: sum {sum(valid_counts.values())} vs primary_rows {current_kept}")
+        if current_kept + total_deficit != expected_kept:
+            raise SystemExit(f"resume cannot reach exact {expected_kept} kept rows: current {current_kept} deficit {total_deficit}")
+        if total_deficit == 0:
+            raise SystemExit("resume no deficits to repair")
+        # Archive the prior prod summary/results/savings/results.partial/per-workload reports before overwriting; do not archive n=6 probe artifacts on resume.
+        PROD_OUT.mkdir(parents=True, exist_ok=True)
+        archive_generic_artifacts(PROD_OUT)
+        results_path.write_text(json.dumps(rows_orig, indent=2) + "\n")
+        # Direct smoke all resumed worktrees before measured replacements.
+        for block in blocks:
+            label = block_id(block["cell"], block["workload"])
+            rec = smoke_mcp(block["work"], block["workload"], label=f"work-{label}")
+            if not rec.get("passed"):
+                raise SystemExit(f"MCP smoke failed for {label}: {rec}")
+            H.log(f"MCP smoke passed {label}")
+        # Schedule only deficits, in sequential deterministic waves, using new rep numbers above global max (rep6 here). Each replacement is warm.
+        max_rep = max((r.get("rep") or 0) for r in rows_orig) if rows_orig else 0
+        max_deficit = max(deficits.values()) if deficits else 0
+        rows = list(rows_orig)
+        for wave_idx in range(max_deficit):
+            rep = max_rep + 1 + wave_idx
+            if rep == 1:
+                raise SystemExit("resume replacement rep would be cold")
+            wave_blocks = [b for b in blocks if deficits[(b["cell"], b["workload"])] > wave_idx]
+            wave_blocks = list(wave_blocks)
+            random.Random(rep).shuffle(wave_blocks)
+            H.log(f"resume wave {wave_idx+1}/{max_deficit} rep={rep} jobs={len(wave_blocks)} workers={jobs_n}")
+            with ThreadPoolExecutor(max_workers=max(1, jobs_n)) as pool:
+                futs = []
+                for b in wave_blocks:
+                    futs.append(pool.submit(
+                        run_one, b["cell"], b["shim"], b["instr"], b["prompt"],
+                        args.model, rep, instructions, True,
+                        production=True, workload=b["workload"], work=b["work"],
+                        cfg_root=b["cfg"], overlay=b["overlay"], lock=lock,
+                        prices=prices, prompt_path=b["prompt_path"],
+                    ))
+                for fut in as_completed(futs):
+                    rows.append(fut.result())
+            partial = sorted(
+                rows,
+                key=lambda r: (r.get("workload") or 0, r["cell"], r["rep"]),
+            )
+            (PROD_OUT / "results.partial.json").write_text(
+                json.dumps(partial, indent=2) + "\n"
+            )
+            results_path.write_text(json.dumps(partial, indent=2) + "\n")
+        # Append replacement rows to original rows, then regenerate summary/savings/results and per-workload reports.
+        rows.sort(key=lambda r: (r.get("workload") or 0, r["cell"], r["rep"]))
+        kept = primary_rows(rows)
+        if len(kept) != expected_kept:
+            raise SystemExit(f"resume final kept {len(kept)} != expected {expected_kept}")
+        for cell in cells:
+            for n in WORKLOADS:
+                cnt = sum(1 for r in kept if r.get("cell") == cell and r.get("workload") == n)
+                if cnt != PROD_REPS:
+                    raise SystemExit(f"resume block {cell}-w{n} final valid {cnt} != {PROD_REPS}")
+        summary, savings = production_report(rows, prices)
+        (PROD_OUT / "summary.md").write_text(summary + "\n")
+        (PROD_OUT / "savings.md").write_text(savings + "\n")
+        (PROD_OUT / "results.json").write_text(json.dumps(rows, indent=2))
+        for n in WORKLOADS:
+            subset = [r for r in rows if r.get("workload") == n]
+            s, sav = production_report(subset, prices)
+            (PROD_OUT / f"summary-w{n}.md").write_text(s + "\n")
+            (PROD_OUT / f"savings-w{n}.md").write_text(sav + "\n")
+        print(savings)
+        print(summary)
+        H.log("PRODUCTION COMPLETE")
+        return
     PROD_OUT.mkdir(parents=True, exist_ok=True)
     archive_generic_artifacts(PROD_PROBE_ARCHIVE)
     archive_generic_artifacts(PROD_OUT)
-
     cell_map = {name: (name, shim, instr, prompt) for name, shim, instr, prompt in FACTORIAL
                 if name in PRIMARY_CELLS}
     wanted = (
@@ -1784,15 +2012,12 @@ def main():
             f"got {sorted(wanted)}"
         )
     cells = list(PRIMARY_CELLS)
-
     fixtures = {}
     for n in WORKLOADS:
         fixtures[n] = ensure_workload_fixture(n)
         H.log(f"fixture w{n} ready at {fixtures[n]}")
-
     lock = lock_provenance(fixtures, instructions)
     H.log("provenance locked")
-
     for n, src in fixtures.items():
         rec = smoke_mcp(src, n)
         if not rec.get("passed"):
@@ -1801,7 +2026,6 @@ def main():
         if live.get("manifestSha256") != lock.get("manifestSha256"):
             raise SystemExit("manifest sha drifted before measured runs")
         H.log(f"MCP smoke passed w{n}")
-
     blocks = []
     for cell in cells:
         name, shim, instr, prompt = cell_map[cell]
@@ -1819,10 +2043,8 @@ def main():
                 "workload": n, "cfg": cfg, "work": work, "overlay": overlay,
                 "prompt_path": prompt_path,
             })
-
     if len(blocks) != len(PRIMARY_CELLS) * len(WORKLOADS):
         raise SystemExit(f"production matrix incomplete: {len(blocks)} blocks")
-
     for block in blocks:
         label = block_id(block["cell"], block["workload"])
         rec = smoke_mcp(
@@ -1831,7 +2053,6 @@ def main():
         if not rec.get("passed"):
             raise SystemExit(f"MCP smoke failed for {label}: {rec}")
         H.log(f"MCP smoke passed {label}")
-
     rows = []
     for wave in range(1, PROD_REPS + 1):
         wave_jobs = list(blocks)
@@ -1856,7 +2077,6 @@ def main():
         (PROD_OUT / "results.partial.json").write_text(
             json.dumps(partial, indent=2) + "\n"
         )
-
     rows.sort(key=lambda r: (r.get("workload") or 0, r["cell"], r["rep"]))
     summary, savings = production_report(rows, prices)
     (PROD_OUT / "summary.md").write_text(summary + "\n")
