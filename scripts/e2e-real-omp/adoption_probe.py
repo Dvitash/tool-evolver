@@ -36,6 +36,7 @@ PROMPT4 = Path("/tmp/te-omp-bench2-prompt4.txt")
 PROMPT3 = Path("/tmp/te-omp-bench2-prompt3.txt")
 TEMPLATE = Path(os.path.expanduser("~/.omp/profiles/te-spark-e2e"))
 PROFILES_ROOT = Path(os.path.expanduser("~/.omp/profiles"))
+DEFAULT_AGENT = Path(os.path.expanduser("~/.omp/agent"))
 SERVER = "tool-evolver-gateway"
 TOOL = "git_operation_helper"
 XD = f"xd://mcp__{SERVER.replace('-', '_')}_{TOOL}"
@@ -129,11 +130,17 @@ def prepare_profile(name: str, shim: bool, instr: bool, instructions: str) -> Pa
         shutil.rmtree(dest)
     if TEMPLATE.is_dir():
         shutil.copytree(TEMPLATE, dest, ignore=shutil.ignore_patterns(
-            "sessions", "logs", "terminal-sessions", "agent.db*", "cache"))
+            "sessions", "logs", "terminal-sessions", "cache"))
     else:
         (dest / "agent").mkdir(parents=True)
     agent = dest / "agent"
     agent.mkdir(parents=True, exist_ok=True)
+    # Isolated --profile does not inherit default auth. Muse/OpenCode-Go
+    # keys live in ~/.omp/agent/agent.db; copy them plus the model catalog.
+    for name in ("agent.db", "agent.db-wal", "agent.db-shm", "models.yml", "models.db"):
+        src = DEFAULT_AGENT / name
+        if src.is_file():
+            shutil.copy2(src, agent / name)
     (agent / "mcp.json").write_text(json.dumps(mcp_payload(shim), indent=2) + "\n")
     append = agent / "APPEND_SYSTEM.md"
     body = instructions if instr else ""
